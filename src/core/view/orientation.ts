@@ -31,27 +31,37 @@ const DEG = Math.PI / 180
 export const YAW = 0
 
 /**
- * Default elevation above the ground plane, in radians. 75 degrees.
+ * Default elevation above the ground plane, in radians. 55 degrees.
  *
  * Why not 90: a true top-down would flatten the raised canopy and blocked-tile
  * geometry into their own footprints, and the 3D read that makes the jungle
- * legible — which tiles you cannot walk through — would go with it. Why not
- * lower: at ticket 009's 40 degrees the tall canopy hides a great deal of
- * walkable ground behind it, and the sides of every block are far more visible
- * than in the art.
+ * legible — which tiles you cannot walk through — would go with it.
  *
- * 75 still shows the side of every raised block: a block of height h occludes
- * h/tan(75) ~= 0.27h of the ground behind it, versus 1.19h at ticket 009's 40
- * degrees and 0.09h at 85. Combined with the sun's off-axis shadow — which is
- * cast by the light, not the camera, so it stays fully visible however steep the
- * view gets — that is enough to read blocked tiles as raised, while the short
- * shadows and near-circular canopies match the source art. It is a tune-by-eye
- * number, which is exactly why `?elev=` exists: see `parseElevation`.
+ * 75 shipped in ticket 009a and was dialled down to 55 in 009b after seeing it
+ * live: at 75 a block of height h shows only h*cos(75) = 0.26h of side face on
+ * screen, so raised terrain read as flat colour rather than as geometry. At 55
+ * that side face is 0.57h — a block reads unmistakably as a block — while the
+ * occlusion it costs, h/tan(55) = 0.70h of ground hidden behind it, is still far
+ * short of the 1.19h that made ticket 009's 40 degrees unplayable.
+ *
+ * The same `cos(elevation)` that buys the side face is what makes terrain
+ * project up the screen, so this number is also the reason `cover.ts` has to
+ * charge the relief allowance against the zoom cap: at 55 that effect is more
+ * than twice what it was at 75. It remains a tune-by-eye number, which is
+ * exactly why `?elev=` exists: see `parseElevation`.
  */
-export const ELEVATION = 75 * DEG
+export const ELEVATION = 55 * DEG
 
-/** Runtime-tunable range for `?elev=`, in degrees. */
-const MIN_ELEVATION_DEG = 55
+/**
+ * Runtime-tunable range for `?elev=`, in degrees.
+ *
+ * The floor was 55 while 55 was the extreme; since 009b made it the default the
+ * band has to open well BELOW it, or the knob can only be turned one way and the
+ * next look decision cannot be tested without a rebuild. 25 is the point past
+ * which the canopy hides more ground than it reveals; 89 rather than 90 because
+ * a camera looking exactly down the Y axis is degenerate for a Y-up `lookAt`.
+ */
+const MIN_ELEVATION_DEG = 25
 const MAX_ELEVATION_DEG = 89
 
 /**
@@ -151,8 +161,15 @@ export function viewGroundExtents(
   }
 }
 
-/** Keep elevation inside the band where the depth stretch stays finite. */
-function safeElevation(elevationRad: number): number {
+/**
+ * Keep elevation inside the band where the depth stretch stays finite.
+ *
+ * Exported since ticket 009b so the zoom cap in `cover.ts` divides by exactly
+ * the same guarded `sin(elevation)` this file does — two different guards would
+ * mean two different ideas of where the ground footprint ends, and the gap
+ * between them would be background.
+ */
+export function safeElevation(elevationRad: number): number {
   if (!Number.isFinite(elevationRad)) return ELEVATION
   if (elevationRad < SAFE_MIN_ELEVATION) return SAFE_MIN_ELEVATION
   if (elevationRad > SAFE_MAX_ELEVATION) return SAFE_MAX_ELEVATION
@@ -167,9 +184,10 @@ function safeElevation(elevationRad: number): number {
  * it. Anything unparseable, out of range, or absent falls back to `ELEVATION`
  * rather than failing: a typo in a URL must not be able to break the camera.
  *
- * The accepted band is 55-89 degrees. Below 55 the view stops resembling the
- * art at all; 89 rather than 90 because a camera looking exactly down the Y axis
- * is degenerate for a Y-up `lookAt`.
+ * The accepted band is 25-89 degrees, deliberately open on both sides of the
+ * shipped 55 — see `MIN_ELEVATION_DEG`. Out-of-band values are clamped into it
+ * rather than rejected, so `?elev=0` still shows you the shallowest view on
+ * offer instead of silently doing nothing.
  */
 export function parseElevation(raw: string | null | undefined): number {
   if (raw === null || raw === undefined || raw.trim() === '') return ELEVATION

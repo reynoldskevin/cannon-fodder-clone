@@ -59,7 +59,7 @@ flowchart TD
     TR["TerrainRenderer"]
     ER["EntityRenderer"]
     UV["UnitVisual<br/>(voxel mesh | billboard fallback)"]
-    CR["CameraRig<br/>ortho square, yaw 0<br/>elev 75° (?elev=)"]
+    CR["CameraRig<br/>ortho square, yaw 0<br/>elev 55° (?elev=)"]
     FX["FXSystem"]
     PFX["PostFX<br/>bloom / SSAO / tilt-shift"]
     SB --> TR & CR

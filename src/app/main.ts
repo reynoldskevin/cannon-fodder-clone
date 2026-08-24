@@ -157,11 +157,12 @@ async function boot(): Promise<void> {
   // it, so it is adjustable without a rebuild. Garbage falls back to the default.
   const elevation = parseElevation(new URLSearchParams(window.location.search).get('elev'))
 
-  // The rig frames the level's SILHOUETTE, not its footprint: the terrain is
-  // extruded, so fit-to-level has to know how far this particular level's tiles
-  // rise and fall. Measured from the level's own data — heights are data, and a
-  // constant here would quietly stop covering the map the day mapgen emits
-  // something taller.
+  // The rig reasons about the level's SILHOUETTE, not its footprint: the terrain
+  // is extruded, so the zoom cap has to know how far this particular level's
+  // tiles rise and fall — raised terrain at the far edge is what would otherwise
+  // leave background above it. Measured from the level's own data — heights are
+  // data, and a constant here would quietly stop covering the map the day mapgen
+  // emits something taller.
   const rig = new CameraRig(
     built.bounds,
     { width: window.innerWidth, height: window.innerHeight },
@@ -191,7 +192,13 @@ async function boot(): Promise<void> {
     built.dispose()
   }
 
-  showControlHint(mount, 'WASD / arrows or screen edge to pan  ·  wheel or +/− to zoom  ·  F to fit')
+  // "F to zoom out", not "F to fit": since ticket 009b the zoom-out limit stops
+  // at the widest view that shows no background, which is deliberately short of
+  // the whole level. A hint that still promised a fit would be a lie.
+  showControlHint(
+    mount,
+    'WASD / arrows or screen edge to pan  ·  wheel or +/− to zoom  ·  F to zoom out fully',
+  )
 
   window.addEventListener('resize', onResize)
 
