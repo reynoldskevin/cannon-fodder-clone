@@ -123,7 +123,7 @@ describe('marker detection', () => {
 
 describe('glyph vs text-label discrimination', () => {
   it('discards the wide-and-short text label beside a glyph', () => {
-    const { result } = makeLevel(200, 160, (d, w) => {
+    const { result } = makeLevel(192, 160, (d, w) => {
       drawCrosshair(d, w, 40, 40, RED)
       drawLabel(d, w, 60, 40, RED) // "Enemy" label to the right
     })
@@ -131,7 +131,7 @@ describe('glyph vs text-label discrimination', () => {
   })
 
   it('keeps the glyph centroid, not the label, as the spawn position', () => {
-    const { result } = makeLevel(200, 160, (d, w) => {
+    const { result } = makeLevel(192, 160, (d, w) => {
       drawCrosshair(d, w, 40, 72, BLUE)
       drawLabel(d, w, 60, 72, BLUE)
     })
@@ -150,7 +150,7 @@ describe('glyph vs text-label discrimination', () => {
   })
 
   it('reports discarded label clusters rather than silently dropping them', () => {
-    const { result } = makeLevel(200, 160, (d, w) => {
+    const { result } = makeLevel(192, 160, (d, w) => {
       drawCrosshair(d, w, 40, 40, RED)
       drawLabel(d, w, 60, 40, RED)
     })
@@ -339,7 +339,14 @@ describe('failure handling', () => {
   })
 
   it('throws MapgenError when tileSize does not divide the image evenly', () => {
+    // Strict: the tile size must divide BOTH axes exactly. A ragged grid would
+    // silently shift every spawn coordinate, so it is fatal rather than cropped.
     expect(() => makeLevel(100, 100, () => {}, legend({ tileSize: 32 })))
+      .toThrow(MapgenError)
+  })
+
+  it('throws MapgenError when tileSize divides only one axis', () => {
+    expect(() => makeLevel(160, 100, () => {}, legend({ tileSize: 16 })))
       .toThrow(MapgenError)
   })
 

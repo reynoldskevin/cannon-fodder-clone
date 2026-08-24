@@ -13,6 +13,15 @@ import { loadLevel } from '../../../src/core/level/index'
  * `assets/source/level1.png` (912x720, 16px tiles => 57x45 grid) before any
  * importer code existed, so they are an independent ground truth rather than a
  * transcription of whatever the implementation happens to produce.
+ *
+ * Measured with STRICT 8-connected components (no dilation): every crosshair
+ * glyph is exactly 25x25, and each text label is a separate 3-5 x 8 cluster.
+ * Glyph centroids in pixels — avatars (465,639) (511,660); enemies (684,108)
+ * (291,147) (211,210); props (795,438) (148,585) (720,591).
+ *
+ * Positions come from GLYPH GEOMETRY ONLY. The legend supplies prop *identity*,
+ * never position — a legend that could move a spawn would let hand-authored
+ * coordinates silently diverge from the map art.
  */
 
 const repoRoot = resolve(__dirname, '../../..')
@@ -22,7 +31,7 @@ const EXPECTED = {
   size: { w: 57, h: 45 },
   avatars: [{ x: 29, y: 39 }, { x: 31, y: 41 }],
   enemies: [{ x: 42, y: 6 }, { x: 18, y: 9 }, { x: 13, y: 13 }],
-  props: [{ x: 50, y: 27 }, { x: 9, y: 36 }, { x: 45, y: 36 }],
+  props: [{ x: 49, y: 27 }, { x: 9, y: 36 }, { x: 45, y: 36 }],
 }
 
 const LEGEND = {
