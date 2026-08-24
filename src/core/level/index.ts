@@ -21,6 +21,7 @@ import type {
   LevelSpawns,
   SpawnPoint,
   TileId,
+  WalkableSource,
 } from './types'
 
 export { LevelValidationError } from './errors'
@@ -34,6 +35,7 @@ export type {
   LevelSpawns,
   SpawnPoint,
   TileId,
+  WalkableSource,
 } from './types'
 
 // ---------------------------------------------------------------------------
@@ -269,7 +271,11 @@ function parseSpawnPoint(raw: unknown, path: string, size: LevelSize): SpawnPoin
 }
 
 function parseSpawnList(raw: unknown, path: string, size: LevelSize): SpawnPoint[] {
-  // An empty category is legitimate: not every level has chests.
+  // An empty category is legitimate: not every level has chests. An ABSENT one
+  // never is — including `props`. `schemaVersion` is exact-equality here, so a
+  // version-2 document written before props existed cannot reach this code, and
+  // treating a missing category as `[]` would turn a mapgen regression that
+  // stopped emitting props into a silently prop-less level. Missing is loud.
   const list = requireArray(raw, path, path)
   // Index-based so array holes are validated rather than skipped by `.map`.
   const spawns: SpawnPoint[] = []
@@ -291,8 +297,26 @@ function parseSpawns(raw: unknown, size: LevelSize): LevelSpawns {
   return {
     avatars: parseSpawnList(spawns.avatars, 'spawns.avatars', size),
     enemies: parseSpawnList(spawns.enemies, 'spawns.enemies', size),
+    props: parseSpawnList(spawns.props, 'spawns.props', size),
     chests: parseSpawnList(spawns.chests, 'spawns.chests', size),
   }
+}
+
+/**
+ * `walkableSource` is optional but closed: if a document states provenance it
+ * must state one this build understands, because a typo'd `"masked"` read as
+ * "unknown provenance" is precisely the silent shrug this field exists to stop.
+ */
+function parseWalkableSource(raw: unknown): WalkableSource | undefined {
+  if (raw === undefined) return undefined
+  if (raw !== 'heuristic' && raw !== 'mask') {
+    fail(
+      'INVALID_VALUE',
+      'walkableSource',
+      `walkableSource must be "heuristic" or "mask" when present, got ${describe(raw)}`,
+    )
+  }
+  return raw as WalkableSource
 }
 
 function parseObjectives(raw: unknown): LevelObjective[] {
@@ -333,7 +357,9 @@ export function loadLevel(json: unknown): LevelData {
   const name = requireNonEmptyString(doc.name, 'name', 'name')
   const size = parseSize(doc.size)
 
-  return {
+  const walkableSource = parseWalkableSource(doc.walkableSource)
+
+  const level: LevelData = {
     schemaVersion,
     name,
     size,
@@ -342,4 +368,6 @@ export function loadLevel(json: unknown): LevelData {
     spawns: parseSpawns(doc.spawns, size),
     objectives: parseObjectives(doc.objectives),
   }
+  // `exactOptionalPropertyTypes`: absent must stay absent, not `undefined`.
+  return walkableSource === undefined ? level : { ...level, walkableSource }
 }

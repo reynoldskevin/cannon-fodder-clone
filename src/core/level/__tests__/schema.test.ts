@@ -33,6 +33,11 @@ function validLevel(): Record<string, unknown> {
       avatars: [{ x: 0, y: 0 }],
       enemies: [{ x: 2, y: 1, type: 'rifleman', facing: 'south' }],
       chests: [{ x: 1, y: 0 }],
+      // schemaVersion 2 added scenery props as a fourth category (ticket 003).
+      // Required like the rest: the version gate guarantees it is present, and
+      // making it optional would let a mapgen regression emit a silently
+      // prop-less level — the exact loss the category was added to prevent.
+      props: [{ x: 1, y: 1, type: 'tree' }],
     },
     objectives: [{ type: 'kill_all' }],
   }
@@ -79,11 +84,12 @@ describe('happy path', () => {
     ])
   })
 
-  it('preserves all three spawn categories', () => {
+  it('preserves every spawn category', () => {
     const level = loadLevel(validLevel())
     expect(level.spawns.avatars).toHaveLength(1)
     expect(level.spawns.enemies).toHaveLength(1)
     expect(level.spawns.chests).toHaveLength(1)
+    expect(level.spawns.props).toHaveLength(1)
     expect(level.spawns.avatars[0]).toMatchObject({ x: 0, y: 0 })
     expect(level.spawns.enemies[0]).toMatchObject({ x: 2, y: 1, type: 'rifleman' })
   })
@@ -276,6 +282,13 @@ describe('structural validation', () => {
       delete (l.spawns as Record<string, unknown>).enemies
     }))
     expect(err.path).toContain('spawns.enemies')
+  })
+
+  it('rejects a missing props category, like any other', () => {
+    const err = expectValidationError(levelWith((l) => {
+      delete (l.spawns as Record<string, unknown>).props
+    }))
+    expect(err.path).toContain('spawns.props')
   })
 
   it('rejects a missing objectives array', () => {
