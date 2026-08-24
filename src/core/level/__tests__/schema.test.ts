@@ -53,6 +53,7 @@ function expectValidationError(input: unknown): LevelValidationError {
     if (err instanceof LevelValidationError) return err
     throw new Error(
       `expected LevelValidationError, got ${err instanceof Error ? err.constructor.name : typeof err}: ${String(err)}`,
+      { cause: err },
     )
   }
   throw new Error('expected loadLevel to throw LevelValidationError, but it returned normally')
