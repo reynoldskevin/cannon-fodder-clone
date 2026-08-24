@@ -22,10 +22,16 @@ describe('the shipped orientation is square and high', () => {
     expect(YAW).toBe(0)
   })
 
-  it('looks down from a high angle, but not straight down', () => {
-    // Straight down would flatten the raised canopy and lose the 3D read.
-    expect(ELEVATION).toBeGreaterThan(deg(55))
+  it('ships at 55 degrees — the owner-chosen angle (ticket 009b)', () => {
+    // Started at 75 in ticket 009a; dropped to 55 after seeing it live. Low
+    // enough that extruded terrain still shows a clear side face, high enough
+    // to keep reading as the source art's overhead view.
+    expect(ELEVATION).toBeCloseTo(deg(55), 6)
+  })
+
+  it('is not straight down, which would flatten the raised canopy', () => {
     expect(ELEVATION).toBeLessThan(deg(90))
+    expect(ELEVATION).toBeGreaterThan(0)
   })
 })
 
