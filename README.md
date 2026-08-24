@@ -5,14 +5,19 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design.
 
 ## Deploy URL
 
-**https://game-week.example.com** *(PLACEHOLDER — not yet deployed)*
+**https://game-week-sensationmms-projects.vercel.app**
 
-> ⚠️ **PLACEHOLDER.** This is not a live URL yet. The static Vite build is
-> deployed from a hosting account that only the project owner can authorise, so
-> the real URL is pending the first deploy. Swap this line for the real host
-> (and update the badge/links below) as soon as `npm run build` output is
-> published — the rest of this README already assumes a static, `base: './'`
-> build, so no config change is needed.
+Deployed on Vercel (scope `sensationmms-projects`). This is the stable production
+alias — it always points at the latest production deploy, so it is the URL to use
+for the demo. Individual deploys also get their own immutable
+`game-week-<hash>-sensationmms-projects.vercel.app` URL.
+
+> ⚠️ **Deployment Protection must stay OFF for this project.** Vercel enables SSO
+> authentication on new projects by default, which bounces anonymous visitors to a
+> login page — that would kill the five-minute demo in front of judges. Verify with
+> `curl -s -o /dev/null -w '%{http_code}' <url>`: **200** is good, **302** means
+> protection is back on. Turn it off at *Project Settings → Deployment Protection →
+> Vercel Authentication → Disabled*.
 
 ## Requirements
 
@@ -76,5 +81,18 @@ Everything else may import three freely, and intra-`core` relative imports
 ## Deployment
 
 `npm run build` emits a fully static bundle to `dist/` with relative asset paths
-(`base: './'`), so it can be served from any static host or subpath. Publish
-`dist/`, then record the resulting URL in the **Deploy URL** section above.
+(`base: './'`), so it can be served from any static host or subpath.
+
+This project deploys to **Vercel**, configured by [`vercel.json`](./vercel.json):
+
+```sh
+vercel deploy --prod --scope sensationmms-projects
+```
+
+Note that `buildCommand` is `npm run build`, which is `tsc --noEmit && vite build`
+— so a type error fails the deploy rather than shipping a broken bundle. That is
+deliberate: the deployed URL is the demo, and it should never be able to go
+stale-but-green.
+
+Because Vercel builds from source, `dist/` stays gitignored and is never
+committed.
