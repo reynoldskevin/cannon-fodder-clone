@@ -19,10 +19,15 @@
 import * as THREE from 'three'
 import type { LevelData } from '../core/level'
 import { TILE_WORLD_SIZE, tileToWorld } from '../core/view/projection'
+import { TERRAIN_SKIRT_FLOOR } from '../core/view/relief'
 import { tileStyle } from '../core/view/terrain-style'
 
-/** Bottom of the skirt at the map edge — deep enough that no gap shows at any angle. */
-const SKIRT_FLOOR = -1.5
+/**
+ * Bottom of the skirt at the map edge — deep enough that no gap shows at any
+ * angle. Defined in `src/core/view/relief` because fit-to-level has to leave
+ * room for this face on screen; one definition, two consumers.
+ */
+const SKIRT_FLOOR = TERRAIN_SKIRT_FLOOR
 
 /** Side faces are darkened against their top face so edges read without a normal map. */
 const SIDE_SHADE = 0.62

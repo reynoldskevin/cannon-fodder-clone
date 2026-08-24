@@ -1,32 +1,31 @@
 /**
- * CameraRig — orthographic camera locked to a fixed isometric angle.
+ * CameraRig — orthographic camera locked to a fixed square, high-angle view.
  *
- * Every decision it makes (where it may look, how it eases there, how shake
- * decays) is delegated to the engine-free helpers in `src/core/view/camera`;
- * this file is only the Three.js plumbing around them.
+ * Every decision it makes (which way is screen-right, how much ground it can
+ * see, where it may look, how it eases there, how shake decays) is delegated to
+ * the engine-free helpers in `src/core/view`; this file is only the Three.js
+ * plumbing around them.
  *
- * ANGLE. Yaw is the classic 45 degrees about Y. Elevation is 40 degrees rather
- * than the 35.264 of a true isometric projection: at 35 degrees the tall canopy
- * blocks in this game's terrain hide an unreasonable amount of walkable ground
- * behind them, and a slightly steeper look reads better for a top-down squad
- * shooter while still keeping the diagonal Cannon Fodder silhouette. It is
- * fixed — the rig never rotates, so the player's mental map of the level holds.
+ * ANGLE (ticket 009a, changing the brief's decision). Yaw is 0 — the tile grid
+ * is axis-aligned with the screen, matching the source art, which is drawn
+ * square rather than at 45 degrees. Elevation is high and near top-down for the
+ * same reason, defaulting to `ELEVATION` (75 degrees) and tunable at runtime
+ * with `?elev=` so it can be dialled in by eye. The rig never rotates, so the
+ * player's mental map of the level holds.
  */
 
 import * as THREE from 'three'
 import {
   clampCameraTarget,
   followStep,
-  panClampExtent,
   shakeStep,
   type GroundPoint,
   type ViewportExtent,
 } from '../core/view/camera'
+import { ELEVATION, YAW, screenBasis, viewGroundExtents } from '../core/view/orientation'
+import { FLAT_RELIEF, type ReliefRange } from '../core/view/relief'
 import { clampViewHeight, fitViewHeight } from '../core/view/zoom'
 import type { WorldBounds } from '../core/view/projection'
-
-const YAW = Math.PI / 4
-const ELEVATION = (40 * Math.PI) / 180
 
 /** How far back the camera sits. Irrelevant to framing (ortho) — it only has to clear the map. */
 const CAMERA_DISTANCE = 120
@@ -58,14 +57,34 @@ export class CameraRig {
   readonly camera: THREE.OrthographicCamera
 
   private readonly bounds: WorldBounds
+  /**
+   * How far the terrain rises above and falls below the ground plane.
+   *
+   * Fit-to-level needs it because the level's on-screen silhouette is its
+   * extruded geometry, not its footprint — see `fitViewHeight`. Held rather than
+   * folded into a number at construction because the fit is recomputed on every
+   * resize and every elevation change, and the allowance depends on both.
+   */
+  private readonly relief: ReliefRange
   private viewHeight = DEFAULT_VIEW_HEIGHT
   private aspect = 1
+  /** Last viewport in CSS pixels, kept so `setElevation` can redo the fit maths. */
+  private viewportWidthPx = 1
+  private viewportHeightPx = 1
+  /**
+   * Elevation above the ground plane, in radians.
+   *
+   * Mutable, and read on every recompute rather than baked into anything at
+   * construction: it is a runtime tuning knob (`?elev=`), and the fit height,
+   * the visible ground footprint and therefore the pan clamp all depend on it.
+   */
+  private elevation = ELEVATION
   /**
    * Furthest the player may zoom out: exactly the whole-level view.
    *
-   * Depends on the window aspect, so it is recomputed on every `resize` rather
-   * than being a constant — a capped zoom-out is what stops the level shrinking
-   * to a speck in a void.
+   * Depends on the window aspect and the elevation, so it is recomputed on every
+   * `resize` and every elevation change rather than being a constant — a capped
+   * zoom-out is what stops the level shrinking to a speck in a void.
    *
    * Starts at Infinity, not at the default height: the constructor's own
    * `resize` would otherwise see "already at the limit" and boot the game fully
@@ -74,11 +93,9 @@ export class CameraRig {
   private maxViewHeight = Number.POSITIVE_INFINITY
   /**
    * Viewport height at which the level exactly fills the screen — the same
-   * calculation as `maxViewHeight` but with no margin.
-   *
-   * It is the pan clamp's one input: at or above it the whole level is on
-   * screen and the camera is pinned to the level centre; below it the camera is
-   * free to look anywhere in the level. See `panClampExtent`.
+   * calculation as `maxViewHeight` but with no margin. Only used to answer "is
+   * the whole level on screen?", which is a question about the level's extruded
+   * silhouette, terrain relief included, not about its flat footprint.
    */
   private coverViewHeight = Number.POSITIVE_INFINITY
   private view: ViewportExtent = { halfW: 0, halfZ: 0 }
@@ -89,42 +106,44 @@ export class CameraRig {
   private current: GroundPoint = { x: 0, z: 0 }
   private shake = 0
 
-  /** Fixed unit vectors, computed once: camera offset, screen-right, screen-up-on-ground. */
-  private readonly offset: THREE.Vector3
-  private readonly screenRight: THREE.Vector3
-  private readonly screenUp: THREE.Vector3
+  /**
+   * Camera offset from the look-at point. Depends on elevation, so it is
+   * recomputed by `applyOrientation`, not frozen in the constructor.
+   */
+  private readonly offset = new THREE.Vector3()
+  /**
+   * Screen-right and screen-up as ground directions. Yaw is fixed and elevation
+   * does not turn them, so in practice they are constant — but they come from
+   * `screenBasis` so there is exactly one definition of which way is right.
+   */
+  private readonly screenRight = new THREE.Vector3()
+  private readonly screenUp = new THREE.Vector3()
 
   /** Scratch, reused every frame so `update` allocates no vectors. */
   private readonly lookAt = new THREE.Vector3()
 
-  constructor(bounds: WorldBounds, viewportPx: { width: number; height: number }) {
+  constructor(
+    bounds: WorldBounds,
+    viewportPx: { width: number; height: number },
+    elevationRad: number = ELEVATION,
+    relief: ReliefRange = FLAT_RELIEF,
+  ) {
     this.bounds = bounds
-
-    const dir = new THREE.Vector3(
-      Math.sin(YAW) * Math.cos(ELEVATION),
-      Math.sin(ELEVATION),
-      Math.cos(YAW) * Math.cos(ELEVATION),
-    ).normalize()
-    this.offset = dir.clone().multiplyScalar(CAMERA_DISTANCE)
-
-    // Screen right = forward x up; screen "up" on the ground is the horizontal
-    // component of the view direction, pointing away from the camera.
-    this.screenRight = new THREE.Vector3(dir.z, 0, -dir.x).normalize()
-    this.screenUp = new THREE.Vector3(-dir.x, 0, -dir.z).normalize()
+    this.relief = relief
+    this.elevation = Number.isFinite(elevationRad) ? elevationRad : ELEVATION
 
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, CAMERA_DISTANCE * 3)
-    this.camera.name = 'camera:isometric'
+    this.camera.name = 'camera:square'
 
+    this.applyOrientation()
     this.resize(viewportPx.width, viewportPx.height)
     this.snapTo(this.desired)
   }
 
   /**
-   * The half-extents the look-at point is clamped with this frame.
-   *
-   * `{0, 0}` while the level is larger than the screen (the target may roam the
-   * whole level rectangle); the level's half-extents once it all fits, which is
-   * what pins the camera to the centre. See `panClampExtent`.
+   * The half-extents the look-at point is clamped with this frame: the visible
+   * ground footprint, so the clamp is edge-tight. `{0, 0}` never occurs — see
+   * `applyFrustum`.
    */
   get panExtent(): ViewportExtent {
     return this.view
@@ -133,6 +152,26 @@ export class CameraRig {
   /** True when the current zoom shows the entire level. */
   get levelFullyVisible(): boolean {
     return this.viewHeight >= this.coverViewHeight - 1e-9
+  }
+
+  /** Current elevation above the ground plane, in radians. */
+  get elevationRad(): number {
+    return this.elevation
+  }
+
+  /**
+   * Retune the elevation at runtime.
+   *
+   * Everything downstream is recomputed here rather than cached from
+   * construction: a steeper camera sees less ground depth, which changes the fit
+   * height, the pan clamp and the frustum together. Callers should pass a value
+   * already through `parseElevation`.
+   */
+  setElevation(elevationRad: number): void {
+    if (!Number.isFinite(elevationRad)) return
+    this.elevation = elevationRad
+    this.applyOrientation()
+    this.resize(this.viewportWidthPx, this.viewportHeightPx)
   }
 
   /** The point the camera is looking at right now. */
@@ -194,10 +233,15 @@ export class CameraRig {
   /**
    * Frame the entire level, centred.
    *
-   * No special-cased camera position: the fit height is above `coverViewHeight`,
-   * so `panClampExtent` hands the clamp the level's own half-extents, which is
-   * its documented "level narrower than the viewport" branch — it centres the
-   * level for us. Fit is just the zoom-out limit plus the clamp already in place.
+   * No special-cased camera position: at the fit height the visible footprint is
+   * larger than the level on both axes, which is `clampCameraTarget`'s
+   * documented "no valid pan range" branch — it centres the level for us. Fit is
+   * just the zoom-out limit plus the clamp already in place.
+   *
+   * What "the entire level" means is the extruded silhouette, not the ground
+   * rectangle: `maxViewHeight` is computed with this level's terrain relief, so
+   * the raised far edge is framed rather than clipped off the top. See
+   * `fitViewHeight` and `src/core/view/relief.ts`.
    */
   fitToLevel(): void {
     this.setViewHeight(this.maxViewHeight)
@@ -210,6 +254,8 @@ export class CameraRig {
 
   /** Recompute the ortho frustum and the half-extents fed to `clampCameraTarget`. */
   resize(widthPx: number, heightPx: number): void {
+    this.viewportWidthPx = widthPx
+    this.viewportHeightPx = heightPx
     this.aspect = heightPx > 0 ? widthPx / heightPx : 1
 
     // Fit-to-level depends on the aspect, so the zoom-out limit moves with the
@@ -222,7 +268,9 @@ export class CameraRig {
       this.screenRight,
       this.screenUp,
       this.aspect,
-      ELEVATION,
+      this.elevation,
+      1,
+      this.relief,
     )
     this.maxViewHeight = this.coverViewHeight * FIT_MARGIN
     // Both branches go through the same clamp: on a small enough window the fit
@@ -264,26 +312,37 @@ export class CameraRig {
     this.camera.updateMatrixWorld()
   }
 
+  /** Rebuild the camera offset and the screen axes from the current angles. */
+  private applyOrientation(): void {
+    const dir = new THREE.Vector3(
+      Math.sin(YAW) * Math.cos(this.elevation),
+      Math.sin(this.elevation),
+      Math.cos(YAW) * Math.cos(this.elevation),
+    ).normalize()
+    this.offset.copy(dir).multiplyScalar(CAMERA_DISTANCE)
+
+    const basis = screenBasis(YAW, this.elevation)
+    this.screenRight.set(basis.right.x, 0, basis.right.z)
+    this.screenUp.set(basis.up.x, 0, basis.up.z)
+  }
+
   /**
    * Recompute the ortho frustum, then the extents the pan clamp uses.
    *
-   * WHY THE CLAMP IS NOT "never show void". The visible ground footprint of an
-   * orthographic camera tilted by ELEVATION is a rectangle rotated by YAW, and
-   * containment of that rotated rectangle inside the axis-aligned level IS
-   * exactly containment of its axis-aligned bound — at YAW 45 degrees that bound
-   * is ~sqrt(2) larger per axis than the on-screen rectangle. Requiring it to
-   * stay inside the level is therefore not a conservative approximation that
-   * could be tightened; it is the honest cost of the rule, and on a 57x45 level
-   * it demands 36 units of reach where a 30-unit view has 27. The result was a
-   * whole band of zooms (roughly 30 to 49 units of view height) in which the map
-   * did not fit on screen AND the pan range was exactly zero: the outer third of
-   * the level was unviewable and WASD/edge-scroll were silent no-ops.
+   * EDGE-TIGHT CLAMPING, restored in ticket 009a. The visible ground footprint
+   * is a rectangle rotated by YAW; containment of it inside the axis-aligned
+   * level is containment of its axis-aligned bound. At the old YAW of 45 degrees
+   * that bound was ~sqrt(2) larger per axis than what the player could actually
+   * see, so "never show void" demanded 36 units of reach on a 57x45 level where
+   * a 30-unit view has 27 — an entire band of zooms in which the map did not fit
+   * on screen AND the pan range was zero. Ticket 009 escaped that by clamping
+   * the look-at point instead and letting sky show at the edges.
    *
-   * So the rule is inverted: the LOOK-AT POINT is clamped to the level rectangle
-   * (`panClampExtent`). Every tile can be centred at every zoom; panning is a
-   * no-op only when the level is genuinely all on screen, in which case it is
-   * centred instead. Panning hard into an edge shows sky beyond it, which the
-   * scene's sky colour and matching fog render as a deliberate matte.
+   * At YAW 0 the footprint IS its own bounding box, so that compromise is gone
+   * and the honest rule is affordable again: clamp with the real footprint. No
+   * background shows past the level edge at any zoom, and when the footprint
+   * outgrows the level on an axis `clampCameraTarget` centres that axis, which
+   * is what makes `fitToLevel` need no special case.
    */
   private applyFrustum(): void {
     const halfH = this.viewHeight / 2
@@ -294,6 +353,7 @@ export class CameraRig {
     this.camera.bottom = -halfH
     this.camera.updateProjectionMatrix()
 
-    this.view = panClampExtent(this.bounds, this.levelFullyVisible)
+    const ground = viewGroundExtents(this.viewHeight, this.aspect, YAW, this.elevation)
+    this.view = { halfW: ground.halfX, halfZ: ground.halfZ }
   }
 }

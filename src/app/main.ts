@@ -10,7 +10,9 @@
 import * as THREE from 'three'
 import { LevelValidationError, loadLevel, type LevelData } from '../core/level'
 import { centroid, type GroundPoint } from '../core/view/camera'
+import { parseElevation } from '../core/view/orientation'
 import { tileToWorld } from '../core/view/projection'
+import { levelRelief } from '../core/view/relief'
 import { CameraRig } from '../render/camera-rig'
 import { SceneBuilder } from '../render/scene-builder'
 import { PanController } from '../input/pan-controller'
@@ -150,10 +152,22 @@ async function boot(): Promise<void> {
   const level = await fetchLevel(LEVEL_URL)
   const built = SceneBuilder.build(level)
 
-  const rig = new CameraRig(built.bounds, {
-    width: window.innerWidth,
-    height: window.innerHeight,
-  })
+  // `?elev=` is a look-tuning knob, not a game setting: the camera angle is a
+  // judgement against the source art and the only way to settle it is to look at
+  // it, so it is adjustable without a rebuild. Garbage falls back to the default.
+  const elevation = parseElevation(new URLSearchParams(window.location.search).get('elev'))
+
+  // The rig frames the level's SILHOUETTE, not its footprint: the terrain is
+  // extruded, so fit-to-level has to know how far this particular level's tiles
+  // rise and fall. Measured from the level's own data — heights are data, and a
+  // constant here would quietly stop covering the map the day mapgen emits
+  // something taller.
+  const rig = new CameraRig(
+    built.bounds,
+    { width: window.innerWidth, height: window.innerHeight },
+    elevation,
+    levelRelief(level),
+  )
   rig.snapTo(initialFocus(level))
 
   // Both controllers register window-level listeners and hold a hard reference
@@ -219,7 +233,8 @@ async function boot(): Promise<void> {
 
   console.info(
     `game-week: ${level.name} ${String(level.size.w)}x${String(level.size.h)} ` +
-      `(${String(built.terrain.triangleCount)} tris, core ${CORE_VERSION})`,
+      `(${String(built.terrain.triangleCount)} tris, camera ${((elevation * 180) / Math.PI).toFixed(1)}°, ` +
+      `core ${CORE_VERSION})`,
   )
 }
 

@@ -59,7 +59,7 @@ flowchart TD
     TR["TerrainRenderer"]
     ER["EntityRenderer"]
     UV["UnitVisual<br/>(voxel mesh | billboard fallback)"]
-    CR["CameraRig<br/>ortho isometric"]
+    CR["CameraRig<br/>ortho square, yaw 0<br/>elev 75° (?elev=)"]
     FX["FXSystem"]
     PFX["PostFX<br/>bloom / SSAO / tilt-shift"]
     SB --> TR & CR
@@ -100,6 +100,14 @@ flowchart TD
 ```
 
 Green = pure, unit-tested logic. Blue = rendering (untested by design). Amber = offline tooling.
+
+`CameraRig` is drawn blue because it is Three.js plumbing, but its *decisions* are green: the
+angles and the ground extents they imply live in `core/view/orientation.ts`, the zoom limits in
+`core/view/zoom.ts`, the terrain relief those limits must allow for in `core/view/relief.ts`, the
+clamp and easing in `core/view/camera.ts`. The orientation is square
+(yaw 0), not the brief's 45-degree isometric — changed in ticket 009a to match the source art,
+which is drawn axis-aligned and near-overhead. See *The camera is square, not isometric* in
+`ARCHITECTURE.md`.
 
 ## Data flow
 
