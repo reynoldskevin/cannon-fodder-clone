@@ -15,7 +15,7 @@
  * Bump ONLY on a structural break (a field added/removed/retyped). Adding a new
  * tile id, objective type or enemy archetype is not a break — see the note above.
  */
-export const CURRENT_SCHEMA_VERSION = 1
+export const CURRENT_SCHEMA_VERSION = 2
 
 /** Grid dimensions in tiles. Both are positive integers. */
 export interface LevelSize {
@@ -50,10 +50,20 @@ export interface SpawnPoint {
   readonly [field: string]: unknown
 }
 
-/** The three spawn categories. Any category may legitimately be empty. */
+/**
+ * The spawn categories. Any category may legitimately be empty.
+ *
+ * `props` (scenery: shrubs, trees, birds) arrived with schemaVersion 2 — the
+ * real level-1 art annotates props and no chests at all, and the loader drops
+ * categories it does not know about, so props would have been silently lost.
+ * Adding a category is a structural change and therefore a version bump, which
+ * is exactly the path this schema documents. `chests` is retained: later levels
+ * may use it.
+ */
 export interface LevelSpawns {
   readonly avatars: readonly SpawnPoint[]
   readonly enemies: readonly SpawnPoint[]
+  readonly props: readonly SpawnPoint[]
   readonly chests: readonly SpawnPoint[]
 }
 
@@ -67,6 +77,18 @@ export interface LevelObjective {
   readonly [param: string]: unknown
 }
 
+/**
+ * Where a level's `walkable` grid came from.
+ *
+ * `'mask'` means an artist painted `walkable.png` and it is authored data;
+ * `'heuristic'` means the importer guessed it from tile brightness against a
+ * threshold tuned to one level's palette. The distinction lives in the document
+ * rather than in an importer console line, because the grid is checked in and
+ * read long after that line has scrolled away — and "this passability is a
+ * guess" is exactly the kind of provenance that goes missing silently.
+ */
+export type WalkableSource = 'heuristic' | 'mask'
+
 /** A fully validated level, ready to build a `World` from. */
 export interface LevelData {
   readonly schemaVersion: number
@@ -76,6 +98,12 @@ export interface LevelData {
   readonly terrain: readonly (readonly TileId[])[]
   /** `size.h` rows of `size.w` passability flags, parallel to `terrain`. */
   readonly walkable: readonly (readonly boolean[])[]
+  /**
+   * Provenance of `walkable`. Optional: levels written before this field existed
+   * are still valid documents and simply do not say — which is itself readable,
+   * where a defaulted value would have invented an answer.
+   */
+  readonly walkableSource?: WalkableSource
   readonly spawns: LevelSpawns
   /** At least one — a level with no objectives cannot be won. */
   readonly objectives: readonly LevelObjective[]
