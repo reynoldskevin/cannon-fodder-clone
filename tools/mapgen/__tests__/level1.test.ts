@@ -25,7 +25,7 @@ import { loadLevel } from '../../../src/core/level/index'
  */
 
 const repoRoot = resolve(__dirname, '../../..')
-const LEVEL1 = join(repoRoot, 'assets/source/level1.png')
+const LEVEL1 = join(repoRoot, 'assets/source/levels/level1/map.png')
 
 const EXPECTED = {
   size: { w: 57, h: 45 },
