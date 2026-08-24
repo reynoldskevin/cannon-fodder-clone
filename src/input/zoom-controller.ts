@@ -1,5 +1,9 @@
 /**
- * ZoomController — mouse wheel and keyboard zoom, plus fit-to-level.
+ * ZoomController — mouse wheel and keyboard zoom, plus zoom-all-the-way-out.
+ *
+ * `F` / `Home` used to mean "fit the whole level"; since ticket 009b the rig's
+ * zoom-out limit stops at the widest view that shows no background, so they mean
+ * "zoom out as far as is allowed". Same call, same key, narrower promise.
  *
  * Like `PanController`, every route funnels into a single `CameraRig` method
  * (`zoomBy` / `fitToLevel`) so the wheel and the keyboard cannot disagree about

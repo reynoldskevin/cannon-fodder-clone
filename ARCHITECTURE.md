@@ -183,7 +183,7 @@ All names below match `ARCHITECTURE_DIAGRAM.md`.
 | `TerrainRenderer` | Builds the level mesh from the terrain grid; texture/material assignment per tile type. |
 | `EntityRenderer` | Maps world entities to `UnitVisual` handles; per-frame `InstancedMesh` batches keyed by (model, animation frame); procedural bob/recoil/lean on top of frame-swapping. |
 | `UnitVisual` | Abstraction over "how a unit is drawn". Voxel-mesh implementation is the mainline; the billboard-sprite implementation is the pre-designed fallback and the seam for future visual styles. |
-| `CameraRig` | Orthographic, fixed square angle: yaw 0, elevation 75° by default and retunable at runtime with `?elev=`. Smooth follow of squad centroid, edge scroll, edge-tight clamp to level bounds, screen-shake channel. The angles and the ground extents they imply live in `core/view/orientation.ts`, engine-free and unit tested; the rig is only the Three.js plumbing. Fit-to-level frames the level's extruded *silhouette*, not its flat footprint: `core/view/relief.ts` measures how far the level's own tiles rise above and fall below the ground plane, and `fitViewHeight` adds that overhang scaled by `cos(elevation)`, so the raised far edge is never clipped at the top of the viewport. |
+| `CameraRig` | Orthographic, fixed square angle: yaw 0, elevation 55° by default and retunable at runtime with `?elev=` (25–89). Smooth follow of squad centroid, edge scroll, edge-tight clamp to level bounds, screen-shake channel. The angles and the ground extents they imply live in `core/view/orientation.ts`, engine-free and unit tested; the rig is only the Three.js plumbing. Zoom-out is capped by `core/view/cover.ts` at the widest **sky-free** view — the largest viewport whose ground footprint stays inside the level — so the background is never visible at any zoom or pan position, and the whole level is deliberately never framed at once. Both the cap and the pan clamp charge the level's extruded *silhouette*, not its flat footprint: `core/view/relief.ts` measures how far the level's own tiles rise above and fall below the ground plane, and that overhang is scaled by `cos(elevation)` to screen height. |
 | `FXSystem` | Particle explosions, muzzle flashes, tracers, decals, damage flashes. Driven purely by `SimEvent`s. |
 | `PostFX` | `EffectComposer` chain — bloom, SSAO, tilt-shift DoF, vignette — behind a `quality: high \| low \| off` flag. |
 
@@ -288,7 +288,9 @@ The brief asked for isometric and ticket 009 shipped a 45-degree yaw at 40 degre
 Rendered against the source art it was plainly wrong: `assets/source/levels/*/map.png` is drawn
 axis-aligned — the tile grid faces the screen squarely — and from a very high angle, with
 canopies reading as rounded blobs from above and short shadows. So yaw is now 0 and elevation
-75 degrees, tunable at runtime with `?elev=` because it is a by-eye judgement against the art.
+55 degrees (75 in 009a, dropped in 009b after seeing it live — at 75 a block of height *h*
+shows only 0.26*h* of side face and raised terrain read as flat colour; at 55 it shows 0.57*h*),
+tunable at runtime over 25–89 with `?elev=` because it is a by-eye judgement against the art.
 Not 90: a true top-down flattens the raised canopy and loses the read of which tiles block
 movement. Cost: the diagonal Cannon Fodder silhouette is gone. Bought: the view matches the art
 it is built from, and — because an axis-aligned viewport rectangle over an axis-aligned level
@@ -296,6 +298,28 @@ IS its own bounding box — **edge-tight camera clamping**, which the 45-degree 
 afford. At yaw 45 the bound is ~√2 larger per axis than what the player can see, so "never show
 void" left a band of zooms with zero pan range; ticket 009 had to clamp the look-at point and
 show sky at the edges instead. That compromise is deleted, not layered over.
+
+**Zoom-out stops inside the level, not around it — the whole map is never visible at once**
+*(ticket 009b — a decision changed after 009a)*. 009a capped zoom-out at the *fit* height: the
+viewport that frames the whole level. That framing is necessarily larger than the level on at
+least one axis, so the whole-map view always showed background around the map. The owner's rule
+after seeing it is absolute — the background must never be visible — so the cap is now
+`core/view/cover.ts`'s `maxSkyFreeViewHeight`: the largest viewport whose ground footprint still
+lies entirely *inside* the level. Relief is charged against it, because extruded terrain projects
+`h·cos(elevation)` up the screen and the far edge can be as low as the water/skirt floor, so a cap
+derived from the flat footprint alone would show sky above tall terrain — at 55 degrees that term
+is 0.57*h*, more than twice its cost at 75. The pan clamp is fed the same allowance
+(`skyFreePanBounds` insets the far edge only), which is what makes the guarantee hold at every pan
+position rather than only at the centre.
+
+The consequence is deliberate and was accepted explicitly: **the whole map can no longer be seen
+at once.** On level 1 (57×45) at 1920×1080 and 55 degrees the cap is a 31.6-unit viewport — 56.1
+of the 57 tiles across and 38.6 of the 45 tiles of depth. `F` / `Home` therefore no longer mean
+"fit the level" but "zoom out as far as is allowed", and the on-screen hint says so. `fitViewHeight`
+remains in `core/view/zoom.ts` as the honest measure of the level's silhouette and the thing the
+cap is defined against, but it no longer drives the limit. Where the two rules genuinely conflict —
+a window so letterboxed that the sky-free cap is under ten world units — the no-sky rule outranks
+the minimum-zoom preference.
 
 **Voxel extrusion over rigged 3D models.** Rejected: sourcing and retargeting rigged humanoids
 (Mixamo/Quaternius) — realistically a full day of the four, with a result that would not look

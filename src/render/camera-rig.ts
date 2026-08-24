@@ -6,12 +6,18 @@
  * the engine-free helpers in `src/core/view`; this file is only the Three.js
  * plumbing around them.
  *
- * ANGLE (ticket 009a, changing the brief's decision). Yaw is 0 — the tile grid
- * is axis-aligned with the screen, matching the source art, which is drawn
- * square rather than at 45 degrees. Elevation is high and near top-down for the
- * same reason, defaulting to `ELEVATION` (75 degrees) and tunable at runtime
- * with `?elev=` so it can be dialled in by eye. The rig never rotates, so the
- * player's mental map of the level holds.
+ * ANGLE (ticket 009a, changing the brief's decision; retuned in 009b). Yaw is
+ * 0 — the tile grid is axis-aligned with the screen, matching the source art,
+ * which is drawn square rather than at 45 degrees. Elevation defaults to
+ * `ELEVATION` (55 degrees since 009b) and is tunable at runtime with `?elev=` so
+ * it can be dialled in by eye. The rig never rotates, so the player's mental map
+ * of the level holds.
+ *
+ * ZOOM-OUT (ticket 009b). The limit is no longer the fit height. It is
+ * `maxSkyFreeViewHeight`: the largest viewport whose ground footprint still lies
+ * entirely inside the level, relief included. The background is therefore never
+ * visible at any zoom or pan position — at the cost, accepted explicitly by the
+ * owner, of the whole level no longer fitting on screen at once.
  */
 
 import * as THREE from 'three'
@@ -23,6 +29,7 @@ import {
   type ViewportExtent,
 } from '../core/view/camera'
 import { ELEVATION, YAW, screenBasis, viewGroundExtents } from '../core/view/orientation'
+import { maxSkyFreeViewHeight, skyFreePanBounds } from '../core/view/cover'
 import { FLAT_RELIEF, type ReliefRange } from '../core/view/relief'
 import { clampViewHeight, fitViewHeight } from '../core/view/zoom'
 import type { WorldBounds } from '../core/view/projection'
@@ -38,14 +45,11 @@ const DEFAULT_VIEW_HEIGHT = 16
  *
  * Roughly ten tiles top to bottom: close enough to read an individual soldier,
  * still far enough that the camera never ends up inside a canopy block.
+ *
+ * A preference, not an invariant — see `minViewHeight`. The no-sky rule outranks
+ * it.
  */
 const MIN_VIEW_HEIGHT = 10
-
-/**
- * How much slack fit-to-level leaves around the map — 6%, enough that the level
- * edge is visibly an edge rather than flush against the window.
- */
-const FIT_MARGIN = 1.06
 
 /** Follow stiffness for the exponential ease, in units of 1/second. */
 const FOLLOW_STIFFNESS = 6
@@ -58,12 +62,20 @@ export class CameraRig {
 
   private readonly bounds: WorldBounds
   /**
+   * The bounds the look-at point is actually clamped against: `bounds` with the
+   * far edge pushed in far enough that terrain relief at that edge cannot leave
+   * background above it. Depends on the elevation, so it is recomputed by
+   * `applyOrientation` rather than frozen at construction.
+   */
+  private panBounds: WorldBounds
+  /**
    * How far the terrain rises above and falls below the ground plane.
    *
-   * Fit-to-level needs it because the level's on-screen silhouette is its
-   * extruded geometry, not its footprint — see `fitViewHeight`. Held rather than
-   * folded into a number at construction because the fit is recomputed on every
-   * resize and every elevation change, and the allowance depends on both.
+   * Both the zoom cap and the pan clamp need it, because the level's on-screen
+   * silhouette is its extruded geometry, not its footprint — see `cover.ts`.
+   * Held rather than folded into a number at construction because both are
+   * recomputed on every resize and every elevation change, and the allowance
+   * depends on both.
    */
   private readonly relief: ReliefRange
   private viewHeight = DEFAULT_VIEW_HEIGHT
@@ -80,11 +92,13 @@ export class CameraRig {
    */
   private elevation = ELEVATION
   /**
-   * Furthest the player may zoom out: exactly the whole-level view.
+   * Furthest the player may zoom out: the widest sky-free view (ticket 009b).
    *
-   * Depends on the window aspect and the elevation, so it is recomputed on every
-   * `resize` and every elevation change rather than being a constant — a capped
-   * zoom-out is what stops the level shrinking to a speck in a void.
+   * NOT the fit height any more. It is the largest viewport whose ground
+   * footprint still lies inside the level, so the background can never appear —
+   * which also means the whole level cannot be framed at once. Depends on the
+   * window aspect, the elevation and the relief, so it is recomputed on every
+   * `resize` and every elevation change rather than being a constant.
    *
    * Starts at Infinity, not at the default height: the constructor's own
    * `resize` would otherwise see "already at the limit" and boot the game fully
@@ -92,10 +106,12 @@ export class CameraRig {
    */
   private maxViewHeight = Number.POSITIVE_INFINITY
   /**
-   * Viewport height at which the level exactly fills the screen — the same
-   * calculation as `maxViewHeight` but with no margin. Only used to answer "is
-   * the whole level on screen?", which is a question about the level's extruded
-   * silhouette, terrain relief included, not about its flat footprint.
+   * Viewport height at which the whole level would exactly fill the screen.
+   *
+   * No longer reachable — `maxViewHeight` stops short of it, deliberately — so
+   * this only answers "is the whole level on screen?", which since 009b is
+   * normally "no". Kept because it is the honest measure of the level's extruded
+   * silhouette, relief included, and the thing the cap is defined against.
    */
   private coverViewHeight = Number.POSITIVE_INFINITY
   private view: ViewportExtent = { halfW: 0, halfZ: 0 }
@@ -131,6 +147,7 @@ export class CameraRig {
     this.bounds = bounds
     this.relief = relief
     this.elevation = Number.isFinite(elevationRad) ? elevationRad : ELEVATION
+    this.panBounds = skyFreePanBounds(bounds, relief, this.elevation)
 
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, CAMERA_DISTANCE * 3)
     this.camera.name = 'camera:square'
@@ -179,9 +196,18 @@ export class CameraRig {
     return this.current
   }
 
-  /** Ask the rig to look at a point; it eases there over the next frames. */
+  /**
+   * Ask the rig to look at a point; it eases there over the next frames.
+   *
+   * Clamped against `panBounds`, not the raw level: the far edge is inset by the
+   * relief allowance so that raised or sunken terrain at the top of the screen
+   * cannot leave background above it. The zoom cap is derived from exactly the
+   * same inset, so at maximum zoom-out this range collapses to a point on Z
+   * rather than inverting — the axis is then genuinely fully covered, and the
+   * clamp's centring branch says so honestly instead of hiding a lost pan range.
+   */
   setTarget(point: GroundPoint): void {
-    this.desired = clampCameraTarget(point, this.bounds, this.view)
+    this.desired = clampCameraTarget(point, this.panBounds, this.view)
   }
 
   /** Jump straight to a point with no easing — used once at level load. */
@@ -219,7 +245,7 @@ export class CameraRig {
    * zooming back in would leave the camera pinned to the centre.
    */
   setViewHeight(worldUnits: number): void {
-    this.viewHeight = clampViewHeight(worldUnits, MIN_VIEW_HEIGHT, this.maxViewHeight)
+    this.viewHeight = clampViewHeight(worldUnits, this.minViewHeight, this.maxViewHeight)
     this.applyFrustum()
     this.setTarget(this.desired)
   }
@@ -231,17 +257,18 @@ export class CameraRig {
   }
 
   /**
-   * Frame the entire level, centred.
+   * Zoom out as far as is allowed — the most map visible without background.
    *
-   * No special-cased camera position: at the fit height the visible footprint is
-   * larger than the level on both axes, which is `clampCameraTarget`'s
-   * documented "no valid pan range" branch — it centres the level for us. Fit is
-   * just the zoom-out limit plus the clamp already in place.
+   * This was "frame the entire level" until ticket 009b. It no longer is, and
+   * the control hint says so: the cap now stops at the widest view that stays
+   * INSIDE the level, so on a 57x45 level at 16:9 the full width is visible but
+   * several rows of depth are not. The method keeps its name because it keeps
+   * its role — the one place `F` / `Home` and any future "overview" button agree
+   * on what maximum zoom-out means.
    *
-   * What "the entire level" means is the extruded silhouette, not the ground
-   * rectangle: `maxViewHeight` is computed with this level's terrain relief, so
-   * the raised far edge is framed rather than clipped off the top. See
-   * `fitViewHeight` and `src/core/view/relief.ts`.
+   * Still no special-cased camera position: `setViewHeight` re-clamps, and at the
+   * cap the pan range has collapsed on whichever axis bound, so the view settles
+   * itself. See `maxSkyFreeViewHeight` and `src/core/view/relief.ts`.
    */
   fitToLevel(): void {
     this.setViewHeight(this.maxViewHeight)
@@ -249,7 +276,22 @@ export class CameraRig {
 
   /** Current viewport height in world units, and the range it may take. */
   get zoom(): { viewHeight: number; min: number; max: number } {
-    return { viewHeight: this.viewHeight, min: MIN_VIEW_HEIGHT, max: this.maxViewHeight }
+    return { viewHeight: this.viewHeight, min: this.minViewHeight, max: this.maxViewHeight }
+  }
+
+  /**
+   * Closest zoom allowed right now: `MIN_VIEW_HEIGHT`, unless the sky-free cap
+   * is tighter.
+   *
+   * On a letterboxed window — wider than about 5.6:1 on level 1 — the widest
+   * sky-free view is under ten tiles tall, and the two limits disagree. The
+   * no-sky rule wins: `clampViewHeight` would otherwise floor the range at the
+   * minimum and hand back a height ABOVE the cap, showing exactly the background
+   * this ticket exists to remove. Zooming a little closer than intended in a
+   * freak window is the cheaper failure.
+   */
+  private get minViewHeight(): number {
+    return Math.min(MIN_VIEW_HEIGHT, this.maxViewHeight)
   }
 
   /** Recompute the ortho frustum and the half-extents fed to `clampCameraTarget`. */
@@ -258,10 +300,10 @@ export class CameraRig {
     this.viewportHeightPx = heightPx
     this.aspect = heightPx > 0 ? widthPx / heightPx : 1
 
-    // Fit-to-level depends on the aspect, so the zoom-out limit moves with the
-    // window. If the player was fitted, stay fitted — otherwise a resize would
-    // silently un-frame the level and leave "fit" meaning something else than it
-    // did a moment ago. Any other zoom is simply re-clamped to the new limit.
+    // The sky-free cap depends on the aspect, so the zoom-out limit moves with
+    // the window. If the player was zoomed fully out, stay fully out — otherwise
+    // a resize would silently zoom them in. Any other zoom is re-clamped to the
+    // new limit.
     const wasFitted = this.viewHeight >= this.maxViewHeight - 1e-6
     this.coverViewHeight = fitViewHeight(
       this.bounds,
@@ -272,13 +314,19 @@ export class CameraRig {
       1,
       this.relief,
     )
-    this.maxViewHeight = this.coverViewHeight * FIT_MARGIN
-    // Both branches go through the same clamp: on a small enough window the fit
-    // height can fall BELOW MIN_VIEW_HEIGHT, and "stay fitted" must not be a
-    // back door that zooms closer than any other path is allowed to.
+    this.maxViewHeight = maxSkyFreeViewHeight(
+      this.bounds,
+      this.aspect,
+      this.elevation,
+      this.relief,
+    )
+    // Both branches go through the same clamp, and it is the clamp that resolves
+    // a window so letterboxed that the sky-free cap falls below MIN_VIEW_HEIGHT
+    // — see `minViewHeight`. "Stay zoomed out" must not be a back door around
+    // either limit.
     this.viewHeight = clampViewHeight(
       wasFitted ? this.maxViewHeight : this.viewHeight,
-      MIN_VIEW_HEIGHT,
+      this.minViewHeight,
       this.maxViewHeight,
     )
     this.applyFrustum()
@@ -324,6 +372,11 @@ export class CameraRig {
     const basis = screenBasis(YAW, this.elevation)
     this.screenRight.set(basis.right.x, 0, basis.right.z)
     this.screenUp.set(basis.up.x, 0, basis.up.z)
+
+    // How much ground the far edge's relief hides behind itself is a function of
+    // the elevation, so the pan bounds move with it — a shallower camera must
+    // keep the look-at point further from the far edge.
+    this.panBounds = skyFreePanBounds(this.bounds, this.relief, this.elevation)
   }
 
   /**
