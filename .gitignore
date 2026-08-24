@@ -1,0 +1,19 @@
+.env
+.claude
+.DS_Store
+
+PROJECT_DECISION.md
+DEMO_PLAN.md
+BUILD_PLAN.md
+TICKETS.md
+TIME_ESTIMATE.md
+# build & deps
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+
+# playwright
+test-results/
+playwright-report/
+.last-run.json
