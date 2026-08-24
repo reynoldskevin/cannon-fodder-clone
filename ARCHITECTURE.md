@@ -2,7 +2,7 @@
 
 ## Summary
 
-This is a browser-native, isometric squad shooter built in TypeScript on Three.js, aimed at
+This is a browser-native, top-down squad shooter built in TypeScript on Three.js, aimed at
 being a faithful Cannon Fodder recreation with modern rendering. It must be finished,
 polished, and demoable in under five minutes after roughly four days of AI-assisted work.
 Every structural decision below is made in service of that constraint.
@@ -25,8 +25,10 @@ makes both pipelines independently testable, and means re-importing all five lev
 schema change is one command, not five afternoons.
 
 Rendering targets the "strongest graphics" criterion directly. The camera is a locked
-isometric orthographic rig with smooth scroll-follow, matching the original's feel while the
-world underneath is genuinely 3D and genuinely lit. Voxel-extruded soldiers are drawn through
+**square (yaw 0), high-elevation orthographic rig** with smooth scroll-follow, matching the
+source art's own viewpoint while the world underneath is genuinely 3D and genuinely lit.
+(Ticket 009a changed this from the brief's 45-degree isometric — see *The camera is square,
+not isometric* under Key tradeoffs.) Voxel-extruded soldiers are drawn through
 per-frame `InstancedMesh` batches so a full squad plus dozens of enemies stays in a handful of
 draw calls. A post-processing chain (bloom, SSAO, tilt-shift depth-of-field) plus GPU particle
 explosions and screen shake sits behind a single `PostFX` component with a quality flag, so it
@@ -51,8 +53,8 @@ are named explicitly below; none are built, but none are designed out of reach.
 **Goals** (traced to the brief and clarifying answers)
 
 - A playable, finishable game demoable end-to-end in under 5 minutes.
-- Faithful Cannon Fodder core loop: point-and-click squad movement, click-to-shoot, isometric
-  scrolling battlefield, mission objectives, permadeath.
+- Faithful Cannon Fodder core loop: point-and-click squad movement, click-to-shoot, a
+  scrolling battlefield seen square-on from above, mission objectives, permadeath.
 - Grenades and rockets as selectable ordnance (brief-confirmed fidelity level).
 - Recruitment / Boot Hill screen with progression across levels.
 - Five levels imported from the supplied annotated map images.
@@ -77,7 +79,7 @@ are named explicitly below; none are built, but none are designed out of reach.
 |---|---|---|
 | Playable game, finished not broken | MVP | Milestone 1 is a vertical slice: one level, move, shoot, win/lose. Everything after is additive. |
 | Demoable in under 5 minutes | Submission | `app/StateMachine` supports a `?demo=1` deep-link that jumps straight to a chosen level with a pre-built squad; deploy is live from M1. |
-| 2D isometric scrolling point-and-click | MVP | `CameraRig` — orthographic, fixed isometric angle, edge/follow scroll. `PointerController` raycasts pointer to the ground plane for move/fire orders. |
+| 2D scrolling point-and-click battlefield | MVP | `CameraRig` — orthographic, fixed square (yaw 0) high-elevation angle, edge/follow scroll. `PointerController` raycasts pointer to the ground plane for move/fire orders. |
 | Faithful recreation | MVP | Sim rules modelled on the original: squad-follow formation, one-shot-kills, line-of-sight fire, objective-count mission completion. |
 | Original maps with avatar / enemy / loot-chest start locations | MVP | `tools/mapgen` converts annotated images to `level.json`; `LevelSchema` types exactly these three spawn categories plus terrain. |
 | Five levels | Platform | Same pipeline, five inputs. Level count is data, not code. |
@@ -181,7 +183,7 @@ All names below match `ARCHITECTURE_DIAGRAM.md`.
 | `TerrainRenderer` | Builds the level mesh from the terrain grid; texture/material assignment per tile type. |
 | `EntityRenderer` | Maps world entities to `UnitVisual` handles; per-frame `InstancedMesh` batches keyed by (model, animation frame); procedural bob/recoil/lean on top of frame-swapping. |
 | `UnitVisual` | Abstraction over "how a unit is drawn". Voxel-mesh implementation is the mainline; the billboard-sprite implementation is the pre-designed fallback and the seam for future visual styles. |
-| `CameraRig` | Orthographic, fixed isometric angle. Smooth follow of squad centroid, edge scroll, clamped to level bounds, screen-shake channel. |
+| `CameraRig` | Orthographic, fixed square angle: yaw 0, elevation 75° by default and retunable at runtime with `?elev=`. Smooth follow of squad centroid, edge scroll, edge-tight clamp to level bounds, screen-shake channel. The angles and the ground extents they imply live in `core/view/orientation.ts`, engine-free and unit tested; the rig is only the Three.js plumbing. Fit-to-level frames the level's extruded *silhouette*, not its flat footprint: `core/view/relief.ts` measures how far the level's own tiles rise above and fall below the ground plane, and `fitViewHeight` adds that overhang scaled by `cos(elevation)`, so the raised far edge is never clipped at the top of the viewport. |
 | `FXSystem` | Particle explosions, muzzle flashes, tracers, decals, damage flashes. Driven purely by `SimEvent`s. |
 | `PostFX` | `EffectComposer` chain — bloom, SSAO, tilt-shift DoF, vignette — behind a `quality: high \| low \| off` flag. |
 
@@ -281,11 +283,25 @@ reworking mainline code.
 
 ## Key tradeoffs & alternatives considered
 
+**The camera is square, not isometric** *(ticket 009a — a decision changed after the brief)*.
+The brief asked for isometric and ticket 009 shipped a 45-degree yaw at 40 degrees elevation.
+Rendered against the source art it was plainly wrong: `assets/source/levels/*/map.png` is drawn
+axis-aligned — the tile grid faces the screen squarely — and from a very high angle, with
+canopies reading as rounded blobs from above and short shadows. So yaw is now 0 and elevation
+75 degrees, tunable at runtime with `?elev=` because it is a by-eye judgement against the art.
+Not 90: a true top-down flattens the raised canopy and loses the read of which tiles block
+movement. Cost: the diagonal Cannon Fodder silhouette is gone. Bought: the view matches the art
+it is built from, and — because an axis-aligned viewport rectangle over an axis-aligned level
+IS its own bounding box — **edge-tight camera clamping**, which the 45-degree rig could not
+afford. At yaw 45 the bound is ~√2 larger per axis than what the player can see, so "never show
+void" left a band of zooms with zero pan range; ticket 009 had to clamp the look-at point and
+show sky at the edges instead. That compromise is deleted, not layered over.
+
 **Voxel extrusion over rigged 3D models.** Rejected: sourcing and retargeting rigged humanoids
 (Mixamo/Quaternius) — realistically a full day of the four, with a result that would not look
 like the user's art. Voxel extrusion is automatable, uses the actual assets, and produces a
 coherent style. Cost: no true skeletal animation; motion is frame-swapping plus procedural
-secondary motion. Accepted, because at isometric distance the difference is small and the
+secondary motion. Accepted, because at this camera's distance and angle the difference is small and the
 schedule difference is not.
 
 **Flow fields over A*.** Rejected A* for cost and testability. Cost: flow fields assume a
@@ -303,7 +319,8 @@ impossible to hand-tune. Cost: a build step and committed generated artifacts. A
 committed artifacts also mean the deploy never depends on the toolchain.
 
 **Three.js over Phaser.** Phaser would be the shortest path to *a* playable game, but the brief
-explicitly rewards technical stretch and graphics, and the isometric brief is natively 3D.
+explicitly rewards technical stretch and graphics, and the brief's lit, tilted battlefield is
+natively 3D.
 Cost: more lighting, camera and asset work. The `core/` boundary limits the blast radius, since
 the majority of gameplay code is renderer-agnostic either way.
 

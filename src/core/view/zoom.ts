@@ -13,6 +13,7 @@
  */
 
 import type { WorldBounds } from './projection'
+import { FLAT_RELIEF, reliefAllowance, type ReliefRange } from './relief'
 
 /** A unit direction on the ground plane (the XZ components of a screen axis). */
 export interface GroundAxis {
@@ -38,9 +39,22 @@ export function coverExtent(bounds: WorldBounds, axis: GroundAxis): number {
  *
  * Two constraints, both of which must hold:
  *   - across the screen: `halfHeight * aspect >= reach along screenRight`
- *   - into the screen:   `halfHeight / sin(elevation) >= reach along screenUp`
- *     (a camera tilted by `elevation` sees `halfHeight / sin(elevation)` of
- *     ground depth for `halfHeight` of screen height)
+ *   - into the screen:   `halfHeight >= reach along screenUp * sin(elevation)
+ *                         + relief allowance * cos(elevation)`
+ *
+ * The depth term is the ground rectangle seen obliquely: a camera tilted by
+ * `elevation` spends `sin(elevation)` of screen height on each unit of ground
+ * depth. The relief term is the part this used to miss. A point `h` above the
+ * ground plane projects `h * cos(elevation)` further up the screen than the
+ * ground beneath it, so extruded terrain makes the level's on-screen silhouette
+ * taller than its footprint — by more and more as the camera drops toward the
+ * horizon, since `cos` grows as `sin` shrinks. Framing only the footprint
+ * therefore pushes the raised far edge off the top of the viewport, which is
+ * exactly the clipping this term removes. On a flat level the allowance is 0 and
+ * this reduces to the ground-only formula.
+ *
+ * Relief costs nothing ACROSS the screen: at yaw 0 height projects purely
+ * vertically, so the horizontal constraint is untouched.
  *
  * `margin` > 1 leaves a little breathing room around the level edges.
  */
@@ -51,10 +65,14 @@ export function fitViewHeight(
   aspect: number,
   elevationRad: number,
   margin = 1,
+  relief: ReliefRange = FLAT_RELIEF,
 ): number {
   const safeAspect = aspect > 0 && Number.isFinite(aspect) ? aspect : 1
+  const elevation = Number.isFinite(elevationRad) ? elevationRad : 0
   const acrossHalfHeight = coverExtent(bounds, screenRight) / safeAspect
-  const depthHalfHeight = coverExtent(bounds, screenUp) * Math.sin(elevationRad)
+  const depthHalfHeight =
+    coverExtent(bounds, screenUp) * Math.abs(Math.sin(elevation)) +
+    reliefAllowance(relief) * Math.abs(Math.cos(elevation))
   return 2 * Math.max(acrossHalfHeight, depthHalfHeight) * margin
 }
 

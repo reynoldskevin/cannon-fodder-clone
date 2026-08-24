@@ -1,6 +1,6 @@
 # Game Week — Cannon Fodder Remake
 
-A browser-native, isometric squad shooter built in TypeScript on Three.js.
+A browser-native, top-down squad shooter built in TypeScript on Three.js.
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design.
 
 ## Deploy URL
