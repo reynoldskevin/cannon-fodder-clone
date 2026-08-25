@@ -151,7 +151,7 @@ describe('renderEntities — the dead', () => {
     let deadId = -1
     for (let f = 0; f < 60 && deadId < 0; f++) {
       s.advance(1 / 60)
-      for (const e of s.events()) if (e.type === 'UnitDied') deadId = e.unitId
+      for (const e of s.events()) if (e.type === 'UnitDied') deadId = e.id
     }
     expect(deadId).toBeGreaterThanOrEqual(0)
     expect(s.world.isAlive(deadId)).toBe(false)
@@ -167,7 +167,7 @@ describe('renderEntities — the dead', () => {
     let deadId = -1
     for (let f = 0; f < 60 && deadId < 0; f++) {
       s.advance(1 / 60)
-      for (const e of s.events()) if (e.type === 'UnitDied') deadId = e.unitId
+      for (const e of s.events()) if (e.type === 'UnitDied') deadId = e.id
     }
     expect(deadId).toBeGreaterThanOrEqual(0)
     // Well past half a second.

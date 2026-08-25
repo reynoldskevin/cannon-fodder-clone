@@ -22,8 +22,20 @@ const FRAMES = [
   0.0166, 0.0171, 0.0083, 0.0332, 0.0159, 0.0166, 0.0201, 0.0143, 0.25, 0.0166, 0.0169, 0.0158,
 ]
 
-function play(commandsAtFrame: ReadonlyMap<number, Command[]>, frames: number): unknown {
-  const level = makeLevel({
+/**
+ * The one level every run in this file uses.
+ *
+ * A function rather than a constant so each session gets its own document, and
+ * shared so the COMMAND SCRIPT is derived from the same roster the run uses. An
+ * earlier version built the script from `makeLevel()`'s two-avatar default while
+ * `play` ran a four-avatar level: frames 2 and 40 then addressed the same two
+ * men, the other two were never ordered at all, nobody closed to within the
+ * rifle's 8 tiles, and the "not vacuous" assertion failed for want of a corpse.
+ * The run was perfectly deterministic and completely uneventful, which is the
+ * least useful thing a determinism test can be.
+ */
+const battlefield = () =>
+  makeLevel({
     avatars: [
       { x: 3, y: 5 },
       { x: 3, y: 6 },
@@ -37,7 +49,9 @@ function play(commandsAtFrame: ReadonlyMap<number, Command[]>, frames: number): 
     ],
     blocked: new Set(['9,4', '9,5', '9,6', '9,7']),
   })
-  const session = createSession(level)
+
+function play(commandsAtFrame: ReadonlyMap<number, Command[]>, frames: number): unknown {
+  const session = createSession(battlefield())
   const eventTypes: string[] = []
 
   for (let f = 0; f < frames; f++) {
@@ -60,8 +74,8 @@ function play(commandsAtFrame: ReadonlyMap<number, Command[]>, frames: number): 
 }
 
 /** The same script both times: an initial order, then a split halfway through. */
-function script(session: ReturnType<typeof createSession>): ReadonlyMap<number, Command[]> {
-  const players = [...session.selection()]
+function script(): ReadonlyMap<number, Command[]> {
+  const players = [...createSession(battlefield()).selection()]
   return new Map<number, Command[]>([
     [2, [{ type: 'move', unitIds: players, target: { x: 16, y: 6 } }]],
     [40, [{ type: 'move', unitIds: players.slice(0, 2), target: { x: 3, y: 1 } }]],
@@ -70,12 +84,12 @@ function script(session: ReturnType<typeof createSession>): ReadonlyMap<number, 
 
 describe('session determinism', () => {
   it('two sessions given the same commands and frames end identically', () => {
-    const commands = script(createSession(makeLevel()))
+    const commands = script()
     expect(play(commands, 120)).toEqual(play(commands, 120))
   })
 
   it('stays identical at every checkpoint, not just the end', () => {
-    const commands = script(createSession(makeLevel()))
+    const commands = script()
     for (const frames of [1, 5, 23, 60, 120, 200]) {
       expect({ frames, state: play(commands, frames) }).toEqual({
         frames,
@@ -85,7 +99,7 @@ describe('session determinism', () => {
   })
 
   it('is not vacuous — the run actually does something', () => {
-    const commands = script(createSession(makeLevel()))
+    const commands = script()
     const result = play(commands, 200) as {
       tick: number
       entities: unknown[]
@@ -102,7 +116,7 @@ describe('session determinism', () => {
     // sim later consults — a corpse list, a facing cache — then a headless
     // replay would diverge from a rendered one, and the bug would only appear
     // in the actual game.
-    const commands = script(createSession(makeLevel()))
+    const commands = script()
 
     const withReads = (): unknown => {
       const level = makeLevel({
