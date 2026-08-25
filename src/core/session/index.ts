@@ -30,6 +30,7 @@ import { createGameLoop, EMPTY_EVENTS, FIXED_TIMESTEP } from '../world'
 import { World } from '../world'
 import { worldToTile } from '../view/projection'
 import { propRenderEntities } from './props'
+import type { AiSystem } from '../ai'
 import type { CombatOptions, CombatSystem } from '../combat'
 import type { CommandQueue } from '../command'
 import type { LevelData } from '../level'
@@ -71,6 +72,23 @@ export interface Session {
    * command layer sends `fire`/`ceaseFire` here, and the HUD can ask `isFiring`.
    */
   readonly combat: CombatSystem
+  /**
+   * The enemy's state machine (ticket 012), exposed read-only alongside the
+   * other three passes.
+   *
+   * NOTHING IN THE SESSION NEEDED THIS UNTIL THE DEBUG OVERLAY (ticket 014) —
+   * the AI is driven entirely by its own tick and hears events pushed into it
+   * from `collectEvents`. It is public now because `core/debug` cannot draw a
+   * state machine it cannot ask, and because the only alternative was for the
+   * overlay to infer the state from positions and gunfire, which is a second,
+   * lying copy of the machine.
+   *
+   * A READ SIDE ONLY, in practice: `stateOf` and `targetOf` are pure, and
+   * `hear` remains the owner's to call — this session drains the bus exactly
+   * once and hands it over, and a second caller feeding the machine would
+   * alert a man twice to the same round.
+   */
+  readonly ai: AiSystem
   /**
    * The mission's win/lose evaluation (ticket 013). Public because the HUD
    * draws `progress()` and the mission timer straight off it.
@@ -726,6 +744,7 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
     queue,
     squad,
     combat,
+    ai,
     objectives,
     grid,
     systemOrder,

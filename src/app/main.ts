@@ -329,6 +329,57 @@ async function boot(): Promise<void> {
     return roster.map((id) => ({ id, alive: session.world.isAlive(id) }))
   }
 
+  /**
+   * Whether `teardown` has run. Read by the debug chunk's late arrival below,
+   * which can land after a context loss has already torn the page down.
+   */
+  let stopped = false
+
+  /**
+   * The debug overlay (ticket 014), once it has loaded — `undefined` for as long
+   * as it has not, and forever when `?debug=1` was not asked for.
+   *
+   * THE FLAG GATES A DYNAMIC `import()`, NOT AN `if` AROUND A LOADED MODULE.
+   * `./debug-mode` and everything only it reaches — `core/debug`,
+   * `render/debug-overlay`, `ui/debug-panel` — is a chunk of its own that a
+   * normal build never fetches and never evaluates, which is what makes "the
+   * production bundle does not grow" a measurable claim rather than a hope. It
+   * follows that nothing above may import that module's VALUES: a type-only
+   * import is erased, a value import would pull the whole chunk back in and
+   * nothing would fail to warn us.
+   *
+   * Awaited nowhere: the first frames render without it and it appears when it
+   * arrives. Blocking the boot on a debugging tool would make the flag change
+   * the timing of the thing it is meant to measure.
+   */
+  let debug: { update(): void; dispose(): void } | undefined
+  if (new URLSearchParams(window.location.search).get('debug') === '1') {
+    void import('./debug-mode')
+      .then((module) => {
+        // The teardown may have run while the chunk was in flight; attaching
+        // then would add a key listener to a page that is already dead.
+        if (stopped) return
+        debug = module.attachDebugMode({
+          mount,
+          scene: built.scene,
+          renderer,
+          size: level.size,
+          heightAt: groundHeightAt,
+          elevationRad: elevation,
+          // The CURRENT session, not the one that exists now: `restart()`
+          // replaces it, and an overlay holding the old one would draw a dead
+          // mission over the live one.
+          session: () => session,
+        })
+      })
+      .catch((error: unknown) => {
+        // A debugging tool that fails to load must not take the game with it:
+        // the mission is playable without an overlay, and a fatal screen here
+        // would turn a mistyped URL into a broken build.
+        console.error('debug overlay failed to load', error)
+      })
+  }
+
   /** The end screen, while one is up. `undefined` means the mission is still on. */
   let ending: MissionEndScreen | undefined
   /** `MissionFailed.reason`, kept because the event is a one-shot and the screen is not. */
@@ -395,10 +446,15 @@ async function boot(): Promise<void> {
 
   /** Tear the whole session down: loop, listeners, controllers, GPU resources. */
   const teardown = (): void => {
+    stopped = true
     renderer.setAnimationLoop(null)
     window.removeEventListener('resize', onResize)
     window.removeEventListener('blur', onBlur)
     ending?.dispose()
+    // Its own group, its own listener, its own GPU buffers — none of which the
+    // scene's `dispose` knows about, because the overlay was added to the scene
+    // from outside it.
+    debug?.dispose()
     hud.dispose()
     pointer.dispose()
     zoom.dispose()
@@ -487,6 +543,10 @@ async function boot(): Promise<void> {
         })
       }
       built.entities.update(elapsed, alpha)
+      // BEFORE the render, so this frame draws what this frame decided. Absent
+      // `?debug=1` this is one optional-call check per frame and no debug module
+      // was ever fetched, let alone evaluated.
+      debug?.update()
       renderer.render(built.scene, rig.camera)
     } catch (error: unknown) {
       teardown()
