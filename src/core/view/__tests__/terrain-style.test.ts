@@ -22,8 +22,33 @@ describe('known tile ids', () => {
     expect(tileStyle(1, true).colour).not.toBe(tileStyle(2, false).colour)
   })
 
-  it('gives canopy more height than grass, so the map reads in 3D', () => {
-    expect(tileStyle(2, false).height).toBeGreaterThan(tileStyle(1, true).height)
+  it('lays canopy FLAT, level with grass, so no tile stands on a pedestal', () => {
+    /**
+     * REVERSED DELIBERATELY, and the old assertion is worth keeping in view:
+     * "gives canopy more height than grass, so the map reads in 3D". That was
+     * ticket 010a's decision and it cost more than it bought.
+     *
+     * One tree is planted per FRINGE canopy tile — any canopy tile with a
+     * non-canopy neighbour — so a lone tree in open grass is fringe on all four
+     * sides and stood on a one-tile block with nothing beside it to hide the
+     * block's walls. Every isolated trunk on level 1 sat on a visible dark
+     * square. The map still reads in 3D; the trees do it, which is what they
+     * are for.
+     *
+     * EQUAL, not merely close. Any difference at all puts a step at every
+     * grass/canopy boundary, which relocates the artefact rather than removing
+     * it.
+     */
+    expect(tileStyle(2, false).height).toBe(tileStyle(1, true).height)
+    expect(tileStyle(2, true).height).toBe(tileStyle(1, true).height)
+  })
+
+  it('still tells canopy from grass by COLOUR, which now carries it alone', () => {
+    // With the height gone, colour is the only thing left distinguishing a
+    // forest floor from a field. If these ever converged the canopy would
+    // vanish into the grass entirely.
+    expect(tileStyle(2, false).colour).not.toBe(tileStyle(1, true).colour)
+    expect(tileStyle(2, true).colour).not.toBe(tileStyle(1, true).colour)
   })
 })
 
