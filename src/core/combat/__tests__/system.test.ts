@@ -194,13 +194,18 @@ describe('createCombatSystem', () => {
     })
 
     it('leaves the world stable once combat resolves', () => {
+      // NOT a stateHash comparison across time. `stateHash` folds `ticks` in as
+      // its first input, deliberately (ticket 005), so a hash at tick 300 can
+      // never equal one at tick 600 no matter how quiet the world is. What
+      // "stable" actually means here is that combat stops doing anything: no
+      // further events, and the survivors are untouched.
       const s = scene()
       s.world.spawn({ kind: 'rifleman', team: 'player', x: 0, z: 0 })
       s.world.spawn({ kind: 'rifleman', team: 'enemy', x: 3, z: 0 })
       s.run(300)
-      const hash = s.world.stateHash()
-      s.run(300)
-      expect(s.world.stateHash()).toBe(hash)
+      const survivors = s.world.entities.map((e) => ({ ...e }))
+      expect(s.run(300)).toHaveLength(0)
+      expect(s.world.entities.map((e) => ({ ...e }))).toEqual(survivors)
     })
   })
 

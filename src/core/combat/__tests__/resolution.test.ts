@@ -49,6 +49,17 @@ describe('WEAPONS', () => {
     expect(WEAPONS[RIFLE]!.damage).toBeGreaterThanOrEqual(INFANTRY_HEALTH)
   })
 
+  it('agrees with the health an unspecified spawn actually gets', () => {
+    // `core/world` cannot import from `core/combat` — that is the wrong way up
+    // the dependency stack — so the infantry hit point exists in both files and
+    // "the two must agree" is a comment rather than a mechanism. This is the
+    // mechanism. If either side is retuned alone, a rifle round stops being
+    // lethal (or a jeep stops being tough) with nothing to say why.
+    const w = world()
+    const fresh = w.spawn({ kind: 'rifleman', team: 'player', x: 0, z: 0 })
+    expect(fresh.health).toBe(INFANTRY_HEALTH)
+  })
+
   it('keeps damage a value rather than a boolean', () => {
     // The vehicles extension point: a jeep with health 5 must survive a rifle
     // round without the hit path needing to learn what a jeep is.
