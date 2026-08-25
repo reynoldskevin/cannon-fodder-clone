@@ -62,6 +62,11 @@ export function tileToWorld(x: number, y: number, size: LevelSize): WorldPoint {
  * Clamping rather than returning `null` for an off-map point: every caller
  * (pointer picking, pathing hints) wants the nearest legal tile, and a `null`
  * would just be re-clamped at each call site.
+ *
+ * NOTE: `src/input/pointer-controller.ts` reimplements this mapping (minus the
+ * clamp — an off-map click is refused there, not snapped) because importing
+ * `core/view` from `src/input` would breach the layering rule. Change the maths
+ * here and that copy needs the same change.
  */
 export function worldToTile(wx: number, wz: number, size: LevelSize): TileCoord {
   const x = Math.round(wx / TILE_WORLD_SIZE + (size.w - 1) / 2)
