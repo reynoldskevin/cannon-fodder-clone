@@ -1,17 +1,25 @@
 /**
  * SceneBuilder — turns a validated `LevelData` into a ready-to-render Three.js
- * scene: sky, fog, lights with shadows, the baked terrain mesh and the
- * placeholder spawn markers.
+ * scene: sky, fog, lights with shadows, the baked terrain mesh and the sprite
+ * entities standing on it.
  *
- * Everything it builds is static for the level's lifetime. Nothing here runs per
- * frame; `dispose()` tears the whole thing down when a level is unloaded.
+ * The terrain half is static for the level's lifetime and nothing about it runs
+ * per frame. The entity half is not: `BuiltScene.entities` must be updated
+ * every frame, which is the caller's job. `dispose()` tears both down when a
+ * level is unloaded.
+ *
+ * Ticket 010 replaced the placeholder coloured boxes (`spawn-markers.ts`, now
+ * deleted) with the real sprite `EntityRenderer`.
  */
 
 import * as THREE from 'three'
 import type { LevelData } from '../core/level'
+import { ELEVATION } from '../core/view/orientation'
 import { levelWorldBounds } from '../core/view/projection'
 import { TerrainRenderer } from './terrain-renderer'
-import { buildSpawnMarkers, disposeSpawnMarkers } from './spawn-markers'
+import { EntityRenderer } from './entity-renderer'
+import { levelRenderEntities } from './level-entities'
+import type { UnitVisual } from './sprite-atlas'
 
 /** Horizon/sky colour, also the fog colour so the map fades into it rather than into black. */
 const SKY_COLOUR = 0x9fc6d8
@@ -25,14 +33,24 @@ const FOG_FAR = 230
 export interface BuiltScene {
   readonly scene: THREE.Scene
   readonly terrain: TerrainRenderer
+  readonly entities: EntityRenderer
   readonly sun: THREE.DirectionalLight
   readonly bounds: ReturnType<typeof levelWorldBounds>
   dispose(): void
 }
 
 export class SceneBuilder {
-  /** Build the complete scene graph for a level. */
-  static build(level: LevelData): BuiltScene {
+  /**
+   * Build the complete scene graph for a level.
+   *
+   * `visual` is passed in already loaded rather than fetched here: the atlas is
+   * an async network resource and this stays synchronous, so a caller that has
+   * not got the art yet is a compile error rather than a half-built scene.
+   *
+   * `elevationRad` is the camera's, and the sprite quads are tilted to match —
+   * see `EntityRenderer`'s header for why the two must agree.
+   */
+  static build(level: LevelData, visual: UnitVisual, elevationRad: number = ELEVATION): BuiltScene {
     const scene = new THREE.Scene()
     scene.name = `level:${level.name}`
     scene.background = new THREE.Color(SKY_COLOUR)
@@ -70,16 +88,28 @@ export class SceneBuilder {
     const terrain = new TerrainRenderer(level)
     scene.add(terrain.mesh)
 
-    const markers = buildSpawnMarkers(level, terrain)
-    scene.add(markers)
+    const entities = new EntityRenderer(visual, elevationRad)
+    scene.add(entities.group)
+    // Seed both sim states with the same spawn list. Until ticket 005 exists
+    // there is no motion to interpolate, and calling this twice is what makes
+    // `previous` and `current` agree rather than the first frame lerping from
+    // an empty world.
+    const spawned = levelRenderEntities(level, (x, y) => terrain.heightAt(x, y))
+    entities.setEntities(spawned)
+    entities.setEntities(spawned)
+    // Prime the instance buffers so the scene is complete the moment it is
+    // returned: the first rendered frame is then already right, and callers can
+    // report the draw-call count without having rendered anything.
+    entities.update(0, 1)
 
     return {
       scene,
       terrain,
+      entities,
       sun,
       bounds,
       dispose(): void {
-        disposeSpawnMarkers(markers)
+        entities.dispose()
         terrain.dispose()
         // The shadow map is a 2048x2048 depth render target (~16 MB) owned by
         // the light, not by the scene graph: `scene.clear()` drops the reference

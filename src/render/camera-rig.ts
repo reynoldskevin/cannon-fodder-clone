@@ -37,6 +37,22 @@ import type { WorldBounds } from '../core/view/projection'
 /** How far back the camera sits. Irrelevant to framing (ortho) — it only has to clear the map. */
 const CAMERA_DISTANCE = 120
 
+/**
+ * Half-depth of the orthographic clip box, in world units — near = -this,
+ * far = +this.
+ *
+ * A NEGATIVE NEAR PLANE IS DELIBERATE. `EntityRenderer` draws sprites on upright
+ * quads pre-stretched by `1 / cos(elevation)` (see its header), so a sprite's
+ * head stands `height * tan(elevation)` closer to the camera than its feet. At
+ * the top of the `?elev=` band that is 238 world units for a tree — well past
+ * `CAMERA_DISTANCE`, i.e. behind the camera's own position — and a near plane at
+ * 0.1 would clip the tops off every prop. An orthographic projection has no
+ * perspective divide and no near-plane precision cliff: its depth is linear, so
+ * a symmetric 720-unit box costs 3e-5 world units of depth resolution at 24
+ * bits, three orders of magnitude finer than the 0.02 the sprite lift uses.
+ */
+const CAMERA_DEPTH_HALF = CAMERA_DISTANCE * 3
+
 /** World-space height of the viewport: roughly how many tiles are visible top to bottom. */
 const DEFAULT_VIEW_HEIGHT = 16
 
@@ -149,7 +165,14 @@ export class CameraRig {
     this.elevation = Number.isFinite(elevationRad) ? elevationRad : ELEVATION
     this.panBounds = skyFreePanBounds(bounds, relief, this.elevation)
 
-    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, CAMERA_DISTANCE * 3)
+    this.camera = new THREE.OrthographicCamera(
+      -1,
+      1,
+      1,
+      -1,
+      -CAMERA_DEPTH_HALF,
+      CAMERA_DEPTH_HALF,
+    )
     this.camera.name = 'camera:square'
 
     this.applyOrientation()
