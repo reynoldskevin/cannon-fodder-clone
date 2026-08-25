@@ -148,16 +148,9 @@ describe('separation', () => {
     }
   })
 
-  it('holds close to the full separation radius once settled', () => {
-    // The per-tick assertions above use a deliberately loose floor, because a
-    // squad genuinely does compress while it funnels and unstacks. That looseness
-    // must not be the ONLY thing checked, or "separation works" is satisfied by a
-    // system that merely stops units sharing one pixel. Once settled on open
-    // ground with no reason to crowd, the gaps should be near the radius asked
-    // for — this is the assertion that would fail if separation were reduced to a
-    // token nudge.
-    const radius = 0.6
-    const s = scene(OPEN, { ...OPTS, separationRadius: radius })
+  /** Smallest pairwise gap once a squad ordered a short distance has settled. */
+  function settledMinGap(slotSpacing: number, separationRadius: number): number {
+    const s = scene(OPEN, { ...OPTS, slotSpacing, separationRadius })
     const ids = [s.spawn(6, 5), s.spawn(6, 5), s.spawn(6, 5), s.spawn(6, 5)].map((e) => e.id)
     s.squad.order(ids, { x: 8, y: 5 })
     s.run(600)
@@ -165,7 +158,35 @@ describe('separation', () => {
     for (let i = 0; i < ids.length; i++) {
       for (let j = i + 1; j < ids.length; j++) min = Math.min(min, s.gap(ids[i]!, ids[j]!))
     }
-    expect(min).toBeGreaterThan(radius * 0.75)
+    return min
+  }
+
+  it('opens the gap beyond what the formation geometry alone would give', () => {
+    // THE TEST THAT ACTUALLY BITES, and the reason it is shaped so awkwardly.
+    //
+    // The obvious version — settle a squad at the default spacing and assert the
+    // gaps are near the separation radius — is VACUOUS, and was in this file
+    // until it was measured. At the defaults the settled minimum gap is decided
+    // entirely by the wedge: `slotSpacing * hypot(1, WEDGE_SPREAD)`, about 1.10
+    // tiles, which already exceeds any sane radius. Measured at radii 0.6, 1e-9
+    // and 0, that gap is 1.098590 every time — identical to six decimal places.
+    // An implementation with separation DELETED passes it.
+    //
+    // Separation is only observable where the slots themselves are tighter than
+    // the radius, so that is the configuration to test in. At `slotSpacing` 0.3
+    // the wedge alone gives 0.366; separation must push past that.
+    const geometryOnly = settledMinGap(0.3, 0)
+    const withSeparation = settledMinGap(0.3, 0.6)
+    expect(geometryOnly).toBeCloseTo(0.3 * Math.hypot(1, 0.7), 2)
+    expect(withSeparation).toBeGreaterThan(geometryOnly + 0.08)
+  })
+
+  it('opens the gap further as the separation radius grows', () => {
+    // Scaling, not just presence: a fixed nudge that ignores the configured
+    // radius would satisfy the test above and still be wrong.
+    const small = settledMinGap(0.3, 0.2)
+    const large = settledMinGap(0.3, 0.9)
+    expect(large).toBeGreaterThan(small)
   })
 
   it('does not blow the squad apart', () => {
