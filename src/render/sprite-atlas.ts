@@ -197,6 +197,34 @@ export const STATIC_CLIP = 'static'
 const STATIC_ANIMATION: AnimationClip = { frameCount: 1, fps: 1, loop: false }
 
 /**
+ * The resting pose, SYNTHESISED HERE because the pipeline emits no such thing.
+ *
+ * `tools/spritegen` produces exactly three soldier animations — `walk`, `fire`
+ * and `die` — so there is no idle art to load. Before this existed, a standing
+ * soldier was drawn with `walk`, which loops: the whole squad jogged on the spot
+ * whenever it was not going anywhere. That looked like a deliberate style choice
+ * for as long as there was no simulation and therefore no soldier who was ever
+ * NOT standing still.
+ *
+ * The derivation is `walk`'s first frame, held: same texels, same trim, same
+ * anchor, so a man who stops does not change size or hop to a different pose —
+ * he simply stops moving. It is built per DIRECTION, so a resting squad still
+ * faces eight ways.
+ *
+ * Synthesised in the renderer rather than authored in the atlas on purpose: it
+ * costs no texture area, it cannot drift from the walk cycle it is taken from,
+ * and the day real idle art is drawn, the pipeline emits `idle` for real and
+ * this derivation is skipped for any unit that already has one.
+ */
+export const IDLE_CLIP = 'idle'
+
+/** One frame, held. `fps` is irrelevant to a single frame; 1 is the honest value. */
+const IDLE_ANIMATION: AnimationClip = { frameCount: 1, fps: 1, loop: false }
+
+/** The animation an idle pose is taken from, when the unit has no authored idle. */
+const IDLE_SOURCE = 'walk'
+
+/**
  * Animations that must NOT loop.
  *
  * The manifest declares `fps` but not looping, so the decision lives here. A
@@ -244,6 +272,20 @@ class AtlasUnitVisual implements UnitVisual {
           loop: !ONE_SHOT_ANIMATIONS.has(animation),
         })
       }
+
+      // The resting pose. Skipped entirely if the pipeline ever emits a real
+      // `idle` for this unit — the loop above will already have registered it,
+      // and authored art beats a derivation.
+      if (!this.clips.has(`${unit}|${IDLE_CLIP}`)) {
+        const source = definition.animations[IDLE_SOURCE]
+        if (source) {
+          for (const direction of Object.keys(source.directions)) {
+            const first = this.frames.get(key(unit, IDLE_SOURCE, direction, 0))
+            if (first) this.frames.set(key(unit, IDLE_CLIP, direction, 0), first)
+          }
+          this.clips.set(`${unit}|${IDLE_CLIP}`, IDLE_ANIMATION)
+        }
+      }
     }
 
     for (const [prop, definition] of Object.entries(manifest.props)) {
@@ -261,10 +303,17 @@ class AtlasUnitVisual implements UnitVisual {
   }
 
   frame(unit: string, animation: string, direction: Facing, frame: number): SpriteFrame | null {
-    // Props are direction- and animation-agnostic; asking for `soldier`'s walk
-    // on a tree should still draw the tree rather than nothing at all.
+    // Three fallbacks, narrowest first:
+    //   1. the exact frame asked for;
+    //   2. frame 0 of the same clip — a HELD clip has only one, and a caller
+    //      that computes its index from a stale `frameCount` would otherwise
+    //      get a blank soldier, which is worse than a repeated one;
+    //   3. the unit's static frame. Props are direction- and animation-
+    //      agnostic; asking for `soldier`'s walk on a tree should still draw the
+    //      tree rather than nothing at all.
     return (
       this.frames.get(key(unit, animation, direction, frame)) ??
+      this.frames.get(key(unit, animation, direction, 0)) ??
       this.frames.get(key(unit, STATIC_CLIP, STATIC_CLIP, 0)) ??
       null
     )
@@ -398,6 +447,18 @@ export async function buildSpriteAtlas(
   }
 
   configureAtlasTexture(texture)
+  return createUnitVisual(manifest, texture)
+}
+
+/**
+ * A `UnitVisual` over an already-loaded manifest and texture.
+ *
+ * Split out from `buildSpriteAtlas` so the clip and frame resolution can be
+ * tested without a network fetch or a WebGL context — it is pure lookup over
+ * the manifest, and it went untested for exactly as long as it was welded to
+ * the two things that need a browser.
+ */
+export function createUnitVisual(manifest: SpriteManifest, texture: THREE.Texture): UnitVisual {
   return new AtlasUnitVisual(manifest, texture)
 }
 

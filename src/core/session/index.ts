@@ -122,6 +122,16 @@ const FIRE_ANIMATION = 'fire'
 const DIE_ANIMATION = 'die'
 
 /**
+ * The resting pose.
+ *
+ * Named here as a plain string rather than imported from the renderer's
+ * `IDLE_CLIP`, because `core/` may not depend on `src/render/` — the same reason
+ * `walk`, `fire` and `die` are spelled out above rather than read from the
+ * manifest. The renderer synthesises this clip; the two spellings must agree.
+ */
+const IDLE_ANIMATION = 'idle'
+
+/**
  * The `die` clip's length, in frames and frames per second, from
  * `tools/spritegen/index.ts`: `SHEET_GRID.cols` is 4, so every animation is four
  * frames, and `FPS.die` is 8. Restated rather than imported because `tools/` is
@@ -429,13 +439,20 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
    *
    * `walk` outranks `fire` because a man running is a man running whatever his
    * rifle is doing, and it is the animation that carries the movement the player
-   * ordered. The fallback is `walk` rather than an idle because the atlas has no
-   * idle — `tools/spritegen` emits `walk`, `fire` and `die` and nothing else.
+   * ordered.
+   *
+   * A man doing neither IDLES. `tools/spritegen` emits no idle art — `walk`,
+   * `fire` and `die` and nothing else — so `idle` is synthesised by the renderer
+   * from walk's first frame, held (`src/render/sprite-atlas.ts`). Returning
+   * `walk` here instead, which is what this did first, plays a looping
+   * four-frame cycle at a man who is not going anywhere: the whole squad jogs on
+   * the spot. It read as a style choice for as long as there was no simulation
+   * and therefore no soldier who was ever NOT standing still.
    */
   function animationFor(entity: Entity): string {
     if (entity.state === STATE_MOVING) return WALK_ANIMATION
     if (shooters.has(entity.id)) return FIRE_ANIMATION
-    return WALK_ANIMATION
+    return IDLE_ANIMATION
   }
 
   /**
