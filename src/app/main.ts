@@ -15,6 +15,7 @@ import { tileToWorld } from '../core/view/projection'
 import { levelRelief } from '../core/view/relief'
 import { CameraRig } from '../render/camera-rig'
 import { SceneBuilder } from '../render/scene-builder'
+import { loadSpriteAtlas, SpriteAtlasError, type UnitVisual } from '../render/sprite-atlas'
 import { PanController } from '../input/pan-controller'
 import { ZoomController } from '../input/zoom-controller'
 import { showControlHint } from '../ui/control-hint'
@@ -27,6 +28,7 @@ import { CORE_VERSION } from '../core/version'
  * leading slash would break every one of those but the root.
  */
 const LEVEL_URL = './generated/levels/level1.json'
+const SPRITES_URL = './generated/sprites/sprites.manifest.json'
 
 /** Longest a frame may claim to be, so a backgrounded tab doesn't teleport the camera. */
 const MAX_FRAME_DT = 1 / 15
@@ -80,6 +82,25 @@ async function fetchLevel(url: string): Promise<LevelData> {
         `${url} does not match the level schema this build understands.`,
         `${cause.code} at ${cause.path}: ${cause.message}`,
       )
+    }
+    throw cause
+  }
+}
+
+/**
+ * Load the sprite atlas, restating any failure as a `BootError`.
+ *
+ * The atlas is as load-bearing as the level: without it the map is empty
+ * terrain, which is exactly the "looks fine, is broken" outcome the error
+ * overlay exists to prevent. So a missing atlas stops the boot and says why,
+ * rather than rendering a convincing but unpopulated level.
+ */
+async function fetchVisual(url: string): Promise<UnitVisual> {
+  try {
+    return await loadSpriteAtlas(url)
+  } catch (cause) {
+    if (cause instanceof SpriteAtlasError) {
+      throw new BootError('The unit sprites could not be loaded', cause.detail, cause.technical)
     }
     throw cause
   }
@@ -149,13 +170,17 @@ async function boot(): Promise<void> {
   renderer.domElement.style.display = 'block'
   mount.append(renderer.domElement)
 
-  const level = await fetchLevel(LEVEL_URL)
-  const built = SceneBuilder.build(level)
-
   // `?elev=` is a look-tuning knob, not a game setting: the camera angle is a
   // judgement against the source art and the only way to settle it is to look at
   // it, so it is adjustable without a rebuild. Garbage falls back to the default.
+  // Read before the scene is built, because the sprite quads are tilted to face
+  // this exact angle.
   const elevation = parseElevation(new URLSearchParams(window.location.search).get('elev'))
+
+  // Both fetches at once: they are independent, and serialising them would put
+  // a whole extra round trip in front of the first frame.
+  const [level, visual] = await Promise.all([fetchLevel(LEVEL_URL), fetchVisual(SPRITES_URL)])
+  const built = SceneBuilder.build(level, visual, elevation)
 
   // The rig reasons about the level's SILHOUETTE, not its footprint: the terrain
   // is extruded, so the zoom cap has to know how far this particular level's
@@ -217,14 +242,27 @@ async function boot(): Promise<void> {
   })
 
   let previous = performance.now()
+  /**
+   * The renderer's own animation clock, in seconds.
+   *
+   * Accumulated from clamped frame deltas rather than read from
+   * `performance.now()`: a backgrounded tab would otherwise return to a clock
+   * that had run on without it and snap every walk cycle to a random frame.
+   */
+  let elapsed = 0
   renderer.setAnimationLoop((now) => {
     // A throw here repeats every frame and is invisible behind a frozen canvas.
     // Stop the loop on the first one and say so on screen instead.
     try {
       const dt = Math.min((now - previous) / 1000, MAX_FRAME_DT)
       previous = now
+      elapsed += dt
       pan.update(dt)
       rig.update(dt)
+      // Alpha 1 until ticket 005's fixed-timestep loop exists: with no sim
+      // there is no partial tick to be between, and 1 means "the state you were
+      // last given", which is the honest answer.
+      built.entities.update(elapsed, 1)
       renderer.render(built.scene, rig.camera)
     } catch (error: unknown) {
       teardown()
@@ -240,8 +278,8 @@ async function boot(): Promise<void> {
 
   console.info(
     `game-week: ${level.name} ${String(level.size.w)}x${String(level.size.h)} ` +
-      `(${String(built.terrain.triangleCount)} tris, camera ${((elevation * 180) / Math.PI).toFixed(1)}°, ` +
-      `core ${CORE_VERSION})`,
+      `(${String(built.terrain.triangleCount)} tris, ${String(built.entities.drawCalls)} sprite draws, ` +
+      `camera ${((elevation * 180) / Math.PI).toFixed(1)}°, core ${CORE_VERSION})`,
   )
 }
 
