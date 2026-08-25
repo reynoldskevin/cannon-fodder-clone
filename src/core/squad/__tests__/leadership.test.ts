@@ -171,8 +171,17 @@ describe('orders naming units that are not there', () => {
   })
 
   it('creates no detachment for an order with no live ids at all', () => {
+    // Asserted AFTER a tick, deliberately. `createSquadSystem(grid, options)`
+    // never receives a `World` — a `SimSystem` is handed one per tick and at no
+    // other time — so at the moment `order` is called the system cannot know
+    // whether 4242 names anybody. Demanding it did would force either a
+    // constructor coupled to a world instance (which `createCombatSystem` is
+    // not) or a heuristic on the id VALUE, and 4242 is a perfectly ordinary
+    // entity id in a long mission. Validation on the tick that follows is the
+    // honest seam; what matters is that the empty detachment does not survive.
     const s = scene(OPEN, OPTS)
     s.squad.order([4242], { x: 15, y: 4 })
+    s.run(1)
     expect(s.squad.detachmentCount).toBe(0)
   })
 })

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { scene, offMapOrBlocked } from './fixture'
+import { scene, offMapOrBlocked, occupiedTile } from './fixture'
 import { INFANTRY } from '../../pathing/navgrid'
+import { tileToWorld, worldToTile } from '../../view/projection'
 
 /**
  * Ticket 007 — the squad and the terrain.
@@ -49,6 +50,58 @@ const DOGLEG = `
   ####........
   ############
 `
+
+describe('the squad agrees with the rest of the engine about which tile it is in', () => {
+  /**
+   * THE HALF-TILE BUG, PINNED.
+   *
+   * World space is origin-centred and integer tile coordinates name tile
+   * CENTRES (`tileToWorld`), so tile `n` spans `[n - 0.5, n + 0.5)` and the
+   * index is `Math.round`. A module that instead FLOORS a centre-indexed
+   * coordinate is off by exactly half a tile — and off-by-half is the worst
+   * possible size of error, because every unit still ends up somewhere
+   * plausible. It just quietly occupies the tile next door: `combat`'s
+   * line-of-sight traces from a different tile than the one the mover thinks it
+   * is standing in, and the renderer draws a soldier half inside a trunk.
+   *
+   * This is not asserted by watching the squad; it is asserted against
+   * `projection.worldToTile`, which is the engine's single authority. An earlier
+   * version of this suite computed occupancy inside the fixture, so the squad
+   * system was only ever checked for agreement with the test.
+   */
+  it('a position past a tile centre belongs to the next tile', () => {
+    const size = { w: 18, h: 7 }
+    const centre = tileToWorld(3, 3, size)
+    expect(worldToTile(centre.x + 0.6, centre.z, size).x).toBe(4)
+    expect(worldToTile(centre.x + 0.4, centre.z, size).x).toBe(3)
+    expect(worldToTile(centre.x - 0.6, centre.z, size).x).toBe(2)
+  })
+
+  it('reports a spawned unit in the tile it was spawned on', () => {
+    const s = scene(CORRIDOR, OPTS)
+    const a = s.spawn(7, 3)
+    expect(occupiedTile(s, a.id)).toEqual({ x: 7, y: 3 })
+  })
+
+  it('agrees with worldToTile at every tick of a march', () => {
+    // The squad may hold whatever internal representation it likes; where it
+    // ENDS each tick must be a tile the engine's own helper calls passable.
+    const s = scene(CORRIDOR, OPTS)
+    const ids = [s.spawn(1, 3), s.spawn(1, 2), s.spawn(1, 4), s.spawn(2, 3)].map((e) => e.id)
+    s.squad.order(ids, { x: 16, y: 3 })
+    for (let t = 0; t < 400; t++) {
+      s.run(1)
+      for (const id of ids) {
+        const tile = occupiedTile(s, id)
+        expect({ t, id, ok: s.grid.passable(tile.x, tile.y, INFANTRY) }).toEqual({
+          t,
+          id,
+          ok: true,
+        })
+      }
+    }
+  })
+})
 
 describe('units stay on walkable ground', () => {
   it('holds through a wide corridor traversal', () => {

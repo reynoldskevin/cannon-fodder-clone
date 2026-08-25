@@ -148,6 +148,26 @@ describe('separation', () => {
     }
   })
 
+  it('holds close to the full separation radius once settled', () => {
+    // The per-tick assertions above use a deliberately loose floor, because a
+    // squad genuinely does compress while it funnels and unstacks. That looseness
+    // must not be the ONLY thing checked, or "separation works" is satisfied by a
+    // system that merely stops units sharing one pixel. Once settled on open
+    // ground with no reason to crowd, the gaps should be near the radius asked
+    // for — this is the assertion that would fail if separation were reduced to a
+    // token nudge.
+    const radius = 0.6
+    const s = scene(OPEN, { ...OPTS, separationRadius: radius })
+    const ids = [s.spawn(6, 5), s.spawn(6, 5), s.spawn(6, 5), s.spawn(6, 5)].map((e) => e.id)
+    s.squad.order(ids, { x: 8, y: 5 })
+    s.run(600)
+    let min = Infinity
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) min = Math.min(min, s.gap(ids[i]!, ids[j]!))
+    }
+    expect(min).toBeGreaterThan(radius * 0.75)
+  })
+
   it('does not blow the squad apart', () => {
     // Separation that never relents is a squad that expands forever. The men
     // must stay a squad — within a few tiles of their leader.

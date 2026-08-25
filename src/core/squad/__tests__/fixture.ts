@@ -78,12 +78,25 @@ export function scene(art: string, options: SquadOptions = {}): Scene {
 }
 
 /**
- * World XZ back to FRACTIONAL tile coordinates.
+ * World XZ back to FRACTIONAL tile coordinates, CENTRE-INDEXED.
+ *
+ * Integer values name tile CENTRES, matching `tileToWorld` — so a unit spawned
+ * at `spawn(2, 5)` reads back as exactly `{x: 2, y: 5}` and every assertion in
+ * these tests is written in the same coordinates the test used to place things.
  *
  * `core/view/projection`'s `worldToTile` rounds and clamps, which is right for
  * "which tile was clicked" and wrong here: rounding would hide exactly the
  * sub-tile drift these tests are checking for, and clamping would quietly turn a
  * unit that escaped the map into a unit sitting politely on its edge.
+ *
+ * DO NOT `Math.floor` THE RESULT to get a tile index. That is the half-tile bug
+ * this comment exists to prevent, and an earlier version of this fixture shipped
+ * it: centre-indexed tile `n` spans `[n - 0.5, n + 0.5)`, so the index is
+ * `Math.round`, not `Math.floor`. Flooring silently reports a unit standing 0.6
+ * tiles east of tile 3's centre — which is in tile 4 — as being in tile 3, and a
+ * walkability assertion built on it passes while the man's feet are in a tree.
+ * `occupiedTile` below is the only sanctioned way to get an index from a
+ * position, and it defers to `worldToTile` so it cannot drift from the engine.
  */
 export function worldToTileFractional(
   wx: number,
@@ -96,11 +109,25 @@ export function worldToTileFractional(
 /** Re-exported so tests can assert the rounding helper agrees with the engine's. */
 export { tileToWorld, worldToTile }
 
+/**
+ * Which tile a unit OCCUPIES, straight from the shared projection helper.
+ *
+ * Deliberately not computed here. The whole hazard this ticket has to survive is
+ * two modules disagreeing about which tile a world position is in; a fixture
+ * that reimplements the conversion can only ever confirm that the squad system
+ * agrees with the fixture.
+ */
+export function occupiedTile(s: Scene, id: number): { x: number; y: number } {
+  const e = s.world.get(id)
+  if (!e) throw new Error(`no entity ${String(id)}`)
+  return worldToTile(e.x, e.z, s.level.size)
+}
+
 /** Every unit is standing on a passable tile. Returns the first offender, if any. */
 export function offMapOrBlocked(s: Scene, ids: readonly number[], mask: number): number | null {
   for (const id of ids) {
-    const t = s.tileOf(id)
-    if (!s.grid.passable(Math.floor(t.x), Math.floor(t.y), mask)) return id
+    const t = occupiedTile(s, id)
+    if (!s.grid.passable(t.x, t.y, mask)) return id
   }
   return null
 }

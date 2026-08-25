@@ -88,12 +88,21 @@ describe('determinism', () => {
 })
 
 describe('no non-determinism at the source level', () => {
-  /** Source with comments stripped, so a mention in prose is not a finding. */
-  function code(file: string): string {
-    return readFileSync(file, 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/(^|[^:])\/\/.*$/gm, '$1')
+  /**
+   * Comments removed, so a mention of `Math.random` in prose is not a finding.
+   *
+   * A pure string function, separate from the file read, so the guard below can
+   * exercise it on a literal input. Pointing it at THIS file instead is the
+   * obvious move and it is a trap: any phrase the assertion names as a needle is
+   * also a string literal in this file, and `strip` removes comments, not
+   * literals — so the needle survives its own strip and the guard can never
+   * pass. Two earlier versions of this test failed exactly that way.
+   */
+  function strip(source: string): string {
+    return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
   }
+
+  const code = (file: string): string => strip(readFileSync(file, 'utf8'))
 
   const sources = readdirSync(SQUAD_DIR)
     .filter((f) => f.endsWith('.ts'))
@@ -118,12 +127,23 @@ describe('no non-determinism at the source level', () => {
     }
   })
 
-  it('does not iterate a Set or Map keyed on insertion order it did not control', () => {
-    // Not a ban on Set/Map — it is a ban on iterating one whose insertion order
-    // comes from outside. This asserts the comment-stripper itself works, so the
-    // two scans above cannot pass by stripping the whole file away.
-    const stripped = code(join(SQUAD_DIR, '__tests__', 'determinism.test.ts'))
-    expect(stripped).toContain('describe(')
-    expect(stripped).not.toContain('the same one 005 applies')
+  it('strips comments without eating the code around them', () => {
+    // The two scans above are only as good as this. A stripper that returned ''
+    // would pass them both on any source whatsoever, which is the failure mode
+    // that makes a green determinism suite worthless.
+    const sample = [
+      '/** Math.random in a block comment. */',
+      "const kept = 'Math' // Math.random in a line comment",
+      '/* multi',
+      '   line Math.random */',
+      "const url = 'https://example.com/not-a-comment'",
+    ].join('\n')
+    const out = strip(sample)
+    expect(out).not.toMatch(/Math\s*\.\s*random/)
+    expect(out).toContain('const kept')
+    expect(out).toContain('const url')
+    // `//` inside a URL is preceded by `:`, which is why the line regex excludes
+    // it — without that carve-out this would truncate the assignment.
+    expect(out).toContain('https://example.com/not-a-comment')
   })
 })
