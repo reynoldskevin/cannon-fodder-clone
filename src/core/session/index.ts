@@ -156,6 +156,24 @@ const DIE_FRAME_COUNT = 4
 const DIE_FPS = 8
 
 /**
+ * The `fire` clip's length, from the same table: `FPS.fire` is 12 and every
+ * animation is four frames.
+ */
+const FIRE_FRAME_COUNT = 4
+const FIRE_FPS = 12
+
+/**
+ * How many simulation steps the fire pose stands for: 4/12 s of clip at 60 Hz,
+ * so 20 ticks.
+ *
+ * This used to be ONE tick — the pose was set from the events of the step just
+ * run and cleared on the next — so a twenty-tick animation was on screen for a
+ * sixtieth of a second. What you saw was a single frame of the four, chosen by
+ * whatever the clock happened to read, flicking once per round.
+ */
+const FIRE_TICKS = Math.ceil(FIRE_FRAME_COUNT / FIRE_FPS / FIXED_TIMESTEP)
+
+/**
  * How many simulation steps a corpse keeps being drawn for: 4/8 s of clip at
  * 60 Hz, so 30 ticks.
  *
@@ -293,13 +311,21 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
   const pending: SimEvent[] = []
 
   /**
-   * Who fired in the LAST step run, so `renderEntities` can play `fire`.
+   * The tick each unit last fired on, so `renderEntities` can play `fire`.
    *
    * It has to come from the events: `CombatSystem` sets no `Entity.state` at
-   * all, so there is nothing on the entity to read. Only ever asked `has`, never
-   * iterated, so its order cannot reach a simulation result.
+   * all, so there is nothing on the entity to read. Only ever asked `get`/`set`,
+   * never iterated, so its order cannot reach a simulation result.
+   *
+   * A TICK, NOT A FLAG. This was a `Set` cleared every step, which made the fire
+   * pose exactly one tick long — and the clip is four frames at 12fps, twenty
+   * ticks. A twenty-tick animation shown for one tick is a single frame, chosen
+   * by whatever the clock happened to read, which is exactly how it looked: one
+   * of the four poses, flicking. Keeping the tick lets the pose stand for the
+   * length of the clip and lets `animationStart` put its first frame on the
+   * round that caused it.
    */
-  const shooters = new Set<number>()
+  const lastFiredTick = new Map<number, number>()
 
   /**
    * Position of every living unit at the start of the step just run.
@@ -369,13 +395,12 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
 
   /** Take the step's events: keep them for the caller, and read the deaths. */
   function collectEvents(): void {
-    shooters.clear()
     const batch = world.drainEvents()
     for (let i = 0; i < batch.length; i += 1) {
       const event = batch[i]
       if (event === undefined) continue
       pending.push(event)
-      if (event.type === 'ShotFired') shooters.add(event.shooterId)
+      if (event.type === 'ShotFired') lastFiredTick.set(event.shooterId, world.tickCount)
       if (event.type !== 'UnitDied') continue
       const track = tracks.get(event.id)
       corpses.push({
@@ -421,6 +446,28 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
     corpses.length = write
   }
 
+  /**
+   * Drop fire timestamps that have outlived their clip.
+   *
+   * `lastFiredTick` is keyed by entity id and a mission never reuses one, so
+   * without this it grows by one entry per unit that ever fired and holds them
+   * to the end of the mission. Bounded by the roster rather than unbounded, so
+   * not a leak in the dangerous sense — but it is a map that only ever grows,
+   * and the entries are dead the moment the pose is over.
+   *
+   * Deletion during iteration is why this walks a snapshot of the keys. It is
+   * the only place this map is iterated, and it feeds nothing back into the
+   * simulation, so no `Map` order reaches a result.
+   */
+  function pruneFireTimes(): void {
+    if (lastFiredTick.size === 0) return
+    const tick = world.tickCount
+    for (const id of [...lastFiredTick.keys()]) {
+      const fired = lastFiredTick.get(id)
+      if (fired !== undefined && tick - fired >= FIRE_TICKS) lastFiredTick.delete(id)
+    }
+  }
+
   function advance(dt: number): number {
     // Hostile and sub-step frames are the loop's business: it answers 0 steps
     // for a negative, NaN or infinite dt, and clamps a long frame to
@@ -442,6 +489,7 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
       collectEvents()
       forgetMovedFacings()
       pruneCorpses()
+      pruneFireTimes()
     }
     return loop.alpha
   }
@@ -483,8 +531,39 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
    */
   function animationFor(entity: Entity): string {
     if (entity.state === STATE_MOVING) return WALK_ANIMATION
-    if (shooters.has(entity.id)) return FIRE_ANIMATION
+    if (firingTicksAgo(entity.id) !== null) return FIRE_ANIMATION
     return IDLE_ANIMATION
+  }
+
+  /**
+   * How many ticks ago this unit fired, or `null` if that is longer ago than the
+   * fire clip runs for.
+   *
+   * The clip is one-shot, so once it has run out the pose is over and the unit
+   * goes back to idling. It is NOT gated on the weapon cooldown: the two are
+   * different lengths on purpose — the rifle's 32 ticks is how fast a man can
+   * shoot, `FIRE_TICKS` is how long the recoil takes to look at — and tying the
+   * animation to the cooldown would stretch or clip it every time the weapon
+   * table was tuned.
+   */
+  function firingTicksAgo(id: number): number | null {
+    const fired = lastFiredTick.get(id)
+    if (fired === undefined) return null
+    const ago = world.tickCount - fired
+    return ago >= 0 && ago < FIRE_TICKS ? ago : null
+  }
+
+  /**
+   * When this unit last fired, on the renderer's clock.
+   *
+   * The same conversion corpses use: sim ticks are the authority and the
+   * renderer counts seconds, and `MAX_FRAME_DT` keeps the two within a step of
+   * each other (see `DEATH_TICKS`). A unit that has not fired reports 0, which
+   * is unreachable — `animationFor` only asks for this when it has just said the
+   * unit is firing.
+   */
+  function firedAtSeconds(id: number): number {
+    return (lastFiredTick.get(id) ?? 0) * FIXED_TIMESTEP
   }
 
   /**
@@ -523,16 +602,22 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
       // entry is gone the moment he moves anyway; this covers the frames before
       // the first step, when there is no movement to read at all.
       const authored = dx === 0 && dz === 0 ? spawnFacings.get(entity.id) : undefined
+      const animation = animationFor(entity)
       out.push({
         id: entity.id,
         unit: SOLDIER_SPRITE,
-        animation: animationFor(entity),
+        animation,
         x: entity.x,
         z: entity.z,
         y: groundHeightAt(tile.x, tile.y),
         dx: authored?.dx ?? dx,
         dz: authored?.dz ?? dz,
-        animationStart: 0,
+        // `fire` is one-shot and must start on the round that caused it, so it
+        // carries the tick it was fired. `walk` and `idle` keep 0: `walk` is a
+        // cycle the renderer deliberately spreads across the squad with a
+        // per-id phase offset, and starting each man from his own last order
+        // would put the whole squad back in lockstep.
+        animationStart: animation === FIRE_ANIMATION ? firedAtSeconds(entity.id) : 0,
         tint: entity.team === 'enemy' ? ENEMY_TINT : undefined,
       })
     }

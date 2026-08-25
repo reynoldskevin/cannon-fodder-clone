@@ -5,6 +5,7 @@ import { createUnitVisual, IDLE_CLIP, STATIC_CLIP, type SpriteManifest } from '.
 import { createSession } from '../../core/session'
 import { makeLevel } from '../../core/session/__tests__/fixture'
 import { tileToWorld } from '../../core/view/projection'
+import { frameAt, phaseOffset } from '../../core/render-state/animation'
 
 /**
  * The atlas's clip resolution, against the REAL generated manifest.
@@ -42,9 +43,13 @@ describe('the authored soldier clips', () => {
     }
   })
 
-  it('loops walk and fire but not die', () => {
+  it('loops walk, but not fire and not die', () => {
+    // `fire` is ONE-SHOT: a trigger pull is a single recoil, not a cycle. As a
+    // looping clip it also picked up the per-id phase offset, which starts each
+    // man at an arbitrary point in his own recoil — so a burst showed whichever
+    // frame the global clock happened to be on rather than the four in order.
     expect(visual.clip('soldier', 'walk').loop).toBe(true)
-    expect(visual.clip('soldier', 'fire').loop).toBe(true)
+    expect(visual.clip('soldier', 'fire').loop).toBe(false)
     expect(visual.clip('soldier', 'die').loop).toBe(false)
   })
 
@@ -184,6 +189,107 @@ describe('the session and the atlas agree on animation names', () => {
         })
       }
     }
+  })
+})
+
+describe('a burst plays all four frames of the fire cycle', () => {
+  /**
+   * THE REPORTED BUG, PINNED END TO END.
+   *
+   * "Only one of the fire cycle frames is used, there are four." The cause was
+   * not in the art or in the atlas: the session set `animation: 'fire'` on
+   * exactly the ONE tick a `ShotFired` landed and `idle` on every tick after it,
+   * so a clip that runs for 20 ticks (4 frames at 12fps) was on screen for one.
+   * Whichever frame the clock happened to land on was the only one ever drawn.
+   *
+   * This asserts the whole path the way the game walks it: run a session, hold
+   * the render state and the renderer's own clock exactly as `main.ts` does,
+   * and resolve the frame through the SAME `frameAt` the renderer calls. A test
+   * that only checked `animation === 'fire'` would have passed throughout.
+   */
+  it('shows every frame index at least once', () => {
+    // NO ENEMY ON THE MAP, deliberately. Suppressing fire animates exactly like
+    // aimed fire, and an enemy here would auto-engage and kill this one-hit-point
+    // rifleman long before the burst got going — which is what happened to the
+    // first draft of this test.
+    const level = makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [] })
+    const session = createSession(level)
+    const shooter = session.selection()[0]!
+
+    session.queue.push({
+      type: 'fire',
+      unitIds: [shooter],
+      ordnance: 'rifle',
+      target: { x: 11, y: 7 },
+    })
+
+    const clip = visual.clip('soldier', 'fire')
+    const seen = new Set<number>()
+    let elapsed = 0
+    let firingTicks = 0
+    for (let f = 0; f < 400; f++) {
+      const dt = 1 / 60
+      elapsed += dt
+      session.advance(dt)
+      const drawn = session.renderEntities(() => 0).find((r) => r.id === shooter)
+      if (!drawn || drawn.animation !== 'fire') continue
+      firingTicks += 1
+      seen.add(frameAt(clip, elapsed - drawn.animationStart + phaseOffset(drawn.id) * 0))
+    }
+
+    expect(firingTicks).toBeGreaterThan(20) // he really did keep firing
+    expect([...seen].sort((a, b) => a - b)).toEqual([0, 1, 2, 3])
+  })
+
+  it('holds the fire pose for the length of the clip, not for one tick', () => {
+    // 4 frames at 12fps is a third of a second — 20 ticks at 60Hz. One tick is
+    // 1/60th, which is at most one display frame and usually none.
+    const level = makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [] })
+    const session = createSession(level)
+    const shooter = session.selection()[0]!
+    session.queue.push({
+      type: 'fire',
+      unitIds: [shooter],
+      ordnance: 'rifle',
+      target: { x: 11, y: 7 },
+    })
+
+    // Find the first tick he fires, then count consecutive firing ticks.
+    let run = 0
+    let best = 0
+    for (let f = 0; f < 200; f++) {
+      session.advance(1 / 60)
+      const drawn = session.renderEntities(() => 0).find((r) => r.id === shooter)
+      if (drawn?.animation === 'fire') {
+        run += 1
+        best = Math.max(best, run)
+      } else {
+        run = 0
+      }
+    }
+    expect(best).toBeGreaterThanOrEqual(20)
+  })
+
+  it('restarts the cycle on the next round rather than continuing the old one', () => {
+    // Each trigger pull is its own recoil. Continuing would leave the second
+    // shot showing the held last frame of the first.
+    const level = makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [] })
+    const session = createSession(level)
+    const shooter = session.selection()[0]!
+    session.queue.push({
+      type: 'fire',
+      unitIds: [shooter],
+      ordnance: 'rifle',
+      target: { x: 11, y: 7 },
+    })
+
+    const starts = new Set<number>()
+    for (let f = 0; f < 300; f++) {
+      session.advance(1 / 60)
+      const drawn = session.renderEntities(() => 0).find((r) => r.id === shooter)
+      if (drawn?.animation === 'fire') starts.add(drawn.animationStart)
+    }
+    expect(starts.size).toBeGreaterThan(1) // more than one burst
   })
 })
 
