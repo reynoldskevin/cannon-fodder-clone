@@ -8,17 +8,26 @@
  *
  * `weapons.ts` is the tuning surface — every number that decides how a firefight
  * feels lives there, and a designer should be able to retune the whole game
- * without opening `los.ts`, `resolution.ts` or `system.ts`.
+ * without opening `los.ts`, `resolution.ts` or `system.ts`. `AIM_TOLERANCE_TILES`
+ * moved there in ticket 011a for exactly that reason: it decides who a commanded
+ * round is allowed to hit, so it was a feel number hiding in the mechanism.
  */
 
-export { WEAPONS, WEAPON_BY_KIND, RIFLE, INFANTRY_HEALTH, weaponForKind } from './weapons'
+export {
+  WEAPONS,
+  WEAPON_BY_KIND,
+  RIFLE,
+  INFANTRY_HEALTH,
+  AIM_TOLERANCE_TILES,
+  weaponForKind,
+} from './weapons'
 export type { WeaponSpec } from './weapons'
 
-export { hasLineOfSight } from './los'
+export { hasLineOfSight, clearFractionAlong } from './los'
 export type { SightPoint } from './los'
 
 export { applyDamage, inRange, createCooldowns, readyToFire, markFired } from './resolution'
 export type { Cooldowns } from './resolution'
 
 export { createCombatSystem } from './system'
-export type { CombatOptions } from './system'
+export type { CombatOptions, CombatSystem } from './system'

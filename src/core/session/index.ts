@@ -28,7 +28,7 @@ import { createGameLoop, EMPTY_EVENTS, FIXED_TIMESTEP } from '../world'
 import { World } from '../world'
 import { worldToTile } from '../view/projection'
 import { propRenderEntities } from './props'
-import type { CombatOptions } from '../combat'
+import type { CombatOptions, CombatSystem } from '../combat'
 import type { CommandQueue } from '../command'
 import type { LevelData } from '../level'
 import type { NavGrid } from '../pathing'
@@ -46,7 +46,12 @@ export interface SessionOptions {
   readonly seed?: number
   /** Movement tuning, passed straight to `createSquadSystem`. */
   readonly squad?: SquadOptions
-  /** Combat tuning, passed straight to `createCombatSystem`. */
+  /**
+   * Combat tuning. Passed to `createCombatSystem` OVER a default of
+   * `autoEngageTeams: ['enemy']` — the session's own decision that the player
+   * squad holds fire — so every other field arrives untouched and that one is a
+   * default a caller may replace. See where it is passed, in `createSession`.
+   */
   readonly combat?: CombatOptions
 }
 
@@ -58,6 +63,11 @@ export interface Session {
   readonly queue: CommandQueue
   /** The squad pass, kept for `order`/`targetOf` as well as for the tick. */
   readonly squad: SquadSystem
+  /**
+   * The combat pass, kept for the fire orders as well as for the tick: the
+   * command layer sends `fire`/`ceaseFire` here, and the HUD can ask `isFiring`.
+   */
+  readonly combat: CombatSystem
   /** The baked passability grid both systems path and sight against. */
   readonly grid: NavGrid
   /**
@@ -65,9 +75,10 @@ export interface Session {
    *
    * A statement of the decision `createSession` made, readable without following
    * the `addSystem` calls; it is not itself evidence that the world runs them in
-   * that order. The behaviour is pinned separately, by the test that walks a unit
-   * into range and reads `ShotFired.originX` to prove combat sees the position
-   * squad wrote this same step.
+   * that order. The behaviour is pinned separately, by the test that puts a unit
+   * under a move order AND a fire order at once and reads `ShotFired.originX`
+   * off a round he fires WHILE WALKING: the origin is where this tick's step
+   * left him, which proves combat saw the position squad wrote the same step.
    */
   readonly systemOrder: readonly string[]
   /**
@@ -107,6 +118,9 @@ export interface Session {
  * determinism test in this repo is protecting.
  */
 const DEFAULT_SEED = 1
+
+/** The teams that engage on their own. See where it is passed, in `createSession`. */
+const AUTO_ENGAGE_TEAMS: readonly Team[] = ['enemy']
 
 /** The atlas source every simulated unit is drawn from. */
 const SOLDIER_SPRITE = 'soldier'
@@ -240,7 +254,25 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
   world.spawnFromLevel()
 
   const squad = createSquadSystem(grid, options.squad ?? {})
-  const combat = createCombatSystem(grid, options.combat ?? {})
+  // WHO SHOOTS WITHOUT BEING TOLD (ticket 011a): the enemy, and only the enemy.
+  // The player squad holds fire until a `fire` command puts it on a standing
+  // order, which is the owner's call about when his men start a firefight. The
+  // enemy has to engage on its own or nothing shoots back until ticket 012's AI
+  // lands. A caller may override the policy wholesale through `options.combat`.
+  //
+  // THE DEFAULT GOES AFTER THE SPREAD, RESOLVED WITH `??`, NOT BEFORE IT.
+  // Spreading over `{ autoEngageTeams: AUTO_ENGAGE_TEAMS }` looks equivalent and
+  // is not: `{ ...x }` copies a key that is PRESENT AND UNDEFINED as readily as
+  // one holding a value, so a caller writing `combat: { autoEngageTeams:
+  // undefined }` — which the optional type invites, and which reads as "no
+  // opinion" — would land that `undefined` on top of the default and leave
+  // `createCombatSystem`'s own `??` falling through to BOTH teams. The player
+  // squad would auto-engage, which is the single behaviour this line exists to
+  // prevent, on the strength of an argument that said nothing at all.
+  const combat = createCombatSystem(grid, {
+    ...options.combat,
+    autoEngageTeams: options.combat?.autoEngageTeams ?? AUTO_ENGAGE_TEAMS,
+  })
   world.addSystem(squad)
   world.addSystem(combat)
   const systemOrder: readonly string[] = Object.freeze(['squad', 'combat'])
@@ -320,7 +352,7 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
     for (let i = 0; i < batch.length; i += 1) {
       const command = batch[i]
       if (command === undefined) continue
-      applyCommand(command, { world, squad, grid })
+      applyCommand(command, { world, squad, combat, grid })
     }
   }
 
@@ -542,6 +574,7 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
     world,
     queue,
     squad,
+    combat,
     grid,
     systemOrder,
     // A getter, not a snapshot: the object is built once and the count changes

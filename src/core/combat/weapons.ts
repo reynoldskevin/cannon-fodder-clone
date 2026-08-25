@@ -103,6 +103,28 @@ export const RIFLE: Weapon = 'rifle'
 export const INFANTRY_HEALTH = 1
 
 /**
+ * How far from a commanded aim point a unit may be and still count as the thing
+ * that was aimed at, in tiles (ticket 011a).
+ *
+ * A FEEL NUMBER, and it lives here for that reason: it decides who gets shot.
+ * Without a bound, "shoot that patch of ground" would silently become "shoot
+ * whoever is nearest that patch of ground", and a right-click on empty grass
+ * next to a firefight would pick a man off across the field. RAISE IT and the
+ * right-click becomes forgiving to the point of aiming itself; LOWER IT and a
+ * click a pixel off a running man is suppressing fire into the dirt beside him.
+ * Two tiles is generous enough to forgive the aim of a pointer on a moving
+ * target and small enough that the man hit is one the player can see he pointed
+ * at.
+ *
+ * Not a `WeaponSpec` field: it describes the POINTER, not the rifle, and every
+ * weapon in the game is aimed with the same one. It becomes per-weapon the day
+ * something is aimed differently — a mortar with a wide bracket, say — and
+ * moving it into the spec then is a one-line change with this comment as the
+ * reason it was ever outside.
+ */
+export const AIM_TOLERANCE_TILES = 2
+
+/**
  * Every weapon in the game, keyed by the identifier `ShotFired` carries.
  *
  * A plain object rather than a `Map`: iteration order over string keys is

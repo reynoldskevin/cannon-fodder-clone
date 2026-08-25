@@ -25,6 +25,21 @@
  * end of the line. This walk instead compares boundary crossings as EXACT
  * INTEGER products (see below), so reversing the endpoints reverses the walk
  * over the identical set of tiles rather than approximating it.
+ *
+ * TWO QUESTIONS, ONE WALK (ticket 011a). "Can A see B?" is a yes/no, and it is
+ * the only thing ticket 011 ever asked. Commanded fire asks a second one — "how
+ * far along this ray is clear?" — because a round ordered at a wall has to stop
+ * at the wall's near face rather than either vanishing or passing through it.
+ * `clearFractionAlong` answers that and `hasLineOfSight` is defined in terms of
+ * it, so there is exactly one traversal in this file and the symmetry argument
+ * above covers both callers rather than one of them.
+ *
+ * THE WALK IS SYMMETRIC; THE FRACTION IS NOT, AND THAT IS THE POINT. Symmetry is
+ * a property of the tile sequence, which is why the yes/no answer is reversible.
+ * The fraction is measured from the SHOOTER, so the two directions report
+ * different stopping points — a wall at x=5 between A at x=0 and B at x=10
+ * clamps to world x 5 seen from A and x 6 seen from B. Both are the wall's NEAR
+ * face for that shooter, which is exactly what a round ordered at it should do.
  */
 
 import { INFANTRY } from '../pathing/navgrid'
@@ -63,17 +78,64 @@ export function hasLineOfSight(
   to: SightPoint,
   mask: TraversalMask = INFANTRY,
 ): boolean {
+  // `passable` already rejects off-map and NaN coordinates (its bounds test is
+  // negated so NaN falls out on the wrong side), so this one call covers bounds,
+  // finiteness and terrain for the far endpoint. The near one is covered by
+  // `clearFractionAlong`, which answers 0 for a shooter standing in rock.
+  //
+  // REFUSING A BLOCKED DESTINATION IS THIS FUNCTION'S RULE AND NOT THE WALK'S. A
+  // unit nudged into geometry by a collision resolve must not be rewarded with
+  // x-ray vision, and refusing both ends keeps the answer symmetric for free —
+  // whereas a round ORDERED at a wall must still be fired, which is why the walk
+  // below reports a distance instead of a refusal and this one asks it here.
+  if (!grid.passable(Math.floor(to.x), Math.floor(to.y), mask)) return false
+  return clearFractionAlong(grid, from, to, mask) === 1
+}
+
+/**
+ * How much of the ray from `from` to `to` is clear of solid terrain, as a
+ * fraction in [0, 1] of the segment joining the two tile CENTRES.
+ *
+ * 1 means the whole segment is clear — exactly the case `hasLineOfSight` calls
+ * true, given a destination that is itself passable. Anything less is the
+ * parameter at which the ray meets the first face of solid terrain, so
+ * `from + t * (to - from)` is the last point a bullet could reach: the near face
+ * of the wall, not its centre and not the open ground behind it.
+ *
+ * 0 means the shooter's own tile is impassable, off the map, or non-finite, or
+ * else the DESTINATION is non-finite. There is nothing sensible to report for a
+ * rifle inside a rock, nor for a ray with no far end, and 0 collapses the ray to
+ * the muzzle rather than inventing a length for it. Note the asymmetry with the
+ * shooter's tile: a destination that is merely off the map or in solid terrain
+ * is a fine thing to fire at and gets a real fraction — refusing it is
+ * `hasLineOfSight`'s rule, not this one's.
+ *
+ * The walk, the corner rule and the exact-integer boundary comparison are the
+ * ones documented on `hasLineOfSight` above; this is the same traversal reporting
+ * WHERE it stopped instead of THAT it stopped. Because both endpoints sit at tile
+ * centres, the i-th vertical boundary is crossed at (2i - 1) / (2 * adx) along
+ * the segment and the j-th horizontal one at (2j - 1) / (2 * ady) — the same two
+ * fractions the traversal is already comparing, so reporting the parameter costs
+ * a single division, formed at the return sites and therefore paid only on the
+ * tick a shot is actually blocked — never on the clear walks, which is nearly
+ * all of them and which `pickTarget` runs per candidate per armed unit per tick.
+ */
+export function clearFractionAlong(
+  grid: NavGrid,
+  from: SightPoint,
+  to: SightPoint,
+  mask: TraversalMask = INFANTRY,
+): number {
   const x0 = Math.floor(from.x)
   const y0 = Math.floor(from.y)
   const x1 = Math.floor(to.x)
   const y1 = Math.floor(to.y)
 
-  // `passable` already rejects off-map and NaN coordinates (its bounds test is
-  // negated so NaN falls out on the wrong side), so this one call covers bounds,
-  // finiteness and terrain for each endpoint.
-  if (!grid.passable(x0, y0, mask)) return false
-  if (!grid.passable(x1, y1, mask)) return false
-  if (x0 === x1 && y0 === y1) return true
+  if (!grid.passable(x0, y0, mask)) return 0
+  // A non-finite destination gives a non-finite step count, which the loop below
+  // would skip entirely and call clear. It is not a ray at all, so it is nothing.
+  if (!Number.isFinite(x1) || !Number.isFinite(y1)) return 0
+  if (x0 === x1 && y0 === y1) return 1
 
   const sx = x1 > x0 ? 1 : -1
   const sy = y1 > y0 ? 1 : -1
@@ -119,7 +181,14 @@ export function hasLineOfSight(
       // a legal sightline grazing a wall's corner and must be allowed —
       // refusing it would blind every soldier standing along a canopy fringe,
       // of which level 1 has hundreds.
-      if (!grid.passable(cx + sx, cy, mask) && !grid.passable(cx, cy + sy, mask)) return false
+      //
+      // The crossing parameter is formed HERE, at the return, rather than once
+      // per iteration above: the walk is overwhelmingly clear and would throw
+      // the value away. `i` has not been advanced yet, and on a diagonal the two
+      // expressions are equal — that equality is what selected the diagonal — so
+      // the vertical one names the lattice point being threaded.
+      if (!grid.passable(cx + sx, cy, mask) && !grid.passable(cx, cy + sy, mask))
+        return (2 * i - 1) / (2 * adx)
     }
 
     if (stepX) {
@@ -130,8 +199,12 @@ export function hasLineOfSight(
       cy += sy
       j += 1
     }
-    if (!grid.passable(cx, cy, mask)) return false
+    // Same parameter, at the same cost, but `i` and `j` have been advanced by the
+    // step above — so the boundary just crossed is the (i - 1)-th vertical one,
+    // at (2(i - 1) - 1) / (2 * adx) = (2i - 3) / (2 * adx), and likewise for `j`.
+    if (!grid.passable(cx, cy, mask))
+      return stepX ? (2 * i - 3) / (2 * adx) : (2 * j - 3) / (2 * ady)
   }
 
-  return true
+  return 1
 }

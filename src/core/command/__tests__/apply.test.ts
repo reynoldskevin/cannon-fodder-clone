@@ -5,6 +5,7 @@ import { World } from '../../world/world'
 import { asciiLevel } from '../../pathing/__tests__/ascii'
 import { bakeNavGrid } from '../../pathing/navgrid'
 import { createSquadSystem } from '../../squad'
+import { createCombatSystem } from '../../combat'
 import { tileToWorld, worldToTile } from '../../view/projection'
 
 /**
@@ -39,6 +40,7 @@ const MAP = `
 interface Rig {
   readonly world: World
   readonly squad: ReturnType<typeof createSquadSystem>
+  readonly combat: ReturnType<typeof createCombatSystem>
   readonly apply: (command: Command) => boolean
   spawn(tileX: number, tileY: number): number
   tileOf(id: number): { x: number; y: number }
@@ -50,11 +52,16 @@ function rig(): Rig {
   const world = new World(level, { seed: 1 })
   const grid = bakeNavGrid(level)
   const squad = createSquadSystem(grid, { speedTilesPerSecond: 3 })
+  // The player holds fire, as the session wires it — so these tests exercise the
+  // commanded path rather than an auto-engaging one that would fire regardless.
+  const combat = createCombatSystem(grid, { autoEngageTeams: ['enemy'] })
   world.addSystem(squad)
+  world.addSystem(combat)
   return {
     world,
     squad,
-    apply: (command) => applyCommand(command, { world, squad, grid }),
+    combat,
+    apply: (command) => applyCommand(command, { world, squad, combat, grid }),
     spawn(tileX, tileY) {
       const p = tileToWorld(tileX, tileY, level.size)
       return world.spawn({ kind: 'rifleman', team: 'player', x: p.x, z: p.z }).id
@@ -185,20 +192,44 @@ describe('applyCommand — target validation', () => {
     const world = new World(level, { seed: 1 })
     const grid = bakeNavGrid(level)
     const squad = createSquadSystem(grid, {})
+    const combat = createCombatSystem(grid, { autoEngageTeams: ['enemy'] })
     world.addSystem(squad)
     const p = tileToWorld(1, 1, level.size)
     const id = world.spawn({ kind: 'rifleman', team: 'player', x: p.x, z: p.z }).id
-    expect(applyCommand(move([id], 1, 1), { world, squad, grid })).toBe(false)
+    expect(applyCommand(move([id], 1, 1), { world, squad, combat, grid })).toBe(false)
   })
 })
 
-describe('applyCommand — the other variants', () => {
+describe('applyCommand — fire and cease-fire reach the combat system', () => {
+  /**
+   * These used to validate and return `true` having done NOTHING, which is why
+   * right-click appeared broken in the running game: the pointer queued a
+   * perfectly well-formed command, `applyCommand` accepted it, and no bullet
+   * ever left a rifle. A boolean that means "well-formed" and a boolean that
+   * means "something happened" are easy to confuse when only one of them is
+   * tested.
+   */
   it('accepts a fire command naming a living unit', () => {
     const r = rig()
     const a = r.spawn(2, 5)
     expect(
       r.apply({ type: 'fire', unitIds: [a], ordnance: 'rifle', target: { x: 6, y: 5 } }),
     ).toBe(true)
+  })
+
+  it('actually puts the unit on a fire order', () => {
+    const r = rig()
+    const a = r.spawn(2, 5)
+    r.apply({ type: 'fire', unitIds: [a], ordnance: 'rifle', target: { x: 6, y: 5 } })
+    expect(r.combat.isFiring(a)).toBe(true)
+  })
+
+  it('actually takes it off again on cease-fire', () => {
+    const r = rig()
+    const a = r.spawn(2, 5)
+    r.apply({ type: 'fire', unitIds: [a], ordnance: 'rifle', target: { x: 6, y: 5 } })
+    r.apply({ type: 'ceaseFire', unitIds: [a] })
+    expect(r.combat.isFiring(a)).toBe(false)
   })
 
   it('drops a fire command naming only the dead', () => {
@@ -208,6 +239,28 @@ describe('applyCommand — the other variants', () => {
     expect(
       r.apply({ type: 'fire', unitIds: [a], ordnance: 'rifle', target: { x: 6, y: 5 } }),
     ).toBe(false)
+  })
+
+  it('drops a cease-fire naming only the dead', () => {
+    const r = rig()
+    const a = r.spawn(2, 5)
+    r.world.despawn(a)
+    expect(r.apply({ type: 'ceaseFire', unitIds: [a] })).toBe(false)
+  })
+
+  it('does not throw on a cease-fire naming nobody', () => {
+    const r = rig()
+    expect(() => r.apply({ type: 'ceaseFire', unitIds: [] })).not.toThrow()
+  })
+
+  it('leaves a fire order alone when a move order arrives', () => {
+    // Advancing while firing is the original's whole feel. A move must not be a
+    // silent cease-fire.
+    const r = rig()
+    const a = r.spawn(2, 5)
+    r.apply({ type: 'fire', unitIds: [a], ordnance: 'rifle', target: { x: 6, y: 5 } })
+    r.apply(move([a], 17, 5))
+    expect(r.combat.isFiring(a)).toBe(true)
   })
 
   it('accepts an ordnance selection, which names no units at all', () => {

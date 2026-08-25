@@ -129,6 +129,112 @@ describe('PointerController — button mapping', () => {
     expect(commands[0]!.type).toBe('fire')
   })
 
+  describe('holding the right button', () => {
+    /**
+     * FIRE IS A HELD BUTTON, NOT A CLICK. The squad holds fire until ordered and
+     * keeps shooting while the order stands, so the control needs both halves:
+     * pressing starts, releasing stops. With only the press, right-click becomes
+     * a latch — the men start firing and never stop, and there is no way to make
+     * them stop short of a reload.
+     */
+    it('ceases fire when the right button is released', () => {
+      const f = fixture()
+      f.host.fire('pointerdown', centre(2))
+      f.host.fire('pointerup', centre(2))
+      expect(f.drain().map((c) => c.type)).toEqual(['fire', 'ceaseFire'])
+    })
+
+    it('ceases fire when the pointer leaves the canvas still held', () => {
+      // Otherwise dragging off the canvas mid-burst leaves the squad firing with
+      // no button held and no event coming to stop them.
+      const f = fixture()
+      f.host.fire('pointerdown', centre(2))
+      f.host.fire('pointerleave', centre(2))
+      expect(f.drain().map((c) => c.type)).toEqual(['fire', 'ceaseFire'])
+    })
+
+    it('ceases fire when the browser cancels the pointer', () => {
+      // `pointercancel` is what arrives when the browser takes the pointer away
+      // — a touch turning into a scroll gesture, the OS grabbing it. No
+      // `pointerup` follows it, so without this the squad fires forever.
+      const f = fixture()
+      f.host.fire('pointerdown', centre(2))
+      f.host.fire('pointercancel', centre(2))
+      expect(f.drain().map((c) => c.type)).toEqual(['fire', 'ceaseFire'])
+    })
+
+    it('exposes a cease-fire the caller can drive from window blur', () => {
+      // Alt-tabbing away mid-burst delivers no pointer event AT ALL to the
+      // canvas, so this one cannot be handled here: only something holding the
+      // `window` can hear it. `main.ts` already owns a window listener for
+      // resize and is where this belongs — but the controller has to offer the
+      // hook, or the squad fires until the player comes back.
+      const f = fixture()
+      f.host.fire('pointerdown', centre(2))
+      f.controller.ceaseFire()
+      expect(f.drain().map((c) => c.type)).toEqual(['fire', 'ceaseFire'])
+    })
+
+    it('does nothing on an explicit cease-fire when not firing', () => {
+      const f = fixture()
+      f.controller.ceaseFire()
+      expect(f.drain()).toEqual([])
+    })
+
+    it('re-aims while the button is held', () => {
+      const f = fixture()
+      f.host.fire('pointerdown', centre(2))
+      f.host.fire('pointermove', { button: -1, clientX: 100, clientY: 300 })
+      const commands = f.drain()
+      expect(commands.map((c) => c.type)).toEqual(['fire', 'fire'])
+      const first = commands[0]!
+      const second = commands[1]!
+      if (first.type !== 'fire' || second.type !== 'fire') throw new Error('expected fires')
+      expect(second.target.x).toBeLessThan(first.target.x)
+    })
+
+    it('issues nothing on a pointer move when the button is NOT held', () => {
+      // Every mouse movement across the canvas would otherwise be an order.
+      const f = fixture()
+      f.host.fire('pointermove', { button: -1, clientX: 100, clientY: 300 })
+      expect(f.drain()).toEqual([])
+    })
+
+    it('does not repeat the cease-fire on a second release', () => {
+      const f = fixture()
+      f.host.fire('pointerdown', centre(2))
+      f.host.fire('pointerup', centre(2))
+      f.host.fire('pointerup', centre(2))
+      expect(f.drain().map((c) => c.type)).toEqual(['fire', 'ceaseFire'])
+    })
+
+    it('does not cease fire when the LEFT button is released', () => {
+      // Left is move. A left-click during a burst must not stop the shooting.
+      const f = fixture()
+      f.host.fire('pointerdown', centre(2))
+      f.host.fire('pointerdown', centre(0))
+      f.host.fire('pointerup', centre(0))
+      expect(f.drain().map((c) => c.type)).toEqual(['fire', 'move'])
+    })
+
+    it('does not re-aim after the button is released', () => {
+      const f = fixture()
+      f.host.fire('pointerdown', centre(2))
+      f.host.fire('pointerup', centre(2))
+      f.host.fire('pointermove', { button: -1, clientX: 100, clientY: 300 })
+      expect(f.drain().map((c) => c.type)).toEqual(['fire', 'ceaseFire'])
+    })
+
+    it('ceases fire on dispose while still held', () => {
+      // Tearing the level down mid-burst must not leave an order standing in a
+      // world that is about to be replaced.
+      const f = fixture()
+      f.host.fire('pointerdown', centre(2))
+      f.controller.dispose()
+      expect(f.drain().map((c) => c.type)).toEqual(['fire', 'ceaseFire'])
+    })
+  })
+
   it('ignores the middle button', () => {
     const f = fixture()
     f.host.fire('pointerdown', centre(1))

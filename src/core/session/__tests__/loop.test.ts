@@ -185,17 +185,27 @@ describe('system order', () => {
      * against a literal and would survive the systems being registered in the
      * opposite order — it documents an intention, it does not test one.
      *
-     * The observable consequence: a unit that WALKS INTO RANGE this tick shoots
-     * on this tick, because combat reads the position squad just wrote. With
-     * the systems the other way round, combat sees the position from before the
-     * step and the shot lands one tick later. So: find the first tick on which
-     * the shooter is within weapon range, and the first tick on which a shot is
-     * fired, and require them to be the same tick.
+     * The observable consequence: a man who SHOOTS WHILE WALKING shoots from
+     * where this tick's step put him, because combat reads the position squad
+     * just wrote. With the systems the other way round he would shoot from where
+     * he stood at the end of the previous tick — one step behind, every time.
+     *
+     * He is given a fire order as well as a move order, and needs to be: since
+     * ticket 011a the player squad holds fire until told, so an earlier version
+     * of this test — which pushed only the move and waited for a shot — became
+     * unsatisfiable the moment that landed. Advancing while firing is the case
+     * worth testing anyway; it is the original's whole feel.
      */
     const level = makeLevel({ avatars: [{ x: 2, y: 7 }], enemies: [{ x: 16, y: 7 }] })
     const s = createSession(level)
     const shooter = s.selection()[0]!
     s.queue.push({ type: 'move', unitIds: [shooter], target: { x: 16, y: 7 } })
+    s.queue.push({
+      type: 'fire',
+      unitIds: [shooter],
+      ordnance: 'rifle',
+      target: { x: 16, y: 7 },
+    })
 
     // `ShotFired` carries `originX` BY VALUE, which is what makes this robust:
     // it survives the shooter dying to return fire on the same tick (these two
@@ -216,7 +226,7 @@ describe('system order', () => {
       }
     }
 
-    expect(Number.isNaN(origin)).toBe(false) // he really did walk into range
+    expect(Number.isNaN(origin)).toBe(false) // he really did fire while walking
     expect(RIFLE_RANGE_TILES).toBeGreaterThan(0) // the fixture is a real weapon
 
     // He was still walking when he fired, so the two system orders give
@@ -296,6 +306,94 @@ describe('how many steps the frame ran', () => {
     s.advance(FIXED_TIMESTEP)
     s.advance(Number.NaN)
     expect(s.stepsLastAdvance).toBe(0)
+  })
+})
+
+describe('who shoots without being told', () => {
+  /**
+   * The owner's call: the player squad holds fire until right-clicked, the
+   * enemy engages on its own. Enemies have to, or nothing shoots back until
+   * ticket 012's AI lands and the level is a shooting gallery in one direction.
+   *
+   * Asserted through `advance` rather than by inspecting the combat system's
+   * options, because the thing that can break is the WIRING — a session that
+   * builds the policy correctly and then registers a differently-configured
+   * system would pass any test that read the option back.
+   */
+  const facingOff = () =>
+    makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [{ x: 10, y: 7 }] })
+
+  it('the player squad does not fire on its own', () => {
+    const s = createSession(facingOff())
+    const player = s.selection()[0]!
+    const fired: number[] = []
+    for (let f = 0; f < 200; f++) {
+      s.advance(1 / 60)
+      for (const e of s.events()) if (e.type === 'ShotFired') fired.push(e.shooterId)
+    }
+    expect(fired).not.toContain(player)
+  })
+
+  it('the enemy does', () => {
+    const s = createSession(facingOff())
+    const enemy = s.world.entities.find((e) => e.team === 'enemy')!.id
+    const fired: number[] = []
+    for (let f = 0; f < 200; f++) {
+      s.advance(1 / 60)
+      for (const e of s.events()) if (e.type === 'ShotFired') fired.push(e.shooterId)
+    }
+    expect(fired).toContain(enemy)
+  })
+
+  it('the player squad fires when a fire command is queued', () => {
+    const s = createSession(facingOff())
+    const player = s.selection()[0]!
+    s.queue.push({ type: 'fire', unitIds: [player], ordnance: 'rifle', target: { x: 10, y: 7 } })
+    const fired: number[] = []
+    for (let f = 0; f < 60; f++) {
+      s.advance(1 / 60)
+      for (const e of s.events()) if (e.type === 'ShotFired') fired.push(e.shooterId)
+    }
+    expect(fired).toContain(player)
+  })
+
+  it('and stops when the cease-fire arrives', () => {
+    const s = createSession(facingOff())
+    const player = s.selection()[0]!
+    // A target that survives the exchange, so the test is about the order
+    // rather than about who died first.
+    const tough = s.world.entities.find((e) => e.team === 'enemy')!
+    tough.health = 100_000
+    s.queue.push({ type: 'fire', unitIds: [player], ordnance: 'rifle', target: { x: 10, y: 7 } })
+    for (let f = 0; f < 120; f++) {
+      s.advance(1 / 60)
+      s.events()
+    }
+    s.queue.push({ type: 'ceaseFire', unitIds: [player] })
+    s.advance(1 / 60)
+    s.events()
+
+    const after: number[] = []
+    for (let f = 0; f < 200; f++) {
+      s.advance(1 / 60)
+      for (const e of s.events()) if (e.type === 'ShotFired') after.push(e.shooterId)
+    }
+    expect(after).not.toContain(player)
+  })
+
+  it('keeps firing while advancing — a move order is not a cease-fire', () => {
+    const s = createSession(facingOff())
+    const player = s.selection()[0]!
+    const tough = s.world.entities.find((e) => e.team === 'enemy')!
+    tough.health = 100_000
+    s.queue.push({ type: 'fire', unitIds: [player], ordnance: 'rifle', target: { x: 10, y: 7 } })
+    s.queue.push({ type: 'move', unitIds: [player], target: { x: 8, y: 3 } })
+    const fired: number[] = []
+    for (let f = 0; f < 200; f++) {
+      s.advance(1 / 60)
+      for (const e of s.events()) if (e.type === 'ShotFired') fired.push(e.shooterId)
+    }
+    expect(fired).toContain(player)
   })
 })
 

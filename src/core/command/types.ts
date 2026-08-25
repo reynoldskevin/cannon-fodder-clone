@@ -41,6 +41,21 @@ export interface FireCommand {
 }
 
 /**
+ * Order the named units to stop firing (ticket 011a).
+ *
+ * The other half of `fire`, which means "begin or continue firing at this
+ * point": right-click down orders the fire, right-click up orders this. Without
+ * it the button is a latch rather than a trigger — a squad told to shoot would
+ * never be told to stop.
+ *
+ * Names no tile, because stopping has no target.
+ */
+export interface CeaseFireCommand {
+  readonly type: 'ceaseFire'
+  readonly unitIds: readonly number[]
+}
+
+/**
  * Change which ordnance the player is holding.
  *
  * Names no units and no tile: it is a change of intent, not an action in the
@@ -53,7 +68,7 @@ export interface SelectOrdnanceCommand {
 }
 
 /** Everything the player can ask for. */
-export type Command = MoveCommand | FireCommand | SelectOrdnanceCommand
+export type Command = MoveCommand | FireCommand | CeaseFireCommand | SelectOrdnanceCommand
 
 /** The `type` tags of `Command`, derived rather than restated so they cannot drift. */
 export type CommandType = Command['type']
