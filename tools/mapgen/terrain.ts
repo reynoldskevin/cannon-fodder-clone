@@ -187,11 +187,186 @@ export function classifyTile(colour: RGB, walkableMinLuminance: number): number 
   return TILE.ROCK
 }
 
+/**
+ * Largest island, in tiles, that may be dissolved into what surrounds it.
+ *
+ * EIGHT. Level 1's mis-classified rock forms 24 clumps of one to six tiles; a
+ * cap of eight covers all of them with room to spare, and is far below anything
+ * the source art draws as a deliberate feature (the smallest real clearing on
+ * level 1 is dozens of tiles). Raise it and genuine small features start
+ * dissolving; lower it below six and the artefacts this exists to remove
+ * survive.
+ */
+const MAX_ISLAND_TILES = 8
+
+/**
+ * Share of an island's boundary that must be a single other id before it is
+ * adopted, as a fraction.
+ *
+ * TWO THIRDS. An island wedged in a corner between two terrain types has a
+ * genuinely ambiguous boundary and should be left exactly as classified; one
+ * sitting in open jungle does not. Level 1's rock boundary is 83% canopy.
+ */
+const ISLAND_DOMINANCE = 2 / 3
+
+/**
+ * Dissolve small mis-classified ISLANDS into the terrain around them.
+ *
+ * WHY THIS IS NEEDED, AND WHY IT IS HERE RATHER THAN IN THE RENDERER.
+ * `classifyTile` reads ONE averaged colour per tile and has no idea what is
+ * around it. Its rock branch is the fallback for `r > g`, and inside a jungle a
+ * tile averaging over a brown trunk, a root, or a patch of leaf litter lands
+ * there. On level 1 that produced 63 rock tiles and 23 near-black `unknown`
+ * ones, scattered through the canopy — and each rendered as a 0.7-high grey
+ * block standing among the trees, which is what a player sees as "a square on
+ * the ground".
+ *
+ * ISLANDS, NOT TILES, and that distinction is the whole design. The obvious
+ * version of this asks each tile whether its own neighbours outvote it, and it
+ * does not work: level 1's rock comes in clumps of one to six, and every tile in
+ * a clump has a neighbour of its own kind to hide behind. A rule that dissolved
+ * them anyway would also dissolve any real two-tile feature. So the unit of
+ * judgement is the CONNECTED COMPONENT: a small island whose shoreline is
+ * overwhelmingly one other terrain becomes that terrain, and anything large
+ * enough to be deliberate is left alone whatever its shape.
+ *
+ * COSMETIC ONLY. This rewrites the terrain id and NOTHING else; walkability is a
+ * separate authored mask, and was already correct for these tiles — 61 of the 63
+ * rocks were blocked, as jungle should be. So it changes what the map looks like
+ * and cannot change where anybody may walk, which is the property that makes
+ * dissolving anything safe at all. The import asserts it.
+ */
+function despecklePass(terrain: readonly (readonly number[])[]): number[][] {
+  const h = terrain.length
+  const w = terrain[0]?.length ?? 0
+  const out = terrain.map((row) => [...row])
+  const seen: boolean[] = new Array<boolean>(w * h).fill(false)
+
+  // How much of the map each id covers, so an island can only ever be absorbed
+  // by terrain there is MORE of than the island itself.
+  //
+  // WITHOUT THIS THE RULE CAN INVERT A MAP. The ring of canopy around a single
+  // rock tile is itself a connected component; on a small enough map that ring
+  // is under the size cap, its entire shoreline is that one rock, and it
+  // dissolves INTO the speck. The speck wins and the jungle disappears. A test
+  // caught exactly that on a 3x3 fixture.
+  const total = new Map<number, number>()
+  for (const row of terrain) {
+    for (const id of row) total.set(id, (total.get(id) ?? 0) + 1)
+  }
+
+  for (let y0 = 0; y0 < h; y0 += 1) {
+    for (let x0 = 0; x0 < w; x0 += 1) {
+      if (seen[y0 * w + x0] === true) continue
+      const id = terrain[y0]?.[x0]
+      if (id === undefined) continue
+
+      // Flood the island, counting its shoreline as we go. Read from `terrain`
+      // throughout, never from `out`: every island is judged against the
+      // ORIGINAL classification, so one dissolved island cannot cascade into its
+      // neighbour and the result cannot depend on scan order.
+      const island: number[] = []
+      const shore = new Map<number, number>()
+      const stack = [y0 * w + x0]
+      seen[y0 * w + x0] = true
+      while (stack.length > 0) {
+        const index = stack.pop()
+        if (index === undefined) continue
+        island.push(index)
+        const x = index % w
+        const y = (index - x) / w
+        for (const [nx, ny] of [
+          [x - 1, y],
+          [x + 1, y],
+          [x, y - 1],
+          [x, y + 1],
+        ] as const) {
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue
+          const neighbour = terrain[ny]?.[nx]
+          if (neighbour === undefined) continue
+          if (neighbour !== id) {
+            shore.set(neighbour, (shore.get(neighbour) ?? 0) + 1)
+            continue
+          }
+          const at = ny * w + nx
+          if (seen[at] === true) continue
+          seen[at] = true
+          stack.push(at)
+        }
+      }
+
+      if (island.length > MAX_ISLAND_TILES) continue
+
+      let dominant: number | undefined
+      let dominantCount = 0
+      let shoreTotal = 0
+      for (const [candidate, count] of shore) {
+        shoreTotal += count
+        if (count > dominantCount) {
+          dominant = candidate
+          dominantCount = count
+        }
+      }
+      // At least two shore tiles: a single neighbour is not a shoreline, it is
+      // one tile's opinion, and it would flip the ends of any one-tile-wide strip.
+      if (dominant === undefined || shoreTotal < 2) continue
+      if (dominantCount / shoreTotal < ISLAND_DOMINANCE) continue
+      if ((total.get(dominant) ?? 0) <= island.length) continue
+
+      for (const index of island) {
+        const x = index % w
+        const y = (index - x) / w
+        const row = out[y]
+        if (row !== undefined) row[x] = dominant
+      }
+    }
+  }
+
+  return out
+}
+
+/**
+ * How many times the pass may run before giving up.
+ *
+ * A backstop, not a tuning knob: the pass shrinks the number of distinct islands
+ * or leaves the map alone, so it converges quickly — level 1 settles in three.
+ * The cap exists so that a pathological map cannot spin here forever.
+ */
+const MAX_DESPECKLE_PASSES = 8
+
+/**
+ * Dissolve small mis-classified islands, repeatedly, until the map settles.
+ *
+ * WHY ONE PASS IS NOT ENOUGH, and it is not a flaw in the pass. Each pass judges
+ * every island against the SAME snapshot, which is what makes it independent of
+ * scan order — but it also means an island whose shoreline only becomes
+ * unambiguous once its neighbours have dissolved is not seen that time round. On
+ * level 1 one pass left a six-tile clump ringed entirely by grass and a single
+ * tile 75% ringed by canopy, both of which the next pass removed: their
+ * shorelines had been muddled by the `unknown` tiles beside them, and those went
+ * first.
+ *
+ * Running to a fixed point also makes this function IDEMPOTENT by construction —
+ * `despeckle(despeckle(x))` is `despeckle(x)` — which a single pass was not, and
+ * which anything an offline pipeline re-runs on its own output ought to be.
+ */
+export function despeckleTerrain(terrain: readonly (readonly number[])[]): number[][] {
+  let current = terrain.map((row) => [...row])
+  for (let pass = 0; pass < MAX_DESPECKLE_PASSES; pass += 1) {
+    const next = despecklePass(current)
+    if (next.every((row, y) => row.every((id, x) => id === current[y]?.[x]))) return current
+    current = next
+  }
+  return current
+}
+
 export function buildTerrain(
   averages: readonly (readonly RGB[])[],
   walkableMinLuminance: number,
 ): number[][] {
-  return averages.map((row) => row.map((c) => classifyTile(c, walkableMinLuminance)))
+  return despeckleTerrain(
+    averages.map((row) => row.map((c) => classifyTile(c, walkableMinLuminance))),
+  )
 }
 
 /** Heuristic passability: bright enough to be open ground. */
