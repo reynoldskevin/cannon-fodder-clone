@@ -106,6 +106,21 @@ interface ManifestUnit {
 interface ManifestProp extends ManifestFrame {
   readonly cell: Cell
 }
+/**
+ * The tileable jungle floor (ticket 009c).
+ *
+ * Deliberately NOT in the atlas: it is the one image that has to wrap, and a
+ * packed rect cannot — `RepeatWrapping` wraps the whole texture, so a tiling
+ * source must own its own image. Optional in the type because a manifest
+ * emitted before ticket 004's floor pass has no such entry.
+ */
+interface ManifestFloor {
+  readonly file: string
+  readonly width: number
+  readonly height: number
+  readonly tileable: boolean
+}
+
 export interface SpriteManifest {
   readonly version: number
   readonly origin: string
@@ -113,6 +128,7 @@ export interface SpriteManifest {
   readonly atlas: { readonly file: string; readonly width: number; readonly height: number }
   readonly units: Readonly<Record<string, ManifestUnit>>
   readonly props: Readonly<Record<string, ManifestProp>>
+  readonly floor?: ManifestFloor
 }
 
 /* --------------------------------------------------------------- world sizes */
@@ -286,14 +302,27 @@ function resolve(
 /* --------------------------------------------------------------- the loader */
 
 /**
- * Fetch the manifest and its atlas and build the sprite `UnitVisual`.
+ * Resolve a filename declared in the manifest against the manifest's own URL.
+ *
+ * Shared with the floor loader: that `atlas.file` and `floor.file` stay bare
+ * filenames is the manifest's business, not any caller's.
+ */
+export function resolveAssetUrl(file: string, manifestUrl: string): string {
+  return new URL(file, new URL(manifestUrl, window.location.href)).href
+}
+
+/**
+ * Fetch and validate the sprite manifest.
+ *
+ * Split out from `loadSpriteAtlas` for ticket 009c: the manifest now describes
+ * two independent GPU resources — the packed atlas and the tileable floor — and
+ * fetching it twice to build them would put a redundant round trip in front of
+ * the first frame.
  *
  * `manifestUrl` is relative on purpose, like the level URL: `vite.config.ts`
- * sets `base: './'`, so the built page may be served from any path. The atlas
- * is resolved against the manifest's own URL, so `atlas.file` staying a bare
- * filename is the manifest's business, not the caller's.
+ * sets `base: './'`, so the built page may be served from any path.
  */
-export async function loadSpriteAtlas(manifestUrl: string): Promise<UnitVisual> {
+export async function fetchSpriteManifest(manifestUrl: string): Promise<SpriteManifest> {
   let response: Response
   try {
     response = await fetch(manifestUrl)
@@ -330,7 +359,15 @@ export async function loadSpriteAtlas(manifestUrl: string): Promise<UnitVisual> 
     )
   }
 
-  const atlasUrl = new URL(manifest.atlas.file, new URL(manifestUrl, window.location.href)).href
+  return manifest
+}
+
+/** Load the packed atlas image named by an already-fetched manifest and build the visual. */
+export async function buildSpriteAtlas(
+  manifest: SpriteManifest,
+  manifestUrl: string,
+): Promise<UnitVisual> {
+  const atlasUrl = resolveAssetUrl(manifest.atlas.file, manifestUrl)
   let texture: THREE.Texture
   try {
     texture = await new THREE.TextureLoader().loadAsync(atlasUrl)

@@ -48,10 +48,18 @@ export class SceneBuilder {
    * an async network resource and this stays synchronous, so a caller that has
    * not got the art yet is a compile error rather than a half-built scene.
    *
+   * `floor` is the tiling jungle texture, passed in already loaded for the same
+   * reason as `visual`.
+   *
    * `elevationRad` is the camera's, and the sprite quads are tilted to match —
    * see `EntityRenderer`'s header for why the two must agree.
    */
-  static build(level: LevelData, visual: UnitVisual, elevationRad: number = ELEVATION): BuiltScene {
+  static build(
+    level: LevelData,
+    visual: UnitVisual,
+    floor: THREE.Texture,
+    elevationRad: number = ELEVATION,
+  ): BuiltScene {
     const scene = new THREE.Scene()
     scene.name = `level:${level.name}`
     scene.background = new THREE.Color(SKY_COLOUR)
@@ -86,7 +94,7 @@ export class SceneBuilder {
     scene.add(sun)
     scene.add(sun.target)
 
-    const terrain = new TerrainRenderer(level)
+    const terrain = new TerrainRenderer(level, floor)
     scene.add(terrain.mesh)
 
     const entities = new EntityRenderer(visual, elevationRad)
