@@ -28,7 +28,7 @@ import type { LevelData } from '../core/level'
 import { FLOOR_REPEAT_WORLD_UNITS, floorUv } from '../core/view/floor-uv'
 import { TILE_WORLD_SIZE, tileToWorld } from '../core/view/projection'
 import { TERRAIN_SKIRT_FLOOR } from '../core/view/relief'
-import { CANOPY_INTERIOR_COLOUR, canopyMassHeight, tileStyle } from '../core/view/terrain-style'
+import { CANOPY_INTERIOR_COLOUR, tileStyle } from '../core/view/terrain-style'
 import { CANOPY_TILE_ID, canopyDepth } from '../core/render-state/scenery'
 
 /**
@@ -208,7 +208,11 @@ export class TerrainRenderer {
         // of the mass and takes a lighter, sunlit-crown green. Height and colour
         // only — `walkable` is untouched, so nothing about movement changes.
         const depth = !walkable && id === CANOPY_TILE_ID ? canopyDepth(level, x, y) : 0
-        this.heights[index] = depth > 0 ? canopyMassHeight(depth) : style.height
+        // FLAT, whatever the depth. Canopy used to rise toward its middle; it
+        // no longer rises at all — see `CANOPY_HEIGHT`. `depth` survives because
+        // it still picks the interior COLOUR on the line below, which is now the
+        // only thing distinguishing the inside of a forest from its edge.
+        this.heights[index] = style.height
         colours[index] = new THREE.Color(depth > 0 ? CANOPY_INTERIOR_COLOUR : style.colour)
       }
     }

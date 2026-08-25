@@ -40,6 +40,69 @@ export interface ResolvedTileStyle extends TileAppearance {
  * walkable form. Raised blocked terrain is the whole reason the map reads as
  * cover and obstacles at an isometric angle rather than as a flat colour chart.
  */
+/**
+ * Canopy stands FLAT on the ground, level with grass, and is tinted only just
+ * deeper than it.
+ *
+ * THE SQUARES. Canopy used to be extruded (0.3 walkable, 0.5 fringe, rising to
+ * 0.9 inside) and tinted far darker than grass (`#2f5427` against `#6f9f4f`).
+ * Both were ticket 010a's decisions and both are reversed here, because
+ * together they drew a hard-edged rectangle on the ground under every tree.
+ *
+ * THE COLOUR WAS THE BIGGER HALF, which is not obvious and cost a wrong fix to
+ * find out. `TerrainRenderer` multiplies one tileable jungle texture by a
+ * per-tile vertex colour (`TINT_HUE_STRENGTH`), and that tint is CONSTANT
+ * across a tile — so any two neighbouring tiles with different tints meet at a
+ * hard, axis-aligned edge. A canopy tint that dark against grass drew a black
+ * rectangle wherever no tree sprite happened to cover it. Flattening the
+ * geometry alone changed nothing about that; the squares were still there,
+ * merely lying down.
+ *
+ * THE HEIGHT WAS THE SMALLER HALF, and real. One tree is planted per FRINGE
+ * canopy tile — any canopy tile with a non-canopy neighbour — so a lone tree in
+ * open grass is fringe on all four sides and stood on a one-tile block with
+ * nothing beside it to hide the block's walls: a tree on a pedestal.
+ *
+ * Level with `grass` walkable rather than 0, so canopy and grass form one
+ * continuous floor: any difference at all puts a step at every boundary, which
+ * relocates the artefact rather than removing it. The tints are still distinct
+ * enough to read as deeper ground, and far too close to draw an edge.
+ *
+ * WHAT NOW CARRIES THE FOREST: the tree sprites, entirely. If the treeless
+ * interior of a mass ever reads as a bald patch — which is what 010a predicted
+ * and why it raised the terrain — the fix is to plant scenery on interior tiles,
+ * not to re-extrude or re-darken the ground under the trees.
+ *
+ * NOTE FOR LATER: this makes blocked canopy nearly indistinguishable from grass
+ * where no tree stands on it. In practice the trees overlap enough to read as
+ * solid, and `?debug=1` layer 1 draws the real nav grid. If it becomes a
+ * problem, the answer is more scenery, not more tint.
+ */
+const CANOPY_HEIGHT = 0.05
+
+/**
+ * Canopy's floor tint — the SAME green as grass, deliberately.
+ *
+ * The last of the squares was this. `TerrainRenderer` multiplies one tileable
+ * jungle texture by a per-tile vertex colour, and that tint is constant across a
+ * tile — so any two neighbouring tiles with different tints meet at a hard,
+ * axis-aligned edge. It did not matter how close the two greens were: a canopy
+ * tile with no tree sprite over it still drew a rectangle on the grass, just a
+ * subtler one. Nudging the colour nearer only made the square fainter.
+ *
+ * Identical, therefore. Canopy and grass are one continuous floor and the tile
+ * grid leaves no trace in it at all. The forest is the tree sprites, and nothing
+ * else.
+ *
+ * THE COST, STATED PLAINLY: a blocked canopy tile with no tree standing on it is
+ * now indistinguishable from open grass. One tree is planted per FRINGE tile, so
+ * the inside of a mass is covered only by its neighbours' crowns — which is
+ * true at 1.8 units of tree against 1 unit of tile, but it is cover rather than
+ * a guarantee. If a bald patch ever appears, plant scenery on interior tiles;
+ * do not bring the tint back, because the tint is what drew the squares.
+ */
+const CANOPY_COLOUR = '#6f9f4f'
+
 export const TILE_STYLES: Readonly<Record<number, TileStyle>> = {
   0: {
     name: 'unknown',
@@ -54,20 +117,8 @@ export const TILE_STYLES: Readonly<Record<number, TileStyle>> = {
   },
   2: {
     name: 'canopy',
-    walkable: { colour: '#4a7a3a', height: 0.3 },
-    // UNDERGROWTH AT THE FRINGE, NOT A WALL (ticket 010a). Blocked canopy used
-    // to stand 0.95 proud, because until 010a it was the only thing
-    // representing the jungle and had to carry its whole visual weight alone.
-    // Where a tree stands it no longer does: at 0.95 the two read as a trunk
-    // sprouting from the top of a chest-high green wall, which is exactly as odd
-    // as it sounds along the fringe where the block's south face is visible. 0.5
-    // reads as the undergrowth and leaf litter the trunks are rooted in — still
-    // unmistakably raised (ten times walkable grass, and above blocked scrub at
-    // 0.45, so the passability hierarchy is intact and unchanged).
-    //
-    // This is the FRINGE height. Interior canopy, which since the 010a revision
-    // has no tree on it at all, rises above it — see `canopyMassHeight`.
-    blocked: { colour: '#2f5427', height: 0.5 },
+    walkable: { colour: CANOPY_COLOUR, height: CANOPY_HEIGHT },
+    blocked: { colour: CANOPY_COLOUR, height: CANOPY_HEIGHT },
   },
   3: {
     name: 'rock',
@@ -83,39 +134,8 @@ export const TILE_STYLES: Readonly<Record<number, TileStyle>> = {
   },
 }
 
-/**
- * Top-surface height of blocked canopy by `canopyDepth` — 0 fringe, 1 one ring
- * in, 2 deeper.
- *
- * WHY THE INTERIOR RISES (ticket 010a revision). Trees are now planted on the
- * fringe only, so an interior tile has nothing standing on it and has to read as
- * solid canopy on its own; at the fringe's 0.5 it reads instead as a bald patch
- * of undergrowth ringed by trees. The mass therefore rises toward its middle,
- * with the 1.8-unit trees fringing it — the silhouette the source map draws.
- *
- * WHY THREE STEPS AND NOT TWO. Jumping straight from 0.5 to 0.9 at the
- * fringe/interior seam emits a 0.4-unit skirt right behind every tree, a lit
- * green wall visible the whole length of the forest edge. One intermediate ring
- * at 0.72 turns that cliff into a chamfer: two shallow steps, each mostly hidden
- * by the trunks in front of it, and from the isometric angle the mass reads as a
- * rounded crown rather than a plateau. It stops at 0.9 rather than climbing
- * further because above about one world unit the canopy starts occluding
- * soldiers walking the clearings beyond it.
- */
-export const CANOPY_MASS_HEIGHTS: readonly number[] = [0.5, 0.72, 0.9]
+export const CANOPY_INTERIOR_COLOUR = CANOPY_COLOUR
 
-/**
- * Interior canopy tops are lifted toward the light: the fringe colour is the
- * shaded flank of the mass, and a flat field of it over the interior looks like
- * a hole rather than a crown. Same hue family, one step brighter.
- */
-export const CANOPY_INTERIOR_COLOUR = '#366029'
-
-/** Blocked-canopy height for a tile at `depth` rings inside its mass. */
-export function canopyMassHeight(depth: number): number {
-  const step = Math.min(Math.max(Math.trunc(depth), 0), CANOPY_MASS_HEIGHTS.length - 1)
-  return CANOPY_MASS_HEIGHTS[step] ?? CANOPY_MASS_HEIGHTS[0] ?? 0
-}
 
 /**
  * The style used for an id with no entry above. Deliberately alarming magenta:
