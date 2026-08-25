@@ -220,3 +220,69 @@ describe('the mission timer', () => {
     expect(r.objectives.elapsedTicks).toBe(atEnd)
   })
 })
+
+describe('a death is counted once, however the ticks are drained', () => {
+  /**
+   * THE ONE MUTANT THAT SURVIVED THE FIRST REVIEW OF THIS TICKET.
+   *
+   * The objective system reads deaths off `world.peekEvents()`, which does not
+   * consume — draining is presentation's job, and a system that drained would
+   * starve the HUD, FX and audio. The price is that a peek shows events the
+   * reader has ALREADY SEEN, right up until presentation drains, so the system
+   * keeps a high-water `seq` and skips anything at or below it.
+   *
+   * Deleting that guard left all 1010 tests passing, because every test in this
+   * repo drains once per tick — `rig.run()` does `tick(); drainEvents()`, and a
+   * session frame at 60 Hz runs exactly one step. The case the guard exists for
+   * is a frame that runs SEVERAL steps before draining: a hitch, an alt-tabbed
+   * tab coming back, a slow machine. On exactly those frames, and only those,
+   * every death would be counted once per subsequent tick in the frame.
+   *
+   * So this drives the ticks by hand and drains once at the end, which is what
+   * `main.ts` does on any frame where `stepsLastAdvance > 1`.
+   */
+  const oneDeathManyTicks = (ticksBeforeDraining: number) => {
+    const r = rig({ objectives: [{ type: 'kill_count', count: 4 }] })
+    r.spawn(3, 3, 'player', 1000)
+    const enemy = r.spawn(10, 3, 'enemy')
+    r.kill(enemy.id) // emits UnitDied; nothing has drained it
+    for (let i = 0; i < ticksBeforeDraining; i += 1) r.world.tick()
+    r.world.drainEvents()
+    return r
+  }
+
+  it('counts it once when a single tick runs before the drain', () => {
+    // The baseline every other test in the file already covers, stated here so
+    // the comparison below is against something rather than nothing.
+    expect(oneDeathManyTicks(1).objectives.progress()[0]).toMatchObject({ done: 1, total: 4 })
+  })
+
+  it('counts it once when eight ticks run before the drain', () => {
+    // A `MAX_STEPS_PER_FRAME`-sized catch-up frame. Without the high-water this
+    // reports 8 and the mission is a third of the way to a kill_count of 4 on
+    // the strength of one corpse.
+    expect(oneDeathManyTicks(8).objectives.progress()[0]).toMatchObject({ done: 1, total: 4 })
+  })
+
+  it('does not win a mission on a hitch', () => {
+    // The consequence, stated as the thing the player would actually see: a
+    // `kill_count` of 4 satisfied by ONE death, because the frame stuttered.
+    const r = oneDeathManyTicks(8)
+    expect(r.objectives.outcome()).toBe('playing')
+  })
+
+  it('still counts a second, genuinely new death', () => {
+    // The other direction: a high-water set too aggressively would swallow
+    // every death after the first, which is the same bug wearing a hat.
+    const r = rig({ objectives: [{ type: 'kill_count', count: 4 }] })
+    r.spawn(3, 3, 'player', 1000)
+    const a = r.spawn(10, 3, 'enemy')
+    const b = r.spawn(11, 3, 'enemy')
+    r.kill(a.id)
+    for (let i = 0; i < 8; i += 1) r.world.tick()
+    r.kill(b.id)
+    for (let i = 0; i < 8; i += 1) r.world.tick()
+    r.world.drainEvents()
+    expect(r.objectives.progress()[0]).toMatchObject({ done: 2, total: 4 })
+  })
+})

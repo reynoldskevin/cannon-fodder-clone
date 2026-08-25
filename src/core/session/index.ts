@@ -23,6 +23,7 @@
 import { createAiSystem } from '../ai'
 import { applyCommand, createCommandQueue } from '../command'
 import { createCombatSystem } from '../combat'
+import { createObjectiveSystem } from '../objectives'
 import { bakeNavGrid } from '../pathing'
 import { createSquadSystem } from '../squad'
 import { createGameLoop, EMPTY_EVENTS, FIXED_TIMESTEP } from '../world'
@@ -32,6 +33,7 @@ import { propRenderEntities } from './props'
 import type { CombatOptions, CombatSystem } from '../combat'
 import type { CommandQueue } from '../command'
 import type { LevelData } from '../level'
+import type { MissionOutcome, ObjectiveSystem } from '../objectives'
 import type { NavGrid } from '../pathing'
 import type { RenderEntity } from '../render-state/entity'
 import type { SquadOptions, SquadSystem } from '../squad'
@@ -69,6 +71,11 @@ export interface Session {
    * command layer sends `fire`/`ceaseFire` here, and the HUD can ask `isFiring`.
    */
   readonly combat: CombatSystem
+  /**
+   * The mission's win/lose evaluation (ticket 013). Public because the HUD
+   * draws `progress()` and the mission timer straight off it.
+   */
+  readonly objectives: ObjectiveSystem
   /** The baked passability grid both systems path and sight against. */
   readonly grid: NavGrid
   /**
@@ -108,6 +115,15 @@ export interface Session {
   renderEntities(groundHeightAt: GroundHeightAt): RenderEntity[]
   /** Living player unit ids, in spawn order — who an order is for. */
   selection(): readonly number[]
+  /**
+   * How the mission stands: `'playing'` until it is won or lost, then latched.
+   *
+   * State, alongside the one-shot `MissionComplete`/`MissionFailed` events,
+   * because the app is not guaranteed to be listening on the tick one fires —
+   * a frame that ran eight steps drains them all at once, and an end screen
+   * must be rebuildable from what is true rather than from what was announced.
+   */
+  outcome(): MissionOutcome
 }
 
 /**
@@ -315,10 +331,20 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
   // every decision the machine makes would take a whole tick to have any effect
   // and the man would overshoot his firing position by a step. Combat stays
   // last, so a unit shoots from where it now stands.
+  // The mission's judge (ticket 013). It is handed the level and reads the
+  // world; it never drains the event bus, which is presentation's and
+  // exactly-once — it peeks at it instead (`World.peekEvents`), for the same
+  // reason the AI is handed its batch rather than taking one.
+  const objectives = createObjectiveSystem(level)
   world.addSystem(ai)
   world.addSystem(squad)
   world.addSystem(combat)
-  const systemOrder: readonly string[] = Object.freeze(['ai', 'squad', 'combat'])
+  // OBJECTIVES LAST. A mission is judged on the world as it stands at the END
+  // of the tick, so the last enemy killed by this tick's combat pass ends the
+  // mission in this tick rather than the next. Registered anywhere earlier and
+  // every mission ends one tick late — invisible on screen, and wrong.
+  world.addSystem(objectives)
+  const systemOrder: readonly string[] = Object.freeze(['ai', 'squad', 'combat', 'objectives'])
 
   const queue = createCommandQueue()
   const loop = createGameLoop()
@@ -700,6 +726,7 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
     queue,
     squad,
     combat,
+    objectives,
     grid,
     systemOrder,
     // A getter, not a snapshot: the object is built once and the count changes
@@ -711,5 +738,9 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
     events,
     renderEntities,
     selection,
+    // Delegated rather than mirrored: the mission's standing is the objective
+    // system's to own, and a copy kept here would be a second answer to the
+    // same question, one tick behind on the tick that matters most.
+    outcome: (): MissionOutcome => objectives.outcome(),
   }
 }

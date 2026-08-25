@@ -29,6 +29,8 @@ import { PointerController } from '../input/pointer-controller'
 import { ZoomController } from '../input/zoom-controller'
 import { showControlHint } from '../ui/control-hint'
 import { showFatalError, type FatalErrorReport } from '../ui/error-overlay'
+import { createHud, type RosterMember } from '../ui/hud'
+import { showMissionEnd, type MissionEndScreen } from '../ui/mission-end'
 import { CORE_VERSION } from '../core/version'
 
 /**
@@ -237,7 +239,13 @@ async function boot(): Promise<void> {
   // The simulation. Everything that decides what happens in the world lives on
   // the far side of this call — see `core/session` — so what is left here is the
   // browser's half: a frame delta in, a list of drawables and an alpha out.
-  const session = createSession(level)
+  //
+  // A `let`, because `restart()` replaces it. Every closure below reads the
+  // variable rather than capturing the object, so a restarted mission is picked
+  // up by the render loop, the scene builder and the HUD without any of them
+  // being rebuilt — and without the page reload that would cost the player the
+  // level fetch, the atlas decode and his camera position.
+  let session = createSession(level)
   const built = SceneBuilder.build(level, visual, floor, elevation, (heightAt) =>
     session.renderEntities(heightAt),
   )
@@ -269,13 +277,21 @@ async function boot(): Promise<void> {
   // `Command` on the session's queue, which the tick drains. The selection is
   // handed in as a function and asked afresh at every click, so an order always
   // goes to the men who are alive when it is given.
-  const pointer = new PointerController(
-    renderer.domElement,
-    rig.camera,
-    session.queue,
-    level.size,
-    () => session.selection(),
-  )
+  //
+  // REBUILT ON RESTART, not reused: it holds the OLD session's command queue by
+  // reference, and orders pushed onto a queue nothing drains are orders the new
+  // squad never hears.
+  let pointer = newPointer()
+
+  function newPointer(): PointerController {
+    return new PointerController(
+      renderer.domElement,
+      rig.camera,
+      session.queue,
+      level.size,
+      () => session.selection(),
+    )
+  }
 
   const onResize = (): void => {
     renderer.setSize(window.innerWidth, window.innerHeight)
@@ -289,11 +305,101 @@ async function boot(): Promise<void> {
     pointer.ceaseFire()
   }
 
+  // The mission readout: roster, objectives, timer. It DECIDES nothing — every
+  // value it shows is read off the session, which is where they are tested.
+  const hud = createHud(mount)
+
+  /**
+   * The squad as the HUD lists it: every man the mission started with, alive or
+   * not.
+   *
+   * Snapshotted at the start of each mission rather than read from the world
+   * every frame, because the world forgets a man the moment he dies and a
+   * roster that shrank as the squad died would show "3 of 3" over three
+   * survivors of six. Ids are never reused within a mission, so `isAlive` is a
+   * question with a permanent answer.
+   */
+  let roster: readonly number[] = playerIds()
+
+  function playerIds(): readonly number[] {
+    return session.world.entities.filter((e) => e.team === 'player').map((e) => e.id)
+  }
+
+  function rosterNow(): readonly RosterMember[] {
+    return roster.map((id) => ({ id, alive: session.world.isAlive(id) }))
+  }
+
+  /** The end screen, while one is up. `undefined` means the mission is still on. */
+  let ending: MissionEndScreen | undefined
+  /** `MissionFailed.reason`, kept because the event is a one-shot and the screen is not. */
+  let failure: string | undefined
+
+  /** Timestamp of the last frame, for the frame delta. See the render loop. */
+  let previous = performance.now()
+
+  /**
+   * The renderer's animation clock, in seconds.
+   *
+   * Accumulated from clamped frame deltas rather than read from
+   * `performance.now()`: a backgrounded tab would otherwise return to a clock
+   * that had run on without it and snap every walk cycle to a random frame.
+   *
+   * THE INVARIANT, AND `restart()` IS WHERE IT BREAKS. This clock and the
+   * simulation's tick count measure the same zero. `core/session` hands a
+   * corpse `animationStart = diedAtTick * FIXED_TIMESTEP` — a SIM-clock value —
+   * and `EntityRenderer` plays the one-shot `die` clip from
+   * `elapsedSeconds - animationStart`. Rebuilding the session puts `tickCount`
+   * back to 0, so an animation clock left running is permanently ahead by the
+   * length of every mission before it: `frameAt` clamps a non-looping clip to
+   * its last frame, and every death after the first restart is pinned to the
+   * final pose from the instant it happens. The man the player just lost simply
+   * blinks into a corpse. Declared HERE, above `restart()`, so the two can only
+   * be reset together — nothing in Vitest can catch this, there being no DOM.
+   */
+  let elapsed = 0
+
+  /**
+   * Start a fresh mission in the page that is already running.
+   *
+   * REBUILT, NOT RELOADED. `location.reload()` would be one line and would cost
+   * the level fetch, the sprite decode, the terrain build and the player's
+   * camera position — for a mission whose entire state lives in the object
+   * below. The scene, the rig and the controllers outlive the session by
+   * design; only the simulation and the things holding a reference into it are
+   * replaced.
+   */
+  function restart(): void {
+    ending?.dispose()
+    ending = undefined
+    failure = undefined
+    session = createSession(level)
+    // WITH THE SESSION, NOT AFTER IT. The new world's tick count starts at 0 and
+    // the animation clock is keyed to sim time — see the invariant where it is
+    // declared. `previous` goes with them so the first frame of the new mission
+    // measures its delta from the restart and not from the frame before it.
+    elapsed = 0
+    previous = performance.now()
+    roster = playerIds()
+    pointer.dispose()
+    pointer = newPointer()
+    // TWICE, DELIBERATELY. `setEntities` shifts current to previous, so a single
+    // call would leave the renderer interpolating from the dead mission's last
+    // frame — and entity ids restart from 1, so the new squad would be blended
+    // out of wherever the old squad's ids last stood. Two calls make previous
+    // and current the same state: no blend, which is right for a mission that
+    // did not move, it began.
+    const fresh = session.renderEntities(groundHeightAt)
+    built.entities.setEntities(fresh)
+    built.entities.setEntities(fresh)
+  }
+
   /** Tear the whole session down: loop, listeners, controllers, GPU resources. */
   const teardown = (): void => {
     renderer.setAnimationLoop(null)
     window.removeEventListener('resize', onResize)
     window.removeEventListener('blur', onBlur)
+    ending?.dispose()
+    hud.dispose()
     pointer.dispose()
     zoom.dispose()
     pan.dispose()
@@ -328,15 +434,6 @@ async function boot(): Promise<void> {
     })
   })
 
-  let previous = performance.now()
-  /**
-   * The renderer's own animation clock, in seconds.
-   *
-   * Accumulated from clamped frame deltas rather than read from
-   * `performance.now()`: a backgrounded tab would otherwise return to a clock
-   * that had run on without it and snap every walk cycle to a random frame.
-   */
-  let elapsed = 0
   renderer.setAnimationLoop((now) => {
     // A throw here repeats every frame and is invisible behind a frozen canvas.
     // Stop the loop on the first one and say so on screen instead.
@@ -362,6 +459,32 @@ async function boot(): Promise<void> {
       // catching up after a hitch and is not smoothed away here.
       if (session.stepsLastAdvance > 0) {
         built.entities.setEntities(session.renderEntities(groundHeightAt))
+      }
+      // Drained every frame whether or not anything is listening yet: the batch
+      // is the only channel out of the sim, and left undrained it would grow
+      // for the length of the mission. The reason is kept because the event
+      // fires once and the screen it explains outlives it by minutes.
+      for (const event of session.events()) {
+        if (event.type === 'MissionFailed') failure = event.reason
+      }
+      hud.update({
+        squad: rosterNow(),
+        objectives: session.objectives.progress(),
+        elapsedTicks: session.objectives.elapsedTicks,
+      })
+      // FROM THE STATE, NOT FROM THE EVENT. A frame that ran eight steps drains
+      // them all at once and a frame that ran none drains nothing, so an end
+      // screen driven by catching the event on the right frame is an end screen
+      // that occasionally never appears. `outcome()` is latched and can be
+      // asked at any time.
+      const outcome = session.outcome()
+      if (ending === undefined && outcome !== 'playing') {
+        ending = showMissionEnd(mount, {
+          kind: outcome,
+          ...(failure === undefined ? {} : { reason: failure }),
+          elapsedTicks: session.objectives.elapsedTicks,
+          onRestart: restart,
+        })
       }
       built.entities.update(elapsed, alpha)
       renderer.render(built.scene, rig.camera)

@@ -139,32 +139,51 @@ describe('a mission played to a loss', () => {
     const s = createSession(
       makeLevel({
         avatars: [
-          { x: 2, y: 2 },
-          { x: 2, y: 12 },
+          { x: 14, y: 2 }, // two tiles from the enemy: dead within the second
+          { x: 1, y: 13 }, // 18.6 tiles away: outside the AI's 12 of sight
         ],
-        enemies: [{ x: 11, y: 7 }],
+        enemies: [{ x: 16, y: 2 }],
       }),
     )
-    // Far apart, and only one of them anywhere near the enemy. Whatever happens
-    // to the first man, the mission is not lost while the second is alive.
+    /**
+     * THE SECOND MAN HAS TO BE GENUINELY OUT OF REACH, and the first draft of
+     * this test got that wrong: it put him 10.3 tiles from the enemy on a 20x15
+     * map, inside `DEFAULT_SIGHT_RANGE_TILES` of 12, so the enemy walked over
+     * and killed him too and the mission failed after all. The number is checked
+     * rather than eyeballed now — 18.6 tiles, half a map away.
+     */
     const events = play(s, 200)
-    const alive = s.world.entities.filter((e) => e.team === 'player').length
-    expect(alive).toBeGreaterThan(0)
+    expect(s.world.entities.filter((e) => e.team === 'player').length).toBeGreaterThan(0)
     expect(events.filter((e) => e.type === 'MissionFailed')).toHaveLength(0)
+    expect(s.outcome()).toBe('playing')
   })
 })
 
 describe('the mission timer', () => {
+  /**
+   * NOT `duel()`, and the reason is worth writing down: the timer STOPS when the
+   * mission resolves (`objectives/__tests__/mission-end.test.ts` pins that), and
+   * in a duel the avatar is dead on tick 1 — one hit point, an enemy three tiles
+   * away in plain sight with its weapon off cooldown. Timing a mission that
+   * ended before the second frame measures nothing. These two are nineteen tiles
+   * apart, well outside the AI's twelve of sight, so nothing happens to either
+   * of them and the clock is the only thing moving.
+   */
+  const quiet = () => makeLevel({ avatars: [{ x: 2, y: 2 }], enemies: [{ x: 18, y: 13 }] })
+
   it('is the simulation`s own clock, in ticks', () => {
-    const s = createSession(duel())
+    const s = createSession(quiet())
     for (let f = 0; f < 60; f += 1) s.advance(FIXED_TIMESTEP)
-    expect(s.objectives.elapsedTicks).toBe(60)
+    expect({ ticks: s.objectives.elapsedTicks, outcome: s.outcome() }).toEqual({
+      ticks: 60,
+      outcome: 'playing',
+    })
   })
 
   it('does not advance on a frame too short to step', () => {
     // The whole reason it is not a wall clock: a stalled or sub-step frame must
     // not age a mission that did not advance.
-    const s = createSession(duel())
+    const s = createSession(quiet())
     s.advance(FIXED_TIMESTEP)
     const at = s.objectives.elapsedTicks
     s.advance(FIXED_TIMESTEP / 8)

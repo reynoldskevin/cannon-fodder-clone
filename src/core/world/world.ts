@@ -317,6 +317,26 @@ export class World {
   }
 
   /**
+   * Read the pending events without taking them — for a SYSTEM that has to know
+   * what happened this tick.
+   *
+   * `drainEvents` is presentation's, and it is exactly-once: the objective
+   * system (ticket 013) counting `UnitDied` off a drain would eat the batch the
+   * HUD, FX and audio are waiting for. It cannot be handed the batch the way
+   * `AiSystem.hear` is either — a system registered with `addSystem` is called
+   * by the tick with nothing but the world, and the owner does not drain until
+   * the tick is over.
+   *
+   * SEE `EventBus.peek` FOR THE CONTRACT, which the caller has to hold up: the
+   * live buffer, valid for this read only, and events already read stay in it
+   * until presentation drains — so a reader tracks its own high-water `seq`
+   * rather than treating everything it sees as new.
+   */
+  peekEvents(): readonly SimEvent[] {
+    return this.bus.peek()
+  }
+
+  /**
    * Take this batch of events and empty the bus.
    *
    * Draining is presentation's business and must not feed back into the

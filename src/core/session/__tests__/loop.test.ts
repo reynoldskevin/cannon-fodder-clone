@@ -175,12 +175,12 @@ describe('commands are applied before the systems that read them', () => {
 })
 
 describe('system order', () => {
-  it('declares ai before squad, and squad before combat', () => {
+  it('declares ai, then squad, then combat, then objectives', () => {
     // The AI joined the front of the list in ticket 012: a pursue order it gives
     // this tick must move the man this tick, and its halt must land before the
     // movement it cancels. `session/__tests__/ai-wiring.test.ts` is where that
     // order is asserted through `advance` rather than read off a constant.
-    expect(createSession(makeLevel()).systemOrder).toEqual(['ai', 'squad', 'combat'])
+    expect(createSession(makeLevel()).systemOrder).toEqual(['ai', 'squad', 'combat', 'objectives'])
   })
 
   it('actually runs squad movement before combat', () => {
