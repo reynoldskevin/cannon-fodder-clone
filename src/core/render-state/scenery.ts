@@ -6,7 +6,9 @@
  * id 2, "canopy". Ticket 010 hung `tree1/2/3` on the level's single `tree`
  * annotation instead — one palm on a map whose whole eastern half is forest —
  * and left the actual forest as extruded green blocks. This module is the
- * correction: the canopy tiles ARE the trees.
+ * correction: the canopy tiles ARE the trees — or, since the 010a revision, the
+ * canopy tiles on the EDGE of the jungle are, and the rest of the mass is drawn
+ * by the raised terrain underneath them (see `canopyScenery`).
  *
  * Engine-free, like everything else in `core/`. It answers "what scenery does
  * this level have and where", in tile coordinates; turning that into world
@@ -15,8 +17,7 @@
  * NOT A STAND-IN. `level-entities.ts` is explicitly a placeholder for ticket
  * 005's `World` and is meant to be deleted when the sim lands. This is not:
  * scenery is a property of the level's terrain, not of its simulation, and a
- * `World` full of soldiers will still want the same 1,000 trees drawn around
- * them. It lives apart so 005 can delete its neighbour without touching it.
+ * `World` full of soldiers will still want the same trees drawn around them. It lives apart so 005 can delete its neighbour without touching it.
  *
  * ── WHY HASHED, NOT RANDOM ───────────────────────────────────────────────────
  *
@@ -144,14 +145,70 @@ export function tileJitter(tileX: number, tileY: number): TileJitter {
   }
 }
 
+/** Is this tile canopy? Off-map is not — the map's edge is open ground. */
+export function isCanopy(level: SceneryLevel, tileX: number, tileY: number): boolean {
+  const { w, h } = level.size
+  if (tileX < 0 || tileY < 0 || tileX >= w || tileY >= h) return false
+  return level.terrain[tileY]?.[tileX] === CANOPY_TILE_ID
+}
+
 /**
- * Every tree the level's canopy implies: one per canopy tile.
+ * Is this canopy tile on the FRINGE of its mass — does it have any 4-neighbour
+ * that is not canopy?
  *
- * ONE PER TILE, not one per canopy *region* and not one per interior-culled
- * tile. Culling canopy fully enclosed by other canopy removes only 273 of level
- * 1's 1,000 tiles, and since a tree stands far taller than the block beneath it
- * an "interior" tree is still visible over its neighbours — culling them would
- * punch holes in the middle of the forest, not save invisible work.
+ * Off-map counts as not-canopy: a tile at the map border has open ground beyond
+ * it as far as the player can ever see, so it reads as fringe.
+ *
+ * Non-canopy tiles are neither fringe nor interior; this returns false for them.
+ */
+export function isFringeCanopy(level: SceneryLevel, tileX: number, tileY: number): boolean {
+  if (!isCanopy(level, tileX, tileY)) return false
+  return (
+    !isCanopy(level, tileX - 1, tileY) ||
+    !isCanopy(level, tileX + 1, tileY) ||
+    !isCanopy(level, tileX, tileY - 1) ||
+    !isCanopy(level, tileX, tileY + 1)
+  )
+}
+
+/** The deepest `canopyDepth` reports — see that function. */
+export const MAX_CANOPY_DEPTH = 2
+
+/**
+ * How far inside its mass a canopy tile sits, as a small integer:
+ * `0` on the fringe, `1` one ring in, `2` for anything deeper (and `0` for a
+ * tile that is not canopy at all).
+ *
+ * The renderer uses this to raise the mass toward its middle. Two rings is
+ * enough for the eye — the point is a chamfer rather than a cliff at the
+ * fringe/interior seam, not a real distance field — and stopping at two keeps
+ * this a fixed 12-tile lookup per tile instead of a flood fill.
+ */
+export function canopyDepth(level: SceneryLevel, tileX: number, tileY: number): number {
+  if (!isCanopy(level, tileX, tileY)) return 0
+  if (isFringeCanopy(level, tileX, tileY)) return 0
+  // Interior. One ring in if any neighbour is itself on the fringe.
+  const nextToFringe =
+    isFringeCanopy(level, tileX - 1, tileY) ||
+    isFringeCanopy(level, tileX + 1, tileY) ||
+    isFringeCanopy(level, tileX, tileY - 1) ||
+    isFringeCanopy(level, tileX, tileY + 1)
+  return nextToFringe ? 1 : MAX_CANOPY_DEPTH
+}
+
+/**
+ * Every tree the level's canopy implies: one per *fringe* canopy tile.
+ *
+ * FRINGE ONLY (ticket 010a revision). The first cut planted one tree on every
+ * canopy tile, which was defensible while the tree was the only thing carrying
+ * the jungle — but a trunk buried inside a dense mass is hidden by the crowns
+ * around it and pays for itself in overdraw alone. The source map does not draw
+ * countable palms either; it draws a canopy mass with a ragged edge. So the
+ * trunks go where they are legible — against the open ground at the mass's edge
+ * — and the interior is left as raised foliage-coloured terrain, which is
+ * exactly what the source map paints there. On level 1 that is 727 trees over
+ * 1,000 canopy tiles, and the 273 interior tiles that lose a tree are the ones
+ * whose tree was never visible.
  *
  * Ids are the row-major tile index, so they are unique, stable across loads,
  * and independent of iteration order.
@@ -164,7 +221,7 @@ export function canopyScenery(level: SceneryLevel): SceneryItem[] {
     const row = level.terrain[tileY]
     if (!row) continue
     for (let tileX = 0; tileX < w; tileX += 1) {
-      if (row[tileX] !== CANOPY_TILE_ID) continue
+      if (!isFringeCanopy(level, tileX, tileY)) continue
       const jitter = tileJitter(tileX, tileY)
       items.push({
         id: tileY * w + tileX,

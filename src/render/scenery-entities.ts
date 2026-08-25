@@ -5,8 +5,8 @@
  * coordinates, what stands where) and `EntityRenderer` (which draws
  * `RenderEntity`s and knows nothing about levels). Trees are not simulation
  * entities, but pushing them down the same path costs nothing and buys the
- * instanced batching for free: 1,000 trees over three atlas rects is three
- * draws, the same three whether the forest is 1,000 trees or 10,000.
+ * instanced batching for free: level 1's 727 fringe trees over three atlas rects
+ * is three draws, the same three whether the forest is 727 trees or 10,000.
  *
  * SEPARATE FROM `level-entities.ts` DELIBERATELY. That file is a documented
  * stand-in for ticket 005's `World` and is meant to be deleted the day the sim

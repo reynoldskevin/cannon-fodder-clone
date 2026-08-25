@@ -55,18 +55,18 @@ export const TILE_STYLES: Readonly<Record<number, TileStyle>> = {
   2: {
     name: 'canopy',
     walkable: { colour: '#4a7a3a', height: 0.3 },
-    // UNDERGROWTH, NOT A WALL (ticket 010a). Blocked canopy used to stand 0.95
-    // proud, because until 010a it was the only thing representing the jungle
-    // and it had to carry the whole visual weight of it on its own. It no
-    // longer does: a tree now stands on every one of these tiles, and 4.2 world
-    // units of tree is more than enough mass. Left at 0.95 the two read as a
-    // trunk sprouting from the top of a chest-high green wall, which is exactly
-    // as odd as it sounds along the forest fringe where the block's south face
-    // is visible. At 0.5 the block reads as the undergrowth and leaf litter the
-    // trees are rooted in — still unmistakably raised (ten times walkable
-    // grass, and above blocked scrub at 0.45, so the passability hierarchy is
-    // intact and unchanged), but low enough that the trunk meets it rather than
-    // erupts from it.
+    // UNDERGROWTH AT THE FRINGE, NOT A WALL (ticket 010a). Blocked canopy used
+    // to stand 0.95 proud, because until 010a it was the only thing
+    // representing the jungle and had to carry its whole visual weight alone.
+    // Where a tree stands it no longer does: at 0.95 the two read as a trunk
+    // sprouting from the top of a chest-high green wall, which is exactly as odd
+    // as it sounds along the fringe where the block's south face is visible. 0.5
+    // reads as the undergrowth and leaf litter the trunks are rooted in — still
+    // unmistakably raised (ten times walkable grass, and above blocked scrub at
+    // 0.45, so the passability hierarchy is intact and unchanged).
+    //
+    // This is the FRINGE height. Interior canopy, which since the 010a revision
+    // has no tree on it at all, rises above it — see `canopyMassHeight`.
     blocked: { colour: '#2f5427', height: 0.5 },
   },
   3: {
@@ -81,6 +81,40 @@ export const TILE_STYLES: Readonly<Record<number, TileStyle>> = {
     walkable: { colour: '#4d86b5', height: -0.12 },
     blocked: { colour: '#2f5c88', height: -0.12 },
   },
+}
+
+/**
+ * Top-surface height of blocked canopy by `canopyDepth` — 0 fringe, 1 one ring
+ * in, 2 deeper.
+ *
+ * WHY THE INTERIOR RISES (ticket 010a revision). Trees are now planted on the
+ * fringe only, so an interior tile has nothing standing on it and has to read as
+ * solid canopy on its own; at the fringe's 0.5 it reads instead as a bald patch
+ * of undergrowth ringed by trees. The mass therefore rises toward its middle,
+ * with the 1.8-unit trees fringing it — the silhouette the source map draws.
+ *
+ * WHY THREE STEPS AND NOT TWO. Jumping straight from 0.5 to 0.9 at the
+ * fringe/interior seam emits a 0.4-unit skirt right behind every tree, a lit
+ * green wall visible the whole length of the forest edge. One intermediate ring
+ * at 0.72 turns that cliff into a chamfer: two shallow steps, each mostly hidden
+ * by the trunks in front of it, and from the isometric angle the mass reads as a
+ * rounded crown rather than a plateau. It stops at 0.9 rather than climbing
+ * further because above about one world unit the canopy starts occluding
+ * soldiers walking the clearings beyond it.
+ */
+export const CANOPY_MASS_HEIGHTS: readonly number[] = [0.5, 0.72, 0.9]
+
+/**
+ * Interior canopy tops are lifted toward the light: the fringe colour is the
+ * shaded flank of the mass, and a flat field of it over the interior looks like
+ * a hole rather than a crown. Same hue family, one step brighter.
+ */
+export const CANOPY_INTERIOR_COLOUR = '#366029'
+
+/** Blocked-canopy height for a tile at `depth` rings inside its mass. */
+export function canopyMassHeight(depth: number): number {
+  const step = Math.min(Math.max(Math.trunc(depth), 0), CANOPY_MASS_HEIGHTS.length - 1)
+  return CANOPY_MASS_HEIGHTS[step] ?? CANOPY_MASS_HEIGHTS[0] ?? 0
 }
 
 /**

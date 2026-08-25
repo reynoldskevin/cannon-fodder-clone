@@ -79,7 +79,7 @@
  *
  * `update` rebuilds every instance matrix every frame, which is right for
  * things that move and animate and costs ~2 short-lived objects per entity per
- * frame. Ticket 010a puts 1,000 trees in level 1 — the exact scale that comment
+ * frame. Ticket 010a puts 727 trees in level 1 — the exact scale that comment
  * named as the point where "a few tiny objects a frame" stops being true.
  *
  * Trees do not move, do not animate, do not turn and do not despawn. So

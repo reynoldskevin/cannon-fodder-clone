@@ -128,12 +128,21 @@ export interface SpriteManifest {
  *
  * Trees and bushes share a 768px cell but are emphatically not the same size in
  * the world, so they are listed separately rather than derived from the cell.
+ *
+ * TREES AT 1.9, NOT 4.4 (ticket 010a revision). The palms' painted bbox is
+ * 487x726 of their 768px cell, so a cell height of 4.4 drew a palm 2.8 tiles
+ * wide and 4.2 tall — 2.7x a soldier. One of those per canopy tile was a palm
+ * plantation that swamped the map and turned the soldiers into specks; the
+ * source map's jungle is a fine-grained canopy mass, not countable palms. 1.9
+ * puts the painted crown 1.2 tiles across and 1.80 world units tall, just above
+ * a soldier's 1.539, so the canopy reads as a mass with real clearings in it and
+ * the figures stay the thing you watch.
  */
 const CELL_WORLD_HEIGHT: Readonly<Record<string, number>> = {
   soldier: 1.7,
-  tree1: 4.4,
-  tree2: 4.4,
-  tree3: 4.4,
+  tree1: 1.9,
+  tree2: 1.9,
+  tree3: 1.9,
   bush: 1.9,
 }
 
