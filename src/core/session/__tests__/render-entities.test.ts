@@ -91,6 +91,32 @@ describe('renderEntities — the living', () => {
 })
 
 describe('renderEntities — animation', () => {
+  it('does NOT walk a unit that is standing still', () => {
+    // The squad jogging on the spot. `walk` is a looping four-frame cycle, so
+    // using it as the resting pose animates every stationary man forever — and
+    // since ticket 010 there was no sim, every man was stationary, so this was
+    // simply how the game looked and nobody called it a bug.
+    const s = createSession(makeLevel({ avatars: [{ x: 2, y: 7 }], enemies: [] }))
+    expect(s.renderEntities(FLAT)[0]!.animation).not.toBe('walk')
+  })
+
+  it('idles a unit that is standing still', () => {
+    const s = createSession(makeLevel({ avatars: [{ x: 2, y: 7 }], enemies: [] }))
+    expect(s.renderEntities(FLAT)[0]!.animation).toBe('idle')
+  })
+
+  it('idles a unit again once it stops', () => {
+    // The state has to come back, not just be the initial value.
+    const level = makeLevel({ avatars: [{ x: 2, y: 7 }], enemies: [] })
+    const s = createSession(level)
+    const id = s.selection()[0]!
+    s.queue.push({ type: 'move', unitIds: [id], target: { x: 6, y: 7 } })
+    for (let i = 0; i < 30; i++) s.advance(1 / 60)
+    expect(s.renderEntities(FLAT).find((r) => r.id === id)!.animation).toBe('walk')
+    for (let i = 0; i < 300; i++) s.advance(1 / 60)
+    expect(s.renderEntities(FLAT).find((r) => r.id === id)!.animation).toBe('idle')
+  })
+
   it('walks a unit that is moving', () => {
     const level = makeLevel({ avatars: [{ x: 2, y: 7 }], enemies: [] })
     const s = createSession(level)
