@@ -371,6 +371,42 @@ describe('what a commanded shot hits', () => {
   })
 })
 
+describe('degenerate geometry', () => {
+  it('does not divide by zero when a man is ordered to fire at his own feet', () => {
+    const r = rig(OPEN, COMMANDED)
+    const me = r.spawn(4, 4, 'player', 1000)
+    r.combat.orderFire([me.id], r.aim(4, 4))
+    const fired = shots(r.run(10))
+    expect(fired.length).toBeGreaterThan(0)
+    const shot = fired[0]!
+    if (shot.type !== 'ShotFired') throw new Error('expected a shot')
+    for (const n of [shot.originX, shot.originZ, shot.targetX, shot.targetZ]) {
+      expect(Number.isFinite(n)).toBe(true)
+    }
+  })
+
+  it('emits finite endpoints for a shooter standing inside terrain', () => {
+    // Should not happen, but a unit nudged into geometry by separation must not
+    // produce a NaN tracer. The round collapses to the muzzle — a zero-length
+    // shot — which FX in ticket 025 must be able to survive without normalising
+    // a zero vector.
+    const WALL = `
+      .........
+      ....#....
+      .........
+    `
+    const r = rig(WALL, COMMANDED)
+    const me = r.spawn(4, 1, 'player', 1000) // standing in the wall
+    r.combat.orderFire([me.id], r.aim(8, 1))
+    for (const shot of shots(r.run(10))) {
+      if (shot.type !== 'ShotFired') continue
+      for (const n of [shot.originX, shot.originZ, shot.targetX, shot.targetZ]) {
+        expect(Number.isFinite(n)).toBe(true)
+      }
+    }
+  })
+})
+
 describe('re-aiming', () => {
   it('takes the newest aim point', () => {
     // Dragging the pointer while the button is held re-issues the order.
