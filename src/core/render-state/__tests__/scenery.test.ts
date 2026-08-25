@@ -46,28 +46,36 @@ describe('canopyScenery', () => {
     expect(canopyScenery(lvl)).toEqual([])
   })
 
-  it('plants trees only on the FRINGE of a solid mass, not its interior', () => {
-    // Ticket 010a revision: trunks read well against open ground at the jungle's
-    // edge, but inside a dense mass they are hidden and just cost overdraw. The
-    // interior stays raised foliage-coloured terrain — the source map draws the
-    // canopy as a solid mass, not as countable individual palms.
+  it('plants the INTERIOR of a mass too, not just its fringe', () => {
+    /**
+     * REVERSED, and the premise is what changed rather than the taste.
+     *
+     * Ticket 010a planted the fringe alone because a trunk inside a dense mass
+     * is hidden by the crowns around it — and it said so explicitly on the
+     * strength of the interior being "raised foliage-coloured terrain". That
+     * terrain is gone: canopy now lies flat and is tinted exactly like grass,
+     * because a raised, differently-tinted tile is what drew a hard-edged square
+     * on the ground under every tree.
+     *
+     * With fringe-only planting on flat, untinted canopy the interior of every
+     * forest was BARE GRASS ringed by a single line of trees. Whatever the
+     * terrain stops carrying, the trees have to carry.
+     */
     const lvl = level(10, 10, (x, y) => x >= 2 && x < 6 && y >= 2 && y < 6)
-    // A 4x4 block has a 2x2 interior, so 16 - 4 = 12 fringe tiles.
-    expect(canopyScenery(lvl)).toHaveLength(12)
+    expect(canopyScenery(lvl)).toHaveLength(16) // the whole 4x4, interior included
   })
 
-  it('treats a canopy tile with any non-canopy neighbour as fringe', () => {
+  it('plants the enclosed centre of a 3x3 block', () => {
+    // The centre tile is the one `isFringeCanopy` excludes, so it is the single
+    // tile that distinguishes the two rules. It must get a tree.
     const lvl = level(5, 5, (x, y) => x >= 1 && x < 4 && y >= 1 && y < 4)
-    // 3x3 block: the single centre tile is interior, the other 8 are fringe.
-    expect(canopyScenery(lvl)).toHaveLength(8)
+    expect(canopyScenery(lvl)).toHaveLength(9)
+    expect(canopyScenery(lvl).some((t) => t.tileX === 2 && t.tileY === 2)).toBe(true)
   })
 
-  it('treats the map border as an edge, so border canopy still gets a tree', () => {
-    // A tile whose neighbour is off-map has open ground beyond it as far as the
-    // player can see, so it reads as fringe.
+  it('plants every tile of a map that is entirely canopy', () => {
     const lvl = level(3, 3, () => true)
-    // Only the centre tile is enclosed by canopy on all four sides.
-    expect(canopyScenery(lvl)).toHaveLength(8)
+    expect(canopyScenery(lvl)).toHaveLength(9)
   })
 
   it('plants nothing inside a mass with no fringe at all', () => {
@@ -103,12 +111,21 @@ describe('canopyScenery', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('cuts the tree count well below one-per-canopy-tile on a real-shaped mass', () => {
-    // The point of fringe-only planting is fewer, better-placed trees. On a
-    // large blob the saving should be substantial, not marginal.
+  it('is exactly one tree per canopy tile, however large the mass', () => {
+    // The assertion this replaces required the count to be UNDER a quarter of
+    // the canopy tiles, which was the whole point of fringe-only planting and is
+    // now precisely the bug: a 20x20 block of jungle drew 76 trees around an
+    // empty 18x18 field of grass.
     const lvl = level(30, 30, (x, y) => x >= 5 && x < 25 && y >= 5 && y < 25)
-    const canopyTiles = 20 * 20
-    expect(canopyScenery(lvl).length).toBeLessThan(canopyTiles * 0.25)
+    expect(canopyScenery(lvl)).toHaveLength(20 * 20)
+  })
+
+  it('gives every tree a distinct id, so 1,205 of them do not collide', () => {
+    // Ids are the row-major tile index. Fringe-only planting never exercised a
+    // dense block, and a renderer keyed on a duplicated id drops sprites.
+    const lvl = level(12, 12, (x, y) => x >= 2 && x < 10 && y >= 2 && y < 10)
+    const items = canopyScenery(lvl)
+    expect(new Set(items.map((t) => t.id)).size).toBe(items.length)
   })
 })
 

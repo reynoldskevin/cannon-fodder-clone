@@ -236,18 +236,26 @@ export function canopyDepth(level: SceneryLevel, tileX: number, tileY: number): 
 }
 
 /**
- * Every tree the level's canopy implies: one per *fringe* canopy tile.
+ * Every tree the level's canopy implies: one per canopy tile.
  *
- * FRINGE ONLY (ticket 010a revision). The first cut planted one tree on every
- * canopy tile, which was defensible while the tree was the only thing carrying
- * the jungle — but a trunk buried inside a dense mass is hidden by the crowns
- * around it and pays for itself in overdraw alone. The source map does not draw
- * countable palms either; it draws a canopy mass with a ragged edge. So the
- * trunks go where they are legible — against the open ground at the mass's edge
- * — and the interior is left as raised foliage-coloured terrain, which is
- * exactly what the source map paints there. On level 1 that is 727 trees over
- * 1,000 canopy tiles, and the 273 interior tiles that lose a tree are the ones
- * whose tree was never visible.
+ * FRINGE-ONLY IS REVERTED, and the reason it existed is the reason it had to go.
+ * Ticket 010a planted trunks on the fringe alone, on the argument that a trunk
+ * buried inside a dense mass is hidden by the crowns around it and pays for
+ * itself in overdraw — and that argument rested on a premise stated in its own
+ * comment: "the interior is left as RAISED FOLIAGE-COLOURED TERRAIN". That
+ * premise is gone. Canopy now lies flat and is tinted exactly like grass,
+ * because the raised, differently-tinted tile is what drew a hard-edged square
+ * on the ground under every tree.
+ *
+ * So with fringe-only planting the interior of every forest was bare grass
+ * ringed by a single line of trees — the canopy emptied out instead of filling
+ * in. Whatever the terrain stops carrying, the trees have to carry. On level 1
+ * that is 1,205 trees over 1,205 canopy tiles.
+ *
+ * `isFringeCanopy` is kept and still exported: it is a real property of the map
+ * and the thing to reach for if the interior ever needs to be planted
+ * DIFFERENTLY from the edge — smaller trees, undergrowth, a second sprite set —
+ * rather than not at all.
  *
  * Ids are the row-major tile index, so they are unique, stable across loads,
  * and independent of iteration order.
@@ -260,7 +268,7 @@ export function canopyScenery(level: SceneryLevel): SceneryItem[] {
     const row = level.terrain[tileY]
     if (!row) continue
     for (let tileX = 0; tileX < w; tileX += 1) {
-      if (!isFringeCanopy(level, tileX, tileY)) continue
+      if (!isCanopy(level, tileX, tileY)) continue
       const jitter = tileJitter(tileX, tileY)
       items.push({
         id: tileY * w + tileX,
