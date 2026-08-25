@@ -62,9 +62,13 @@ describe('groupIntoBatches', () => {
       items.push(item({ id: 100 + i, direction: dirs[i % 8]!, frame: i % 4 }))
     }
     const batches = groupIntoBatches(items)
-    // Worst case is 8 directions x 4 frames = 32 distinct rects; the point is
-    // that it is bounded by the atlas, not by the 34 entities.
-    expect(batches.length).toBeLessThanOrEqual(32)
+    // This mix has exactly 11 distinct (direction, frame) pairs: the squad
+    // contributes N x frames 0-3, the enemies 8 pairs, and (N, 0) is shared.
+    // Asserting the real number rather than the 8x4=32 atlas ceiling is the
+    // point — a ceiling of 32 would pass even if batching regressed to one
+    // draw per entity.
+    expect(batches).toHaveLength(11)
+    expect(batches.length).toBeLessThan(items.length / 3)
     expect(batches.reduce((n, b) => n + b.items.length, 0)).toBe(34)
   })
 
