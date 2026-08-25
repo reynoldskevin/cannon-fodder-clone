@@ -185,17 +185,27 @@ describe('system order', () => {
      * against a literal and would survive the systems being registered in the
      * opposite order — it documents an intention, it does not test one.
      *
-     * The observable consequence: a unit that WALKS INTO RANGE this tick shoots
-     * on this tick, because combat reads the position squad just wrote. With
-     * the systems the other way round, combat sees the position from before the
-     * step and the shot lands one tick later. So: find the first tick on which
-     * the shooter is within weapon range, and the first tick on which a shot is
-     * fired, and require them to be the same tick.
+     * The observable consequence: a man who SHOOTS WHILE WALKING shoots from
+     * where this tick's step put him, because combat reads the position squad
+     * just wrote. With the systems the other way round he would shoot from where
+     * he stood at the end of the previous tick — one step behind, every time.
+     *
+     * He is given a fire order as well as a move order, and needs to be: since
+     * ticket 011a the player squad holds fire until told, so an earlier version
+     * of this test — which pushed only the move and waited for a shot — became
+     * unsatisfiable the moment that landed. Advancing while firing is the case
+     * worth testing anyway; it is the original's whole feel.
      */
     const level = makeLevel({ avatars: [{ x: 2, y: 7 }], enemies: [{ x: 16, y: 7 }] })
     const s = createSession(level)
     const shooter = s.selection()[0]!
     s.queue.push({ type: 'move', unitIds: [shooter], target: { x: 16, y: 7 } })
+    s.queue.push({
+      type: 'fire',
+      unitIds: [shooter],
+      ordnance: 'rifle',
+      target: { x: 16, y: 7 },
+    })
 
     // `ShotFired` carries `originX` BY VALUE, which is what makes this robust:
     // it survives the shooter dying to return fire on the same tick (these two
@@ -216,7 +226,7 @@ describe('system order', () => {
       }
     }
 
-    expect(Number.isNaN(origin)).toBe(false) // he really did walk into range
+    expect(Number.isNaN(origin)).toBe(false) // he really did fire while walking
     expect(RIFLE_RANGE_TILES).toBeGreaterThan(0) // the fixture is a real weapon
 
     // He was still walking when he fired, so the two system orders give
