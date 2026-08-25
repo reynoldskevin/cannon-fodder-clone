@@ -58,6 +58,19 @@ describe('createFlowFieldCache', () => {
       expect(cache.size).toBe(2)
     })
 
+    it('treats a fractional target as the tile containing it', () => {
+      // Ticket 007 holds float positions and 008 picks destinations by
+      // raycasting the ground plane, so near-identical floats arrive constantly.
+      // Keyed unfloored, every click on the same tile is a fresh whole-map
+      // sweep and the cache does nothing at all.
+      const cache = createFlowFieldCache()
+      const grid = bakeNavGrid(asciiLevel(GRID))
+      const a = cache.get(grid, { x: 1, y: 1 }, INFANTRY)
+      const b = cache.get(grid, { x: 1.5, y: 1.25 }, INFANTRY)
+      expect(b).toBe(a)
+      expect(cache.size).toBe(1)
+    })
+
     it('keys on the traversal mask, so infantry and vehicles do not share', () => {
       // Sharing here would route a tank down an infantry-only track.
       const cache = createFlowFieldCache()

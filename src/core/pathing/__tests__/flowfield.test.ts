@@ -459,6 +459,66 @@ describe('computeFlowField', () => {
     })
   })
 
+  describe('fractional targets', () => {
+    // The accessors floor their coordinates so a unit standing anywhere inside a
+    // tile reads that tile. The TARGET has to take the same floor, or the guard
+    // that admits it and the sweep that solves it disagree about which tile the
+    // destination is. Ticket 007 stores float positions and ticket 008 picks a
+    // destination by raycasting the ground plane, so a fractional target is the
+    // normal case, not an abuse.
+    const OPEN = `
+      .....
+      .....
+      .....
+      .....
+      .....
+    `
+
+    it('floors a fractional target to the tile containing it', () => {
+      const f = field(OPEN, { x: 2.5, y: 2.5 })
+      expect(f.cost(2, 2)).toBe(0)
+    })
+
+    it('reports the floored target, not the fractional one it was handed', () => {
+      expect(field(OPEN, { x: 2.5, y: 2.5 }).target).toEqual({ x: 2, y: 2 })
+    })
+
+    it('produces exactly the field its floored target would', () => {
+      const fractional = field(OPEN, { x: 3.9, y: 1.2 })
+      const floored = field(OPEN, { x: 3, y: 1 })
+      for (let y = 0; y < 5; y++) {
+        for (let x = 0; x < 5; x++) {
+          expect({ x, y, cost: fractional.cost(x, y) }).toEqual({ x, y, cost: floored.cost(x, y) })
+          expect(fractional.dirX(x, y)).toBe(floored.dirX(x, y))
+          expect(fractional.dirY(x, y)).toBe(floored.dirY(x, y))
+        }
+      }
+    })
+
+    it('leaves no map unsolved — every open cell still reaches the target', () => {
+      // The silent failure mode: a fractional source index makes every write a
+      // no-op, the sweep dies, and the WHOLE map comes back unreachable. Every
+      // unit then stands still and nothing reports an error.
+      const f = field(OPEN, { x: 1.5, y: 1 })
+      let reachable = 0
+      for (let y = 0; y < 5; y++) for (let x = 0; x < 5; x++) if (f.reachable(x, y)) reachable++
+      expect(reachable).toBe(25)
+    })
+
+    it('does not solve for some other tile entirely', () => {
+      // `y * w + x` with fractional parts can still land on a valid integer
+      // index — 2.5 * 5 + 2.5 is 15 — and then the field is perfectly monotonic
+      // toward completely the wrong cell, which is the worst version of this
+      // bug because nothing anywhere looks broken.
+      const f = field(OPEN, { x: 2.5, y: 2.5 })
+      const zeroes: { x: number; y: number }[] = []
+      for (let y = 0; y < 5; y++) {
+        for (let x = 0; x < 5; x++) if (f.cost(x, y) === 0) zeroes.push({ x, y })
+      }
+      expect(zeroes).toEqual([{ x: 2, y: 2 }])
+    })
+  })
+
   describe('determinism', () => {
     it('two fields over the same grid and target are identical', () => {
       const art = `
