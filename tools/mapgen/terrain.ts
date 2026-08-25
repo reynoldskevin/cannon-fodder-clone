@@ -360,6 +360,40 @@ export function despeckleTerrain(terrain: readonly (readonly number[])[]): numbe
   return current
 }
 
+/**
+ * Any BLOCKED tile still classified as grass becomes canopy.
+ *
+ * WHY: blocked grass is scrub, and the style table draws it as a raised block —
+ * 0.45 world units of flat dark green with nothing standing on it. In open
+ * ground that reads as a coloured square lying in a field, which is exactly the
+ * artefact the despeckle above exists to remove; it survives only because a
+ * blocked-grass tile is not MIS-classified in any way this map can see. The
+ * colour is right, the passability is right, and it still looks wrong.
+ *
+ * Reclassifying it as canopy fixes it by making it a real thing instead: canopy
+ * lies flat, and `core/render-state/scenery` plants one tree per FRINGE canopy
+ * tile — which an isolated blocked tile in a field always is. So the square
+ * becomes a tree, and the reason the player cannot walk there becomes something
+ * he can see. Level 1 has 57 of them.
+ *
+ * AFTER THE DESPECKLE, NEVER BEFORE. Run first, these would be lone canopy tiles
+ * in a sea of grass, and the despeckle would faithfully dissolve every one of
+ * them straight back to grass — leaving 57 tiles that look like open field and
+ * cannot be walked on. Invisible walls are far worse than visible squares.
+ *
+ * WALKABILITY IS READ, NEVER WRITTEN. This changes what a tile looks like on the
+ * strength of what it already is; a pass that could edit the mask could make a
+ * mission unwinnable.
+ */
+export function blockedGrassToCanopy(
+  terrain: readonly (readonly number[])[],
+  walkable: readonly (readonly boolean[])[],
+): number[][] {
+  return terrain.map((row, y) =>
+    row.map((id, x) => (id === TILE.GRASS && walkable[y]?.[x] === false ? TILE.CANOPY : id)),
+  )
+}
+
 export function buildTerrain(
   averages: readonly (readonly RGB[])[],
   walkableMinLuminance: number,

@@ -18,8 +18,13 @@ describe('known tile ids', () => {
     }
   })
 
-  it('renders grass and canopy differently', () => {
-    expect(tileStyle(1, true).colour).not.toBe(tileStyle(2, false).colour)
+  it('renders grass and canopy IDENTICALLY — see the canopy case below', () => {
+    // This asserted the opposite until the squares were chased down. The floor
+    // is one texture times a per-tile tint, and any difference in that tint
+    // draws a hard tile-shaped edge on the ground. Kept as its own case rather
+    // than deleted, because "grass and canopy must differ" is the obvious thing
+    // to reach for and this is where the reason not to lives.
+    expect(tileStyle(1, true).colour).toBe(tileStyle(2, false).colour)
   })
 
   it('lays canopy FLAT, level with grass, so no tile stands on a pedestal', () => {
@@ -43,12 +48,21 @@ describe('known tile ids', () => {
     expect(tileStyle(2, true).height).toBe(tileStyle(1, true).height)
   })
 
-  it('still tells canopy from grass by COLOUR, which now carries it alone', () => {
-    // With the height gone, colour is the only thing left distinguishing a
-    // forest floor from a field. If these ever converged the canopy would
-    // vanish into the grass entirely.
-    expect(tileStyle(2, false).colour).not.toBe(tileStyle(1, true).colour)
-    expect(tileStyle(2, true).colour).not.toBe(tileStyle(1, true).colour)
+  it('draws canopy with the SAME tint as grass, so no tile edge shows', () => {
+    /**
+     * The last of the squares, and the assertion that keeps it gone.
+     *
+     * The floor is one tileable texture multiplied by a per-tile vertex colour,
+     * and that colour is constant across a tile — so two neighbouring tiles with
+     * different tints meet at a hard, axis-aligned edge. It did not matter how
+     * close the two greens were: a canopy tile with no tree over it still drew a
+     * rectangle on the grass. Nudging them nearer only made it fainter.
+     *
+     * Identical is the only value that has no edge. What tells a player where
+     * the forest is, is the trees.
+     */
+    expect(tileStyle(2, false).colour).toBe(tileStyle(1, true).colour)
+    expect(tileStyle(2, true).colour).toBe(tileStyle(1, true).colour)
   })
 })
 

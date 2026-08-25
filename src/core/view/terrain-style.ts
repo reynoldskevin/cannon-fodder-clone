@@ -80,6 +80,29 @@ export interface ResolvedTileStyle extends TileAppearance {
  */
 const CANOPY_HEIGHT = 0.05
 
+/**
+ * Canopy's floor tint — the SAME green as grass, deliberately.
+ *
+ * The last of the squares was this. `TerrainRenderer` multiplies one tileable
+ * jungle texture by a per-tile vertex colour, and that tint is constant across a
+ * tile — so any two neighbouring tiles with different tints meet at a hard,
+ * axis-aligned edge. It did not matter how close the two greens were: a canopy
+ * tile with no tree sprite over it still drew a rectangle on the grass, just a
+ * subtler one. Nudging the colour nearer only made the square fainter.
+ *
+ * Identical, therefore. Canopy and grass are one continuous floor and the tile
+ * grid leaves no trace in it at all. The forest is the tree sprites, and nothing
+ * else.
+ *
+ * THE COST, STATED PLAINLY: a blocked canopy tile with no tree standing on it is
+ * now indistinguishable from open grass. One tree is planted per FRINGE tile, so
+ * the inside of a mass is covered only by its neighbours' crowns — which is
+ * true at 1.8 units of tree against 1 unit of tile, but it is cover rather than
+ * a guarantee. If a bald patch ever appears, plant scenery on interior tiles;
+ * do not bring the tint back, because the tint is what drew the squares.
+ */
+const CANOPY_COLOUR = '#6f9f4f'
+
 export const TILE_STYLES: Readonly<Record<number, TileStyle>> = {
   0: {
     name: 'unknown',
@@ -94,8 +117,8 @@ export const TILE_STYLES: Readonly<Record<number, TileStyle>> = {
   },
   2: {
     name: 'canopy',
-    walkable: { colour: '#679649', height: CANOPY_HEIGHT },
-    blocked: { colour: '#5d8c43', height: CANOPY_HEIGHT },
+    walkable: { colour: CANOPY_COLOUR, height: CANOPY_HEIGHT },
+    blocked: { colour: CANOPY_COLOUR, height: CANOPY_HEIGHT },
   },
   3: {
     name: 'rock',
@@ -111,7 +134,7 @@ export const TILE_STYLES: Readonly<Record<number, TileStyle>> = {
   },
 }
 
-export const CANOPY_INTERIOR_COLOUR = '#5a8842'
+export const CANOPY_INTERIOR_COLOUR = CANOPY_COLOUR
 
 
 /**

@@ -32,6 +32,7 @@ import { stableStringify } from './json'
 import { readLegendFile, SPAWN_CATEGORIES } from './legend'
 import type { LegendLabel, SpawnCategory } from './legend'
 import {
+  blockedGrassToCanopy,
   buildTerrain,
   buildWalkable,
   MAX_INK_FRACTION,
@@ -638,7 +639,7 @@ export function importLevel(options: ImportOptions): ImportResult {
       )}`,
     )
   }
-  const terrain = buildTerrain(averages, legend.walkableMinLuminance)
+  const classified = buildTerrain(averages, legend.walkableMinLuminance)
   const maskPath = join(sourceDir, 'walkable.png')
   let walkable: boolean[][]
   let walkableSource: 'heuristic' | 'mask'
@@ -663,6 +664,12 @@ export function importLevel(options: ImportOptions): ImportResult {
         )}, which is a guess, not authored data`,
     )
   }
+
+  // AFTER walkability is known, and after the despeckle inside `buildTerrain`:
+  // a blocked tile that still reads as grass is drawn as a raised dark block
+  // sitting in a field. As canopy it lies flat and earns a tree instead. See
+  // `blockedGrassToCanopy` for why the order is not negotiable.
+  const terrain = blockedGrassToCanopy(classified, walkable)
 
   warnings.push(...sanityCheckWalkability(walkable, spawns, walkableSource, legend.objectives))
 

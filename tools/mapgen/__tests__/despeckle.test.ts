@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { despeckleTerrain, TILE } from '../terrain'
+import { blockedGrassToCanopy, despeckleTerrain, TILE } from '../terrain'
 
 /**
  * The mapgen despeckle pass — lone mis-classified tiles adopt their surroundings.
@@ -208,5 +208,100 @@ describe('degenerate inputs', () => {
     // An end tile has ONE neighbour, which is not a shoreline: it is one tile's
     // opinion, and it must not flip the end of a one-tile-wide strip.
     expect(despeckleTerrain([[R, C, C, C, C]])).toEqual([[R, C, C, C, C]])
+  })
+})
+
+describe('blocked grass becomes canopy, so it gets a tree instead of a block', () => {
+  /**
+   * The last of the squares. A blocked-grass tile is not mis-classified in any
+   * way the map can see — the colour is right and the passability is right — and
+   * it still looks wrong, because the style table draws it as 0.45 world units
+   * of flat dark green with nothing standing on it. In an open field that is a
+   * coloured square lying on the grass.
+   *
+   * As canopy it lies flat and `core/render-state/scenery` plants a tree on it,
+   * because an isolated blocked tile in a field is always FRINGE canopy. The
+   * square becomes the thing that is actually in the way.
+   */
+  const F = false
+  const T = true
+
+  it('converts a blocked grass tile', () => {
+    const out = blockedGrassToCanopy([[G, G, G]], [[T, F, T]])
+    expect(out).toEqual([[G, C, G]])
+  })
+
+  it('leaves walkable grass alone', () => {
+    const out = blockedGrassToCanopy([[G, G, G]], [[T, T, T]])
+    expect(out).toEqual([[G, G, G]])
+  })
+
+  it('leaves every other terrain alone, blocked or not', () => {
+    // Blocked ROCK is a wall and should look like one; blocked WATER is deep
+    // water. Only grass is the case where "blocked" has no visual of its own.
+    const out = blockedGrassToCanopy(
+      [
+        [R, W, C],
+        [R, W, C],
+      ],
+      [
+        [F, F, F],
+        [T, T, T],
+      ],
+    )
+    expect(out).toEqual([
+      [R, W, C],
+      [R, W, C],
+    ])
+  })
+
+  it('never writes to the walkability mask it reads', () => {
+    // The property that makes this safe at all. A pass that could edit
+    // passability could make a mission unwinnable from a cosmetic tweak.
+    const walkable = [[T, F, T]]
+    const before = JSON.stringify(walkable)
+    blockedGrassToCanopy([[G, G, G]], walkable)
+    expect(JSON.stringify(walkable)).toBe(before)
+  })
+
+  it('does not mutate the terrain it was given', () => {
+    const terrain = [[G, G, G]]
+    const before = JSON.stringify(terrain)
+    blockedGrassToCanopy(terrain, [[T, F, T]])
+    expect(JSON.stringify(terrain)).toBe(before)
+  })
+
+  it('tolerates a mask shorter than the terrain', () => {
+    // Ragged input degrades to "not known to be blocked" rather than throwing,
+    // matching how the rest of the importer treats a malformed row.
+    expect(blockedGrassToCanopy([[G, G]], [])).toEqual([[G, G]])
+  })
+
+  it('MUST run after the despeckle, not before', () => {
+    /**
+     * The ordering bug this test exists to prevent, spelled out because it is
+     * silent and severe. Run first, a lone blocked-grass tile becomes a lone
+     * canopy tile in a sea of grass — an island of one, unanimously shored by
+     * grass — and the despeckle faithfully dissolves it straight back. The tile
+     * then looks like open field and cannot be walked on.
+     *
+     * Asserted as the composition, in both orders, so the difference is visible
+     * rather than merely documented.
+     */
+    const terrain = [
+      [G, G, G],
+      [G, G, G],
+      [G, G, G],
+    ]
+    const walkable = [
+      [T, T, T],
+      [T, F, T],
+      [T, T, T],
+    ]
+    const wrong = despeckleTerrain(blockedGrassToCanopy(terrain, walkable))
+    expect(wrong[1]?.[1]).toBe(G) // dissolved away — an invisible wall
+
+    const right = blockedGrassToCanopy(despeckleTerrain(terrain), walkable)
+    expect(right[1]?.[1]).toBe(C) // survives, and will be given a tree
   })
 })
