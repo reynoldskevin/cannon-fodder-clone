@@ -110,7 +110,19 @@ describe('renderEntities — animation', () => {
     expect(drawn.dx).toBeGreaterThan(0) // heading east
   })
 
-  it('reports (0, 0) for a unit that has not moved, meaning "unchanged"', () => {
+  it('honours a spawn`s authored facing before it has moved', () => {
+    // `level-entities.ts` read `SpawnPoint.facing` and the session did not, so
+    // deleting it left `facing` — parsed and VALIDATED by the level schema —
+    // with no runtime consumer at all. Invisible on level 1, which annotates no
+    // facings, which is exactly why it needs a test: the next map that uses the
+    // field would find it silently ignored.
+    const level = makeLevel({ avatars: [{ x: 5, y: 7 }], enemies: [] })
+    const facing = { ...level, spawns: { ...level.spawns, avatars: [{ x: 5, y: 7, type: 'rifleman', facing: 'N' }] } }
+    const drawn = createSession(facing).renderEntities(FLAT)[0]!
+    expect({ dx: drawn.dx, dz: drawn.dz }).toEqual({ dx: 0, dz: -1 }) // -z is north
+  })
+
+  it('reports (0, 0) for a unit whose spawn authored no facing', () => {
     // The renderer reads (0,0) as "keep the facing you had". Reporting a real
     // direction for a stationary man would snap the whole squad to face east on
     // the first frame after they stop.
