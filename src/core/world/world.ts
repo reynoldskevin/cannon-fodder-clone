@@ -91,8 +91,20 @@ export interface SpawnSpec {
  */
 export type SimSystem = (world: World) => void
 
-/** Health an entity gets when the spawn does not say. */
-const DEFAULT_HEALTH = 100
+/**
+ * Health an entity gets when the spawn does not say.
+ *
+ * ONE, because every spawn that omits health is a soldier and a soldier dies to
+ * a single round — that is the original's lethality and the whole reason its
+ * missions feel the way they do. Anything tougher (the vehicles extension point)
+ * states its health explicitly at spawn, which is the honest place for it.
+ *
+ * The combat meaning of this number is `INFANTRY_HEALTH` in
+ * `core/combat/weapons.ts`, which is where balance is tuned; the two must agree.
+ * Duplicated rather than imported because `world` is the layer beneath `combat`
+ * and must not depend upward on it.
+ */
+const DEFAULT_HEALTH = 1
 
 /** State an entity starts in when the spawn does not say. */
 const DEFAULT_STATE: EntityState = 'idle'
