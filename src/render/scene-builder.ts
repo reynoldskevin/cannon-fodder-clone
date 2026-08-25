@@ -19,6 +19,7 @@ import { levelWorldBounds } from '../core/view/projection'
 import { TerrainRenderer } from './terrain-renderer'
 import { EntityRenderer } from './entity-renderer'
 import { levelRenderEntities } from './level-entities'
+import { canopyRenderEntities } from './scenery-entities'
 import type { UnitVisual } from './sprite-atlas'
 
 /** Horizon/sky colour, also the fog colour so the map fades into it rather than into black. */
@@ -94,6 +95,10 @@ export class SceneBuilder {
     // there is no motion to interpolate, and calling this twice is what makes
     // `previous` and `current` agree rather than the first frame lerping from
     // an empty world.
+    // The forest, from the terrain itself (ticket 010a). Static for the level's
+    // lifetime, so it is written to the GPU once here and never rebuilt — see
+    // `EntityRenderer`'s header for why it does not go through `setEntities`.
+    entities.setScenery(canopyRenderEntities(level, (x, y) => terrain.heightAt(x, y)))
     const spawned = levelRenderEntities(level, (x, y) => terrain.heightAt(x, y))
     entities.setEntities(spawned)
     entities.setEntities(spawned)

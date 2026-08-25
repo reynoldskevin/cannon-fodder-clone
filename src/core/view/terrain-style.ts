@@ -55,7 +55,19 @@ export const TILE_STYLES: Readonly<Record<number, TileStyle>> = {
   2: {
     name: 'canopy',
     walkable: { colour: '#4a7a3a', height: 0.3 },
-    blocked: { colour: '#2f5427', height: 0.95 },
+    // UNDERGROWTH, NOT A WALL (ticket 010a). Blocked canopy used to stand 0.95
+    // proud, because until 010a it was the only thing representing the jungle
+    // and it had to carry the whole visual weight of it on its own. It no
+    // longer does: a tree now stands on every one of these tiles, and 4.2 world
+    // units of tree is more than enough mass. Left at 0.95 the two read as a
+    // trunk sprouting from the top of a chest-high green wall, which is exactly
+    // as odd as it sounds along the forest fringe where the block's south face
+    // is visible. At 0.5 the block reads as the undergrowth and leaf litter the
+    // trees are rooted in — still unmistakably raised (ten times walkable
+    // grass, and above blocked scrub at 0.45, so the passability hierarchy is
+    // intact and unchanged), but low enough that the trunk meets it rather than
+    // erupts from it.
+    blocked: { colour: '#2f5427', height: 0.5 },
   },
   3: {
     name: 'rock',

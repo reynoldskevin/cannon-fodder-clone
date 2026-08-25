@@ -74,6 +74,20 @@
  * material, and the UV rect is a per-instance vertex attribute (`aUvRect`)
  * injected into the stock shader. Every batch is the same program and the same
  * texture, so the driver switches nothing between draws.
+ *
+ * ── WHY SCENERY HAS ITS OWN PATH ─────────────────────────────────────────────
+ *
+ * `update` rebuilds every instance matrix every frame, which is right for
+ * things that move and animate and costs ~2 short-lived objects per entity per
+ * frame. Ticket 010a puts 1,000 trees in level 1 — the exact scale that comment
+ * named as the point where "a few tiny objects a frame" stops being true.
+ *
+ * Trees do not move, do not animate, do not turn and do not despawn. So
+ * `setScenery` writes their instance buffers ONCE and the per-frame path never
+ * looks at them again: no interpolation, no facing lookup, no frame lookup, no
+ * allocation, and no matrix writes proportional to the tree count. They are
+ * still real instanced draws and still counted in `drawCalls`; they are simply
+ * not rebuilt for a frame in which nothing about them changed.
  */
 
 import * as THREE from 'three'
@@ -163,6 +177,16 @@ export class EntityRenderer {
   private readonly facings = new Map<number, Facing>()
 
   /**
+   * Static scenery: the entities as given, and the batch keys they built.
+   *
+   * The entities are retained only so `setElevation` can rebuild the buffers —
+   * the vertical pre-stretch is baked into every instance matrix, so a camera
+   * angle change has to redo them. Nothing per-frame reads either of these.
+   */
+  private scenery: readonly RenderEntity[] = []
+  private readonly sceneryKeys = new Set<string>()
+
+  /**
    * How much taller than its on-screen height a quad is built, `1 / cos(e)`.
    * See the header. Set by `setElevation`, never a constant.
    */
@@ -239,7 +263,26 @@ export class EntityRenderer {
   setElevation(elevationRad: number): void {
     if (!Number.isFinite(elevationRad)) return
     const clamped = Math.min(Math.abs(elevationRad), MAX_QUAD_ELEVATION)
-    this.verticalStretch = 1 / Math.cos(clamped)
+    const stretch = 1 / Math.cos(clamped)
+    if (stretch === this.verticalStretch) return
+    this.verticalStretch = stretch
+    // Scenery matrices have the old stretch baked in and are never rewritten by
+    // `update`. Nothing rebuilds them if this does not.
+    if (this.scenery.length > 0) this.buildScenery()
+  }
+
+  /**
+   * Hand the renderer the level's static scenery — trees, and whatever else is
+   * derived from terrain rather than from the sim.
+   *
+   * Written to the GPU once, here, and then left alone. Anything that moves,
+   * animates or is destroyed belongs in `setEntities` instead; there is no
+   * mechanism to update a single scenery instance, because the moment one is
+   * needed the thing is not scenery.
+   */
+  setScenery(entities: readonly RenderEntity[]): void {
+    this.scenery = [...entities]
+    this.buildScenery()
   }
 
   /**
@@ -255,9 +298,59 @@ export class EntityRenderer {
     this.current = [...entities]
   }
 
-  /** How many draw calls the last `update` produced — asserted by acceptance. */
+  /**
+   * How many instanced draws the renderer is currently issuing — asserted by
+   * acceptance. Scenery is included: it is drawn every frame like everything
+   * else, it is merely not rebuilt every frame.
+   */
   get drawCalls(): number {
-    return this.visibleBatches
+    return this.visibleBatches + this.sceneryKeys.size
+  }
+
+  /**
+   * Fill the scenery batches from `this.scenery`. Called on `setScenery` and on
+   * an elevation change, and on nothing else.
+   *
+   * Scenery keys are namespaced so a static tree and a hypothetical simulated
+   * one could never land in the same instanced mesh — one of which is rewritten
+   * per frame and one of which is not, so sharing a mesh would have the dynamic
+   * fill silently truncate the static instances with its own `mesh.count`.
+   */
+  private buildScenery(): void {
+    for (const key of this.sceneryKeys) {
+      const batch = this.meshes.get(key)
+      if (!batch) continue
+      this.destroy(batch)
+      this.meshes.delete(key)
+    }
+    this.sceneryKeys.clear()
+
+    const items: SpriteDrawItem[] = []
+    for (const entity of this.scenery) {
+      // Frame 0 of the default facing, directly: scenery has no animation clock
+      // to consult and no direction to derive, so routing it through `frameAt`
+      // and `stableFacing` would be ceremony around two constants.
+      const sprite = this.visual.frame(entity.unit, entity.animation, DEFAULT_FACING, 0)
+      if (!sprite) continue
+      items.push({
+        id: entity.id,
+        unit: entity.unit,
+        animation: entity.animation,
+        direction: DEFAULT_FACING,
+        frame: 0,
+        x: entity.x,
+        z: entity.z,
+        y: entity.y,
+        sprite,
+        tint: entity.tint,
+      })
+    }
+
+    for (const batch of groupIntoBatches(items)) {
+      const key = `scenery:${batch.key}`
+      this.fill(key, batch.items)
+      this.sceneryKeys.add(key)
+    }
   }
 
   /**
@@ -357,7 +450,7 @@ export class EntityRenderer {
     // Meshes whose batch has no members this frame: count 0 and hidden, so they
     // cost nothing but stay in the pool for when that frame comes round again.
     for (const [key, batch] of this.meshes) {
-      if (this.drawn.has(key)) continue
+      if (this.drawn.has(key) || this.sceneryKeys.has(key)) continue
       batch.mesh.count = 0
       batch.mesh.visible = false
     }
@@ -476,6 +569,8 @@ export class EntityRenderer {
   dispose(): void {
     for (const batch of this.meshes.values()) this.destroy(batch)
     this.meshes.clear()
+    this.sceneryKeys.clear()
+    this.scenery = []
     this.facings.clear()
     this.geometry.dispose()
     this.material.dispose()
