@@ -103,21 +103,35 @@ export async function loadFloorTexture(
  *   washed out and pale against terrain that is correctly lit.
  * - `generateMipmaps` + `LinearMipmapLinearFilter`, following the atlas's
  *   precedent in `sprite-atlas.ts` and for a sharper version of the same reason.
- *   At maximum zoom-out a 6-world-unit repeat — 512 texels — covers roughly 60
- *   screen pixels, an 8x minification, and unlike the sprites the floor covers
- *   EVERY pixel of the view. A 2x2 bilinear kernel over an 8x reduction takes 4
- *   texels out of 64 and discards the rest, and which 4 changes as the camera
- *   moves: the whole map would crawl and sparkle for the entire length of a pan,
- *   which is this build's headline interaction. The chain costs 33% more texture
- *   memory on a 512x512 image — under 350 KB — which is nothing.
+ *   At maximum zoom-out one repeat — 512 texels over `FLOOR_REPEAT_WORLD_UNITS`
+ *   world units — covers well under a hundred screen pixels, and unlike the
+ *   sprites the floor covers EVERY pixel of the view. Halving the repeat to 3
+ *   doubled that minification rather than easing it. A 2x2 bilinear kernel over
+ *   a reduction that steep takes a handful of texels out of dozens and discards
+ *   the rest, and which ones it takes changes as the camera moves: the whole map
+ *   would crawl and sparkle for the entire length of a pan, which is this
+ *   build's headline interaction. The chain costs 33% more texture memory on a
+ *   512x512 image — under 350 KB — which is nothing.
  *   A seamless source has no bleed problem: the wrap is what the mip filter
  *   would blend into anyway.
  * - `LinearFilter` magnification: painted art at a non-integer on-screen size
  *   that changes with every zoom step. `NearestFilter` would stairstep.
+ * - `flipY = false`, and this one is load-bearing rather than cosmetic. Three
+ *   flips images on upload by default, putting the PNG's BOTTOM row at v = 0.
+ *   `floorUv` maps world +z straight to +v, and world +z is screen-DOWN, so with
+ *   the flip left on, walking down the screen walks UP the image and the whole
+ *   floor renders vertically mirrored. On a seamless organic texture that is
+ *   invisible as a seam and shows only as art that reads subtly wrong — leaves
+ *   lit from the wrong side, stones with their shadows above them.
+ *   The atlas takes the opposite decision for the same reason: it keeps the flip
+ *   and compensates in its UVs, because its rects are addressed in PNG
+ *   coordinates. Here the UVs come from world space, so removing the flip is the
+ *   fix that keeps `floor-uv.ts` honest about what v means.
  */
 export function configureFloorTexture(texture: THREE.Texture, maxAnisotropy = 1): void {
   texture.wrapS = THREE.RepeatWrapping
   texture.wrapT = THREE.RepeatWrapping
+  texture.flipY = false
   texture.colorSpace = THREE.SRGBColorSpace
   texture.magFilter = THREE.LinearFilter
   texture.minFilter = THREE.LinearMipmapLinearFilter

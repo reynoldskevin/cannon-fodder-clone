@@ -53,16 +53,20 @@ export interface FloorUv {
  * and at under seven repeats across the map each copy is large enough to
  * recognise as the same arrangement of leaves — wallpaper.
  *
- * 6 is the middle, and it is the one that survived both zoom extremes. A fern is
- * about three quarters of a soldier's height, which reads as the chest-high
- * undergrowth a figure is standing in; at maximum zoom-out the leaf litter and
- * stones are still individually legible rather than dissolving into noise; and
- * the repetition is findable if you go looking for it but does not announce
- * itself. It also puts texel density at 512/6 = 85 texels per tile, close to a
- * tile's on-screen pixel size at the closest zoom — near 1:1, so the art is
- * neither visibly soft nor wastefully oversampled.
+ * SHIPPED AT 3, half of that. The table above weighed the ferns as objects and
+ * missed how they read as GROUND. At 6 the undergrowth is scaled like scenery a
+ * soldier wades through, which competes with the tree sprites for the eye; at 3
+ * a fern is about 0.4x a soldier and the texture recedes into being floor —
+ * detail you look past to the figures on top of it, which is what a floor is for.
+ * It also doubles the repeat count across the map to 19, which pushes the
+ * repetition further below notice rather than closer to it.
+ *
+ * The cost is texel density: 512/3 = 171 texels per tile against roughly 85
+ * on-screen pixels at the closest zoom, so the art is now oversampled about 2x
+ * rather than near 1:1. That is the harmless direction — oversampled reads as
+ * crisp, undersampled reads as soft — and the mip chain absorbs it.
  */
-export const FLOOR_REPEAT_WORLD_UNITS = 6
+export const FLOOR_REPEAT_WORLD_UNITS = 3
 
 /**
  * UV for a world-space ground point.
