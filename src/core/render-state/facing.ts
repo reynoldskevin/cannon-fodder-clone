@@ -22,8 +22,13 @@ export type Facing = (typeof FACINGS)[number]
  * South — toward the camera. A stationary unit with no history should be
  * looking at the player, not showing its back; and this is only ever reached by
  * `facingFromVector`, because `stableFacing` keeps the previous facing instead.
+ *
+ * Exported because a renderer holding hysteresis memory has to seed it with
+ * something on an entity's first frame, and that seed is this same decision.
+ * `FACINGS[0]` is 'N' and would put a newly spawned idle unit's back to the
+ * player — the exact failure this constant exists to avoid.
  */
-const DEFAULT_FACING: Facing = 'S'
+export const DEFAULT_FACING: Facing = 'S'
 
 const SECTOR = (Math.PI * 2) / FACINGS.length
 

@@ -336,15 +336,49 @@ export async function loadSpriteAtlas(manifestUrl: string): Promise<UnitVisual> 
  * - `SRGBColorSpace`: the atlas is authored artwork, not data. Left as the
  *   default linear space every sprite renders washed out against the terrain,
  *   which is lit and therefore correct.
- * - `LinearFilter`, both directions: the source is painted art downscaled by
+ * - `LinearFilter` for magnification: the source is painted art downscaled by
  *   `scale: 0.75`, not pixel art, and it is drawn at a non-integer on-screen
  *   size that changes with every zoom step. `NearestFilter` would crawl and
  *   stairstep along every edge. (Pixel-art sources would want the opposite.)
- * - `generateMipmaps: false`: the packer leaves 2px of extruded padding around
- *   each rect, which protects the top mip level and nothing below it. Mip 3 of
- *   an atlas mixes a soldier's boots into the tree next to it — the classic
- *   atlas bleed. Sprites are minified by well under 2x at every legal zoom, so
- *   a plain linear minification filter is both correct and cheaper.
+ * - `generateMipmaps` + `LinearMipmapLinearFilter` for minification. THE ATLAS
+ *   IS BADLY UNDERSAMPLED AT MAXIMUM ZOOM-OUT and needs them. Measured against
+ *   `maxSkyFreeViewHeight` on level 1 at 55 degrees — a soldier's 163-texel
+ *   walk frame and a tree's 726-texel frame against their on-screen pixel
+ *   heights:
+ *
+ *       viewport          soldier   minification    tree   minification
+ *       1920x1080 @2x      105px        1.6x       285px       2.6x
+ *       1920x1080 @1x       53px        3.1x       142px       5.1x
+ *       1440x900  @1x       39px        4.1x       107px       6.8x
+ *       1280x800  @1x       35px        4.6x        95px       7.7x
+ *       1024x768  @1x       33px        5.0x        89px       8.2x
+ *       800x600   @1x       26px        6.4x        69px      10.5x
+ *
+ *   A 2x2 bilinear kernel sampling a 5-10x reduction takes 4 texels out of 25
+ *   to 100 and throws the rest away, which is not softness — it is aliasing,
+ *   and aliasing that MOVES with the camera. Panning is this build's headline
+ *   interaction, so the sprites would crawl and shimmer for the whole demo on
+ *   any non-retina display. The trilinear chain samples the level whose texel
+ *   density matches the screen, and blends across the boundary so a zoom step
+ *   does not pop.
+ *
+ *   The bleed this replaces was a real objection, and it is answered in the
+ *   packer rather than by giving up minification: `tools/spritegen` now leaves
+ *   a 16px gap between rects with 8px of each sprite's own edge extruded into
+ *   it, and rounds the atlas height to a multiple of 32 so the chain is an
+ *   exact box halving. A mip level `L` averages aligned `2^L` blocks, so a
+ *   boundary texel reaches `2^L - 1` past the rect: levels 0-3 stay inside that
+ *   sprite's own extrusion, level 4 reaches only the NEIGHBOUR'S extruded edge
+ *   (never its interior), and level 5 — the first that could mix in another
+ *   sprite's pixels — needs 32x minification, three times the worst case in the
+ *   table. The cost is 21.5 MB of atlas rather than 18.5 MB, plus a third again
+ *   for the chain, and 5 KB of PNG payload (the gutter is transparent, so it
+ *   deflates to nothing).
+ *
+ *   Known and accepted: mipping thins alpha, so a rifle barrel one texel wide
+ *   fades toward `ALPHA_TEST` as it shrinks below a screen pixel. It fading is
+ *   the correct answer at that size; the alternative is it flickering in and
+ *   out as the camera moves.
  * - `ClampToEdgeWrapping`: nothing here tiles, and clamping means a UV that
  *   drifts a subpixel off a rect samples the padding rather than wrapping to
  *   the far side of the atlas.
@@ -352,8 +386,8 @@ export async function loadSpriteAtlas(manifestUrl: string): Promise<UnitVisual> 
 export function configureAtlasTexture(texture: THREE.Texture): void {
   texture.colorSpace = THREE.SRGBColorSpace
   texture.magFilter = THREE.LinearFilter
-  texture.minFilter = THREE.LinearFilter
-  texture.generateMipmaps = false
+  texture.minFilter = THREE.LinearMipmapLinearFilter
+  texture.generateMipmaps = true
   texture.wrapS = THREE.ClampToEdgeWrapping
   texture.wrapT = THREE.ClampToEdgeWrapping
   texture.needsUpdate = true

@@ -80,9 +80,44 @@ const SHEET_GRID = { cols: 4, rows: 8 } as const
  */
 export const DEFAULT_SCALE = 0.75
 
-/** Gap left between packed rects, and edge pixels repeated into that gap. */
-const PADDING = 2
-const EXTRUDE = 1
+/**
+ * Gap left between packed rects, and edge pixels repeated into that gap.
+ *
+ * SIZED FOR MIPMAPS (ticket 010 review). 2/1 was sized for bilinear filtering
+ * of the top level only — one texel of slop. The game now ships a mipmapped
+ * atlas, and a mip level `L` averages ALIGNED `2^L x 2^L` blocks of level 0, so
+ * a rect's boundary texel at level `L` reaches up to `2^L - 1` pixels past the
+ * rect. Whatever it reaches must belong to that sprite, or level 3 of the atlas
+ * mixes a soldier's boots into the tree beside it.
+ *
+ * `EXTRUDE` is half of `PADDING` because two neighbours extrude toward each
+ * other and must meet without overwriting: with a 16px gap each owns 8px.
+ *
+ * What the 8px gutter buys, exactly:
+ *   - levels 0-3 (blocks up to 8px): every texel is that sprite's own pixels,
+ *     replicated. Clean by construction.
+ *   - level 4 (16px blocks): a boundary block reaches at most 15px out, into
+ *     the neighbour's 8px of *extrusion* — the neighbour's edge colour, never
+ *     its interior — at under half weight in one boundary texel.
+ *   - level 5 (32px) would reach real neighbour pixels, and is unreachable: it
+ *     needs 32x minification, and the measured worst case at maximum zoom-out
+ *     on an 800x600 window is 10.5x (see `configureAtlasTexture`).
+ */
+const PADDING = 16
+const EXTRUDE = PADDING / 2
+
+/**
+ * Atlas height is rounded up to a multiple of this.
+ *
+ * The mip chain must be an exact halving for as many levels as the hardware can
+ * select, or the "aligned 2^L block" reasoning above stops holding: on an ODD
+ * dimension `glGenerateMipmap` is free to resample rather than box-average, and
+ * the levels drift relative to level 0. 32 keeps levels 0-5 exact, which is one
+ * more than anything reachable. The width is already a power of two (the packer
+ * only ever chooses one), so only the height needs this, and it costs a handful
+ * of transparent rows.
+ */
+const MIP_ALIGNMENT = 32
 
 /**
  * The floor tile is halved to 512². It is tiled across the whole ground plane,
@@ -425,7 +460,16 @@ export function buildSprites(options: BuildOptions): BuildResult {
     )
   }
 
-  const atlas = blankImage(packed.width, packed.height)
+  // See MIP_ALIGNMENT: the extra rows are transparent and below every rect's
+  // own bottom margin, so they change nothing but the mip chain's arithmetic.
+  const atlasHeight = Math.ceil(packed.height / MIP_ALIGNMENT) * MIP_ALIGNMENT
+  if (atlasHeight > MAX_ATLAS) {
+    throw new SpritegenError(
+      `atlas height ${String(packed.height)} rounds up to ${String(atlasHeight)}, past the ` +
+        `${String(MAX_ATLAS)} limit`,
+    )
+  }
+  const atlas = blankImage(packed.width, atlasHeight)
   const byId = new Map(pending.map((p) => [p.id, p]))
   // Sorted so the atlas bytes depend only on the placements, never on the order
   // the packer happened to return them in.
@@ -516,7 +560,7 @@ export function buildSprites(options: BuildOptions): BuildResult {
     version: 1,
     origin: MANIFEST_ORIGIN,
     scale,
-    atlas: { file: 'atlas.png', width: packed.width, height: packed.height, padding: PADDING },
+    atlas: { file: 'atlas.png', width: packed.width, height: atlasHeight, padding: PADDING },
     units: { soldier: { cell: unitCell, animations } },
     props,
     floor: { file: 'floor.png', width: floor.width, height: floor.height, tileable: true },
