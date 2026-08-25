@@ -204,3 +204,88 @@ describe('EventBus', () => {
     })
   })
 })
+
+describe('peek — the read half of the bus (ticket 013)', () => {
+  /**
+   * `peek` exists because a SIMULATION SYSTEM sometimes has to know what
+   * happened this tick, and draining is presentation's job. The objective
+   * system counts `UnitDied` off a peek; had it drained, the HUD, FX and audio
+   * would be starved of exactly the deaths they exist to react to — "a silent
+   * death", which the header above names as the failure mode of this file.
+   *
+   * These tests were written after a reviewer pointed out the method had none:
+   * new API on ticket 005's core, with the whole exactly-once drain contract
+   * resting on it behaving.
+   */
+  const bus = (): EventBus => new EventBus()
+
+  it('returns what has been emitted, in emission order', () => {
+    const b = bus()
+    b.emit(shot(1))
+    b.emit(shot(2))
+    b.emit(shot(3))
+    expect(b.peek().map((e) => (e.type === 'ShotFired' ? e.shooterId : -1))).toEqual([1, 2, 3])
+  })
+
+  it('consumes nothing — a later drain still delivers everything', () => {
+    // THE WHOLE POINT. A reader that quietly ate the batch would be indetectable
+    // from inside the sim and catastrophic outside it.
+    const b = bus()
+    b.emit(shot(1))
+    b.emit(shot(2))
+    expect(b.peek()).toHaveLength(2)
+    expect(b.peek()).toHaveLength(2) // and again — still not consumed
+    expect(b.drain()).toHaveLength(2)
+  })
+
+  it('is empty after somebody else drains', () => {
+    const b = bus()
+    b.emit(shot(1))
+    b.drain()
+    expect(b.peek()).toEqual([])
+  })
+
+  it('keeps showing an earlier tick`s events until presentation drains', () => {
+    /**
+     * THE PROPERTY THE OBJECTIVE SYSTEM'S `seq` HIGH-WATER EXISTS FOR, and the
+     * reason a reader cannot treat "what peek returns" as "what is new".
+     *
+     * A frame that runs eight steps ticks eight times and drains ONCE at the
+     * end, so a system peeking on step 8 sees step 1's events again. A reader
+     * counting the buffer, or trusting a flag, counts the same death eight
+     * times — and only on a hitching frame, which is exactly the frame nobody
+     * reproduces.
+     */
+    const b = bus()
+    b.beginTick(1)
+    b.emit(shot(1))
+    const afterFirst = [...b.peek()]
+    b.beginTick(2)
+    b.emit(shot(2))
+    const afterSecond = b.peek()
+
+    expect(afterFirst).toHaveLength(1)
+    expect(afterSecond).toHaveLength(2) // tick 1's event is STILL there
+    expect(afterSecond[0]?.seq).toBe(afterFirst[0]?.seq)
+    // And the sequence numbers are strictly increasing across ticks, which is
+    // what makes "greater than the last one I read" a usable high-water mark.
+    expect((afterSecond[1]?.seq ?? 0) > (afterSecond[0]?.seq ?? 0)).toBe(true)
+  })
+
+  it('hands the drainer a snapshot, not the buffer a peeker is holding', () => {
+    // `drain` returns a copy and then empties; a caller who peeked and kept the
+    // reference must not find the drained batch emptied underneath them — and
+    // must not be handed the same array the bus is about to reuse.
+    const b = bus()
+    b.emit(shot(1))
+    const peeked = b.peek()
+    const drained = b.drain()
+    expect(drained).toHaveLength(1)
+    expect(peeked).not.toBe(drained)
+    expect(b.peek()).toEqual([])
+  })
+
+  it('is empty, not null, on a bus nothing has happened to', () => {
+    expect(bus().peek()).toEqual([])
+  })
+})

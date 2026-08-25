@@ -41,7 +41,7 @@ describe('the AI runs inside the session', () => {
     // man on the tick it is given, and its halt must land before the movement it
     // cancels. Combat stays last, so a unit shoots from where it now stands.
     const s = createSession(facingOff())
-    expect(s.systemOrder).toEqual(['ai', 'squad', 'combat'])
+    expect(s.systemOrder).toEqual(['ai', 'squad', 'combat', 'objectives'])
   })
 
   it('the enemy still shoots back', () => {

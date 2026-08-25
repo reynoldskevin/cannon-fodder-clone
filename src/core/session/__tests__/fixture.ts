@@ -4,7 +4,7 @@
  * Not a `.test.ts`, so vitest's `include` glob does not run it as a suite.
  */
 
-import type { LevelData, SpawnPoint } from '../../level/types'
+import type { LevelData, LevelObjective, SpawnPoint } from '../../level/types'
 
 export interface SessionFixtureOptions {
   readonly w?: number
@@ -14,6 +14,11 @@ export interface SessionFixtureOptions {
   readonly props?: readonly SpawnPoint[]
   /** Blocked tiles as `"x,y"`. */
   readonly blocked?: ReadonlySet<string>
+  /**
+   * The mission's win conditions. Defaults to `kill_all`, which is what level 1
+   * carries and what every test written before ticket 013 assumed.
+   */
+  readonly objectives?: readonly LevelObjective[]
 }
 
 /**
@@ -61,7 +66,7 @@ export function makeLevel(options: SessionFixtureOptions = {}): LevelData {
       props: options.props ?? [],
       chests: [],
     },
-    objectives: [{ type: 'kill_all' }],
+    objectives: options.objectives ?? [{ type: 'kill_all' }],
   }
 }
 

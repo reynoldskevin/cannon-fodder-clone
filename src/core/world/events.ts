@@ -184,6 +184,31 @@ export class EventBus {
   }
 
   /**
+   * Everything queued since the last drain, in emission order, WITHOUT
+   * consuming it.
+   *
+   * The read half of the bus, for a simulation system that must learn what
+   * happened this tick and must not take it: draining is presentation's
+   * business and exactly-once, so a system that drained for itself would
+   * silently starve the HUD, FX and audio of whatever it swallowed. Reading
+   * cannot, because it removes nothing.
+   *
+   * This is NOT the subscribe/publish machinery the header rules out. It is a
+   * pull, made at a moment of the reader's choosing, so no callback re-enters
+   * the sim mid-emit and delivery order still depends on emission alone.
+   *
+   * THE LIVE BUFFER, NOT A COPY — the same bargain `World.entities` makes, and
+   * for the same reason: this is read once per tick per reader and a defensive
+   * copy would be 60 throwaway arrays a second. A caller must read it and let
+   * go, never hold it across a drain, and must track how far it has already
+   * read (by `seq`) rather than assuming a batch is new: two ticks with no
+   * drain between them see the earlier tick's events again.
+   */
+  peek(): readonly SimEvent[] {
+    return this.buffer
+  }
+
+  /**
    * Take everything queued since the last drain, in emission order, and empty
    * the bus.
    *
