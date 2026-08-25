@@ -116,7 +116,11 @@ describe('level 1 pathing', () => {
     for (let y = 0; y < grid.h; y++) {
       for (let x = 0; x < grid.w; x++) if (field.reachable(x, y)) reachable++
     }
-    expect(reachable).toBe(1325)
+    // RE-MEASURED after the map was repainted to thin the jungle, and it went
+    // UP: 1350 of the level's 1506 walkable tiles, 89.6%. Verified with an
+    // independent 4-connected flood fill over `level1.json`, not read off the
+    // flow field this test is exercising.
+    expect(reachable).toBe(1350)
   })
 
   it('never points a reachable cell at a blocked one', () => {
