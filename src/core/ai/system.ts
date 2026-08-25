@@ -141,6 +141,25 @@ export interface AiSystem extends SimSystem {
    */
   stateOf(unitId: number): AiState | undefined
   /**
+   * The entity this unit is currently shooting at, or `undefined` when it is
+   * shooting at nobody — which is every state but `engage`, the whole player
+   * team, and anyone this machine has never commanded.
+   *
+   * EXPOSED FOR THE DEBUG OVERLAY (ticket 014), and it is worth the two lines.
+   * The alternative is for the overlay to recompute "nearest visible enemy"
+   * itself, which would be a SECOND rule for target choice — the exact
+   * dual-source-of-truth mistake this file's header spends a paragraph
+   * avoiding between `AiSystem` and `CombatSystem`. Two rules disagree
+   * eventually, and the disagreement here is the worst kind: the man fires
+   * either way and only the picture lies, so the tuner goes hunting a bug in
+   * the code that was right.
+   *
+   * Read-only, and a plain id rather than the entity: the id outlives the
+   * entity and `World` never reuses one, so a caller cannot be handed a live
+   * reference into the machine's memory.
+   */
+  targetOf(unitId: number): number | undefined
+  /**
    * Hand the machine a batch of events to react to. Called by the owner with
    * what it drained, never by draining the bus here; see the note at the top.
    *
@@ -661,5 +680,21 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
 
   const stateOf = (unitId: number): AiState | undefined => memories.get(unitId)?.state
 
-  return Object.assign(aiSystem, { stateOf, hear })
+  /**
+   * See `AiSystem.targetOf`.
+   *
+   * GATED ON `engage`, not merely on `hasTarget`. A pursuing man remembers the
+   * id he was last shooting at — that is how losing a target is told apart from
+   * killing one, above — but he is not shooting at it, and a ray drawn to a man
+   * who has ducked behind a wall would show a sightline that does not exist.
+   * The two facts are different and this reports the narrower one.
+   */
+  function targetOf(unitId: number): number | undefined {
+    const memory = memories.get(unitId)
+    if (memory === undefined) return undefined
+    if (memory.state !== ENGAGE || !memory.hasTarget) return undefined
+    return memory.targetId
+  }
+
+  return Object.assign(aiSystem, { stateOf, targetOf, hear })
 }
