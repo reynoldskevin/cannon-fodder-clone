@@ -39,9 +39,34 @@ describe('canopyScenery', () => {
     expect(canopyScenery(lvl)).toEqual([])
   })
 
-  it('covers every canopy tile of a solid mass', () => {
+  it('plants trees only on the FRINGE of a solid mass, not its interior', () => {
+    // Ticket 010a revision: trunks read well against open ground at the jungle's
+    // edge, but inside a dense mass they are hidden and just cost overdraw. The
+    // interior stays raised foliage-coloured terrain — the source map draws the
+    // canopy as a solid mass, not as countable individual palms.
     const lvl = level(10, 10, (x, y) => x >= 2 && x < 6 && y >= 2 && y < 6)
-    expect(canopyScenery(lvl)).toHaveLength(16)
+    // A 4x4 block has a 2x2 interior, so 16 - 4 = 12 fringe tiles.
+    expect(canopyScenery(lvl)).toHaveLength(12)
+  })
+
+  it('treats a canopy tile with any non-canopy neighbour as fringe', () => {
+    const lvl = level(5, 5, (x, y) => x >= 1 && x < 4 && y >= 1 && y < 4)
+    // 3x3 block: the single centre tile is interior, the other 8 are fringe.
+    expect(canopyScenery(lvl)).toHaveLength(8)
+  })
+
+  it('treats the map border as an edge, so border canopy still gets a tree', () => {
+    // A tile whose neighbour is off-map has open ground beyond it as far as the
+    // player can see, so it reads as fringe.
+    const lvl = level(3, 3, () => true)
+    // Only the centre tile is enclosed by canopy on all four sides.
+    expect(canopyScenery(lvl)).toHaveLength(8)
+  })
+
+  it('plants nothing inside a mass with no fringe at all', () => {
+    // A 1x1 level that is entirely canopy has no open ground anywhere.
+    const lvl = level(1, 1, () => true)
+    expect(canopyScenery(lvl)).toHaveLength(1) // its borders are all off-map
   })
 
   it('places each tree within its own tile', () => {
@@ -69,6 +94,14 @@ describe('canopyScenery', () => {
     const lvl = level(10, 10, () => true)
     const ids = canopyScenery(lvl).map((t) => t.id)
     expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('cuts the tree count well below one-per-canopy-tile on a real-shaped mass', () => {
+    // The point of fringe-only planting is fewer, better-placed trees. On a
+    // large blob the saving should be substantial, not marginal.
+    const lvl = level(30, 30, (x, y) => x >= 5 && x < 25 && y >= 5 && y < 25)
+    const canopyTiles = 20 * 20
+    expect(canopyScenery(lvl).length).toBeLessThan(canopyTiles * 0.25)
   })
 })
 
