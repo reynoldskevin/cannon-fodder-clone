@@ -26,6 +26,8 @@ function describeCommand(command: Command): string {
       return `move ${String(command.unitIds.length)} to ${String(command.target.x)},${String(command.target.y)}`
     case 'fire':
       return `fire ${command.ordnance} at ${String(command.target.x)},${String(command.target.y)}`
+    case 'ceaseFire':
+      return `cease ${String(command.unitIds.length)}`
     case 'selectOrdnance':
       return `select ${command.ordnance}`
     default:
@@ -34,11 +36,19 @@ function describeCommand(command: Command): string {
 }
 
 describe('the Command union', () => {
-  it('has exactly the three declared members', () => {
+  it('has exactly the four declared members', () => {
     // A runtime witness of the compile-time union, so a member added to the type
     // without a test here is visible in the diff of this array too.
-    const types: CommandType[] = ['move', 'fire', 'selectOrdnance']
-    expect(new Set(types).size).toBe(3)
+    const types: CommandType[] = ['move', 'fire', 'ceaseFire', 'selectOrdnance']
+    expect(new Set(types).size).toBe(4)
+  })
+
+  it('describes a cease-fire', () => {
+    // `fire` means "begin or continue firing at this point" and `ceaseFire`
+    // means "stop": right-click down and right-click up. Without the second
+    // half, a held-fire squad ordered to shoot never stops, and the button
+    // becomes a latch rather than a trigger.
+    expect(describeCommand({ type: 'ceaseFire', unitIds: [1, 2] })).toBe('cease 2')
   })
 
   it('describes a move', () => {

@@ -299,6 +299,94 @@ describe('how many steps the frame ran', () => {
   })
 })
 
+describe('who shoots without being told', () => {
+  /**
+   * The owner's call: the player squad holds fire until right-clicked, the
+   * enemy engages on its own. Enemies have to, or nothing shoots back until
+   * ticket 012's AI lands and the level is a shooting gallery in one direction.
+   *
+   * Asserted through `advance` rather than by inspecting the combat system's
+   * options, because the thing that can break is the WIRING — a session that
+   * builds the policy correctly and then registers a differently-configured
+   * system would pass any test that read the option back.
+   */
+  const facingOff = () =>
+    makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [{ x: 10, y: 7 }] })
+
+  it('the player squad does not fire on its own', () => {
+    const s = createSession(facingOff())
+    const player = s.selection()[0]!
+    const fired: number[] = []
+    for (let f = 0; f < 200; f++) {
+      s.advance(1 / 60)
+      for (const e of s.events()) if (e.type === 'ShotFired') fired.push(e.shooterId)
+    }
+    expect(fired).not.toContain(player)
+  })
+
+  it('the enemy does', () => {
+    const s = createSession(facingOff())
+    const enemy = s.world.entities.find((e) => e.team === 'enemy')!.id
+    const fired: number[] = []
+    for (let f = 0; f < 200; f++) {
+      s.advance(1 / 60)
+      for (const e of s.events()) if (e.type === 'ShotFired') fired.push(e.shooterId)
+    }
+    expect(fired).toContain(enemy)
+  })
+
+  it('the player squad fires when a fire command is queued', () => {
+    const s = createSession(facingOff())
+    const player = s.selection()[0]!
+    s.queue.push({ type: 'fire', unitIds: [player], ordnance: 'rifle', target: { x: 10, y: 7 } })
+    const fired: number[] = []
+    for (let f = 0; f < 60; f++) {
+      s.advance(1 / 60)
+      for (const e of s.events()) if (e.type === 'ShotFired') fired.push(e.shooterId)
+    }
+    expect(fired).toContain(player)
+  })
+
+  it('and stops when the cease-fire arrives', () => {
+    const s = createSession(facingOff())
+    const player = s.selection()[0]!
+    // A target that survives the exchange, so the test is about the order
+    // rather than about who died first.
+    const tough = s.world.entities.find((e) => e.team === 'enemy')!
+    tough.health = 100_000
+    s.queue.push({ type: 'fire', unitIds: [player], ordnance: 'rifle', target: { x: 10, y: 7 } })
+    for (let f = 0; f < 120; f++) {
+      s.advance(1 / 60)
+      s.events()
+    }
+    s.queue.push({ type: 'ceaseFire', unitIds: [player] })
+    s.advance(1 / 60)
+    s.events()
+
+    const after: number[] = []
+    for (let f = 0; f < 200; f++) {
+      s.advance(1 / 60)
+      for (const e of s.events()) if (e.type === 'ShotFired') after.push(e.shooterId)
+    }
+    expect(after).not.toContain(player)
+  })
+
+  it('keeps firing while advancing — a move order is not a cease-fire', () => {
+    const s = createSession(facingOff())
+    const player = s.selection()[0]!
+    const tough = s.world.entities.find((e) => e.team === 'enemy')!
+    tough.health = 100_000
+    s.queue.push({ type: 'fire', unitIds: [player], ordnance: 'rifle', target: { x: 10, y: 7 } })
+    s.queue.push({ type: 'move', unitIds: [player], target: { x: 8, y: 3 } })
+    const fired: number[] = []
+    for (let f = 0; f < 200; f++) {
+      s.advance(1 / 60)
+      for (const e of s.events()) if (e.type === 'ShotFired') fired.push(e.shooterId)
+    }
+    expect(fired).toContain(player)
+  })
+})
+
 describe('events', () => {
   it('hands back what the tick emitted, then empties', () => {
     const level = makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [{ x: 10, y: 7 }] })
