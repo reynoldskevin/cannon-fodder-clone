@@ -302,14 +302,41 @@ describe('computeFlowField', () => {
     it('allows a diagonal when only one of the two orthogonals is blocked', () => {
       // Squeezing past a single wall corner is legitimate movement; forbidding
       // it makes units refuse perfectly good diagonals and hug walls.
+      //
+      // This must assert the diagonal is actually TAKEN, not merely that the
+      // cell is reachable. Connectivity is identical under both policies — if
+      // exactly one shared orthogonal is blocked, the other always gives a
+      // two-step L route — so a reachability check passes whichever rule is
+      // implemented and proves nothing. The cost is what tells them apart:
+      // SQRT2 for the diagonal, 2 for the staircase.
       const art = `
         .#..
         ....
         ....
       `
       const f = field(art, { x: 0, y: 0 })
+      // (1,1) -> (0,0) is diagonal. Its shared orthogonals are (0,1), open, and
+      // (1,0), a wall. One blocked, so the move stands.
+      expect(f.cost(1, 1)).toBeCloseTo(SQRT2, 9)
+      expect([f.dirX(1, 1), f.dirY(1, 1)]).toEqual([-1, -1])
       expect(f.reachable(2, 1)).toBe(true)
       expect(walk(f, { x: 2, y: 1 }).at(-1)).toEqual({ x: 0, y: 0 })
+    })
+
+    it('prefers the diagonal to the staircase across an open field', () => {
+      // The same defect at scale: if diagonals past corners are refused, costs
+      // inflate toward Manhattan distance and units visibly zig-zag.
+      const f = field(
+        `
+        ......
+        ......
+        ......
+        ......
+      `,
+        { x: 0, y: 0 },
+      )
+      expect(f.cost(3, 3)).toBeCloseTo(3 * SQRT2, 9)
+      expect([f.dirX(3, 3), f.dirY(3, 3)]).toEqual([-1, -1])
     })
 
     it('never steps onto a blocked cell anywhere in a dense field', () => {
