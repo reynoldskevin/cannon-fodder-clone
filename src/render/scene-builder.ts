@@ -18,9 +18,20 @@ import { ELEVATION } from '../core/view/orientation'
 import { levelWorldBounds } from '../core/view/projection'
 import { TerrainRenderer } from './terrain-renderer'
 import { EntityRenderer } from './entity-renderer'
-import { levelRenderEntities } from './level-entities'
 import { canopyRenderEntities } from './scenery-entities'
+import type { RenderEntity } from '../core/render-state/entity'
 import type { UnitVisual } from './sprite-atlas'
+
+/**
+ * How the scene's first frame of entities is obtained.
+ *
+ * A function of the terrain's height sampler rather than a plain array, because
+ * the sampler only exists once the terrain has been built, which happens inside
+ * `build`. Ticket 008a's caller passes `session.renderEntities`.
+ */
+export type InitialEntities = (
+  groundHeightAt: (tileX: number, tileY: number) => number,
+) => readonly RenderEntity[]
 
 /** Horizon/sky colour, also the fog colour so the map fades into it rather than into black. */
 const SKY_COLOUR = 0x9fc6d8
@@ -53,12 +64,19 @@ export class SceneBuilder {
    *
    * `elevationRad` is the camera's, and the sprite quads are tilted to match —
    * see `EntityRenderer`'s header for why the two must agree.
+   *
+   * `initialEntities` seeds the first frame. Omitted, the scene is built with no
+   * entities at all and draws none until the caller hands it a state. The game
+   * always passes it, and has to: it pushes new state only on a frame that ran a
+   * simulation step (see `main.ts`), and the frames before the first step would
+   * otherwise have nothing to draw.
    */
   static build(
     level: LevelData,
     visual: UnitVisual,
     floor: THREE.Texture,
     elevationRad: number = ELEVATION,
+    initialEntities?: InitialEntities,
   ): BuiltScene {
     const scene = new THREE.Scene()
     scene.name = `level:${level.name}`
@@ -99,17 +117,16 @@ export class SceneBuilder {
 
     const entities = new EntityRenderer(visual, elevationRad)
     scene.add(entities.group)
-    // Seed both sim states with the same spawn list. Until ticket 005 exists
-    // there is no motion to interpolate, and calling this twice is what makes
-    // `previous` and `current` agree rather than the first frame lerping from
-    // an empty world.
     // The forest, from the terrain itself (ticket 010a). Static for the level's
     // lifetime, so it is written to the GPU once here and never rebuilt — see
     // `EntityRenderer`'s header for why it does not go through `setEntities`.
     entities.setScenery(canopyRenderEntities(level, (x, y) => terrain.heightAt(x, y)))
-    const spawned = levelRenderEntities(level, (x, y) => terrain.heightAt(x, y))
-    entities.setEntities(spawned)
-    entities.setEntities(spawned)
+    // Seed BOTH sim states with the same list. `setEntities` shifts current into
+    // previous, so calling it twice is what makes the two agree and stops the
+    // first frame lerping every unit in from an empty world.
+    const seed = initialEntities?.((x, y) => terrain.heightAt(x, y)) ?? []
+    entities.setEntities(seed)
+    entities.setEntities(seed)
     // Prime the instance buffers so the scene is complete the moment it is
     // returned: the first rendered frame is then already right, and callers can
     // report the draw-call count without having rendered anything.

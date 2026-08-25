@@ -113,10 +113,32 @@ export function createGameLoop(): GameLoop {
 
       // Anything still owing is DISCARDED, not deferred. Carrying it forward
       // would hand the next frame the same oversized backlog and just move the
-      // spiral one frame along. The modulo keeps the sub-step phase, so `alpha`
-      // stays continuous across the discontinuity instead of snapping to zero.
-      if (accumulator >= FIXED_TIMESTEP) {
-        accumulator %= FIXED_TIMESTEP
+      // spiral one frame along. The modulo keeps the sub-step phase where it
+      // can, so `alpha` stays continuous across the discontinuity rather than
+      // snapping to zero — but not always: the branch below writes the residue
+      // off outright when it lands within an epsilon of a whole step, and
+      // continuity loses there to not paying out a free step for time already
+      // discarded. Both are reachable only on a CAPPED frame, and `main.ts`
+      // clamps its own dt to `MAX_FRAME_DT` (1/15 s, four steps), so nothing in
+      // the game ever reaches either — this is for callers that do not clamp.
+      if (accumulator >= FIXED_TIMESTEP) accumulator %= FIXED_TIMESTEP
+      // The residue left by a CAPPED frame can land a hair BELOW a whole step
+      // rather than near zero, from either of two routes. The modulo above:
+      // `10` leaves 0.01666666666666017 against a step of 0.016666666666666666,
+      // 6.5e-15 short — well inside STEP_EPSILON. Or the cap terminating the
+      // loop with a residue already just under a step and no modulo to run at
+      // all: `dt = 0.14999999166666667` buys 8 steps and stops 8.3e-9 short.
+      // Either way, left there it buys a free step on the very next frame, which
+      // defers exactly the backlog the cap exists to discard (dt = 10 then one
+      // step ran nine steps, not the eight it capped at plus one). A residue
+      // that close to a step is a step already written off, so it goes with the
+      // rest of it. Guarded on `steps` reaching the cap because that is the only
+      // situation in which a step is being written off: an uncapped frame's
+      // residue is genuinely owed and must be kept, and it is below
+      // `FIXED_TIMESTEP - STEP_EPSILON` anyway, since that is the condition the
+      // while loop just exited on.
+      if (steps >= MAX_STEPS_PER_FRAME && accumulator >= FIXED_TIMESTEP - STEP_EPSILON) {
+        accumulator = 0
       }
 
       return steps

@@ -5,9 +5,10 @@
  * whatever rate the monitor runs at, so the renderer draws somewhere *between*
  * the previous and the current sim state — `alpha` being how far.
  *
- * Ticket 005 (`World` / `GameLoop`) does not exist yet, so today both states
- * are identical and this is a no-op. It is written and tested now because it is
- * the seam: when the sim lands, it feeds this and nothing else changes.
+ * It was written and tested before there was a sim to feed it, because it is
+ * the seam. The sim has since landed: `core/session` steps `World` at the fixed
+ * timestep and `main.ts` passes the loop's alpha straight through, so every
+ * pixel of between-tick motion on screen is measured here.
  */
 
 /** One entity's position at one sim tick. */

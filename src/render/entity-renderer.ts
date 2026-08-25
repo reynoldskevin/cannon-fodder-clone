@@ -1,8 +1,8 @@
 /**
  * EntityRenderer — draws a `RenderEntity[]` as instanced sprite quads.
  *
- * It knows nothing about `World` (ticket 005, not built yet) and nothing about
- * atlases (that is `UnitVisual`). It knows about instancing, and it delegates
+ * It knows nothing about `World` and nothing about atlases (that is
+ * `UnitVisual`). It knows about instancing, and it delegates
  * every actual DECISION — which facing, which frame, which batch, where between
  * two sim states — to the pure, unit-tested modules in `core/render-state`.
  * Nothing in this file re-implements any of that logic; if a rule about frames
@@ -164,7 +164,7 @@ export class EntityRenderer {
   private readonly geometry: THREE.PlaneGeometry
   private readonly meshes = new Map<string, BatchMesh>()
 
-  /** The previous and current sim states. Identical until ticket 005 exists. */
+  /** The previous and current sim states — what `update`'s alpha blends between. */
   private previous: RenderEntity[] = []
   private current: RenderEntity[] = []
 
@@ -289,9 +289,10 @@ export class EntityRenderer {
    * Hand the renderer a new sim state.
    *
    * The state it was last given becomes the previous one, which is what
-   * `update`'s alpha interpolates from. Called once per SIM tick, not per
-   * frame; today it is called once at level load, and previous and current are
-   * therefore the same list.
+   * `update`'s alpha interpolates from. Call it once per SIM TICK, not per
+   * frame: `src/app/main.ts` calls it only on a frame that actually ran a step,
+   * because calling it on a frame that ran none makes previous and current the
+   * same state and `alpha` then blends a state with itself.
    */
   setEntities(entities: readonly RenderEntity[]): void {
     this.previous = this.current

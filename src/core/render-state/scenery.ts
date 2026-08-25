@@ -14,10 +14,12 @@
  * this level have and where", in tile coordinates; turning that into world
  * positions and instanced quads is `src/render/scenery-entities.ts`'s job.
  *
- * NOT A STAND-IN. `level-entities.ts` is explicitly a placeholder for ticket
- * 005's `World` and is meant to be deleted when the sim lands. This is not:
+ * NOT A STAND-IN, WHICH IS WHY IT SURVIVED. Its old neighbour
+ * `src/render/level-entities.ts` was a placeholder for the simulation and was
+ * deleted when the sim landed in ticket 008a. This module was not and is not:
  * scenery is a property of the level's terrain, not of its simulation, and a
- * `World` full of soldiers will still want the same trees drawn around them. It lives apart so 005 can delete its neighbour without touching it.
+ * `World` full of soldiers still wants the same trees drawn around them. Keeping
+ * the two apart is what let the placeholder go without touching this.
  *
  * ── WHY HASHED, NOT RANDOM ───────────────────────────────────────────────────
  *
@@ -50,7 +52,7 @@ export const CANOPY_TILE_ID = 2
  * dark, vine-hung canopy the source map paints across half the level, so it is
  * what the canopy TERRAIN is drawn with. The atlas also carries `palmtree1/2/3`
  * and they are deliberately absent here: palms belong to the map's hand-placed
- * `tree` ANNOTATIONS (see `PALM_VARIANTS` below and `src/render/level-entities.ts`),
+ * `tree` ANNOTATIONS (see `PALM_VARIANTS` below and `src/core/session/props.ts`),
  * which is a different thing on the map and should read as a different thing on
  * screen. The two families are painted in different styles — one rendered, one
  * flat cel-shaded — so mixing them across the forest fringe would look like two
