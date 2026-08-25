@@ -22,17 +22,38 @@ import { makeLevel } from '../../session/__tests__/fixture'
 
 const AI_DIR = new URL('..', import.meta.url).pathname
 
-/** A firefight busy enough that a divergence has somewhere to show up. */
+/**
+ * A firefight busy enough that a divergence has somewhere to show up.
+ *
+ * SIX A SIDE, NOT THREE, AND IT IS THE LETHALITY THAT FORCES IT. At
+ * `INFANTRY_HEALTH = 1` every man dies to the first round that finds him, so a
+ * mission cannot be made busier by running it LONGER — a three-a-side skirmish
+ * is decided inside 65 of these 600 ticks and the remaining 535 are silent. The
+ * only lever is the size of the opening volley. (Reaching for a bigger number by
+ * having the enemy keep firing at corpses is the other way to get it, and it is
+ * how an earlier draft of this file quietly acquired a covering-fire behaviour
+ * nobody had asked for.)
+ *
+ * The two blocked clumps are cover, so that sightlines break and reform and the
+ * machine has to run its `pursue` edges rather than standing in the open
+ * trading rounds.
+ */
 const skirmish = () =>
   makeLevel({
     avatars: [
+      { x: 3, y: 3 },
       { x: 3, y: 5 },
       { x: 3, y: 7 },
       { x: 3, y: 9 },
+      { x: 3, y: 11 },
+      { x: 2, y: 7 },
     ],
     enemies: [
+      { x: 15, y: 3 },
       { x: 15, y: 5 },
+      { x: 15, y: 7 },
       { x: 15, y: 9 },
+      { x: 15, y: 11 },
       { x: 12, y: 7 },
     ],
     blocked: new Set(['9,4', '9,5', '9,6', '10,10', '10,11']),
@@ -42,7 +63,21 @@ const skirmish = () =>
 function replay(): string[] {
   const s = createSession(skirmish(), { seed: 7 })
   const log: string[] = []
-  s.queue.push({ type: 'move', unitIds: [...s.selection()], target: { x: 16, y: 7 } })
+  const squad = [...s.selection()]
+  s.queue.push({ type: 'move', unitIds: squad, target: { x: 16, y: 7 } })
+  // THE PLAYER SHOOTS TOO, and the mission is much thinner without it. Both
+  // sides are one hit point, so an enemy-only firefight is three rounds and
+  // over — too small a sample for a divergence to have anywhere to appear, and
+  // too quiet to exercise the alert radius at all. A standing fire order keeps
+  // rounds going out for the whole six hundred ticks, and each one is a
+  // `ShotFired` some idle enemy across the map has to react to identically in
+  // both runs.
+  // Aimed at a tile an enemy is actually standing on, so the player's rounds
+  // kill as well as make noise. Casualties on BOTH sides is what makes this a
+  // sample rather than a massacre — it exercises the machine's bookkeeping for
+  // a target that dies and for a shooter that dies, and the assertions below
+  // require both.
+  s.queue.push({ type: 'fire', unitIds: squad, ordnance: 'rifle', target: { x: 12, y: 7 } })
   for (let f = 0; f < 600; f += 1) {
     s.advance(1 / 60)
     for (const e of s.events()) {
@@ -63,7 +98,12 @@ describe('two runs of the same mission are the same mission', () => {
     // An empty log compares equal to an empty log. This is what stops a mission
     // in which nothing happened from certifying the sim as deterministic.
     expect(a.filter((l) => l.includes(':shot:')).length).toBeGreaterThan(10)
-    expect(a.filter((l) => l.includes(':died:')).length).toBeGreaterThan(0)
+    // Both sides losing men, not just one. A one-sided sample would leave the
+    // "a shooter dies mid-engagement" path untaken, and that is the path where a
+    // machine keyed on anything shakier than the entity id comes apart.
+    const dead = a.filter((l) => l.includes(':died:'))
+    expect(dead.length).toBeGreaterThan(4)
+    expect(a.some((l) => l.startsWith('end:'))).toBe(true) // survivors, so not a wipe
   })
 
   it('fires the same rounds and ends in the same place', () => {

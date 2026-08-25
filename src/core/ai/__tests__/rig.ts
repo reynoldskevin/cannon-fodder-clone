@@ -62,9 +62,9 @@ export const WALLED = `
 /** Every call the AI made into the systems it drives, in order. */
 export interface Spy {
   readonly orders: { unitIds: readonly number[]; target: TileCoord }[]
-  readonly halts: readonly number[][]
+  readonly halts: number[][]
   readonly fires: { unitIds: readonly number[]; target: TileCoord }[]
-  readonly ceases: readonly number[][]
+  readonly ceases: number[][]
 }
 
 export interface Rig {
@@ -79,7 +79,16 @@ export interface Rig {
   run(ticks: number): SimEvent[]
   /** Where this entity now stands, in tile space. */
   tileOf(id: number): TileCoord
-  /** Put an entity somewhere, as if it had walked there. */
+  /**
+   * Put an entity somewhere, as if it had walked there.
+   *
+   * FRACTIONAL TILES ARE ALLOWED AND ONE TEST DEPENDS ON IT. A unit mid-stride
+   * is not standing on a tile centre, and the whole-number case turns out to be
+   * the one case that cannot detect a half-tile error in the world-to-tile
+   * conversion — `clearFractionAlong` floors both endpoints, and at a centre the
+   * right spelling and the wrong one floor to the same tile. See "the half-tile
+   * convention" in `engagement.test.ts`.
+   */
   place(id: number, tileX: number, tileY: number): void
   /** A `ShotFired` as the session would hand it to `hear`, fired FROM a tile. */
   shotAt(tileX: number, tileY: number, shooterId?: number): SimEvent

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createSession } from '../index'
 import { makeLevel } from './fixture'
-import { worldToTile } from '../../view/projection'
+import { tileToWorld, worldToTile } from '../../view/projection'
 
 /**
  * Ticket 012 — the AI, wired into a real session.
@@ -77,8 +77,18 @@ describe('the enemy shoots because the machine said so', () => {
    *      is being driven by something else, and the AI is the only candidate.
    */
   it('an engaged enemy holds a standing fire order', () => {
-    const s = createSession(facingOff())
+    // A TOUGH PLAYER IS SPAWNED, and it is not decoration. The avatar the level
+    // supplies has one hit point, so the enemy kills it on the tick it decides
+    // to fire and there is no engagement left to observe thirty ticks later.
+    // Nearer than the avatar, so it is also the target the nearest-first rule
+    // picks. The same dodge `render/__tests__/sprite-atlas.test.ts` needs, for
+    // the same reason: at `INFANTRY_HEALTH = 1` a firefight is over before
+    // anything can look at it.
+    const level = facingOff()
+    const s = createSession(level)
     const enemy = s.world.entities.find((e) => e.team === 'enemy')!.id
+    const tough = tileToWorld(10, 7, level.size)
+    s.world.spawn({ kind: 'rifleman', team: 'player', x: tough.x, z: tough.z, health: 10_000 })
     for (let f = 0; f < 30; f += 1) s.advance(1 / 60)
     expect(s.combat.isFiring(enemy)).toBe(true)
   })
@@ -144,5 +154,51 @@ describe('the player squad is still the player`s', () => {
     const player = s.selection()[0]!
     s.queue.push({ type: 'fire', unitIds: [player], ordnance: 'rifle', target: { x: 11, y: 7 } })
     expect(fired(s, 120)).toContain(player)
+  })
+})
+
+describe('gunfire reaches the AI through the session', () => {
+  /**
+   * THE ONE PIECE OF WIRING NOTHING ELSE COVERS, and a reviewer proved it:
+   * replacing `ai.hear(batch)` with `void batch` in `createSession` left all 951
+   * tests passing. The session could ship with hearing disconnected — no enemy
+   * would ever investigate a firefight — and the only symptom would be a
+   * quietness nobody thought to assert.
+   *
+   * `hear` cannot be tested from the AI's own suite here: the point is not that
+   * the machine reacts to an event handed to it (that IS covered, in
+   * `ai/__tests__/states.test.ts`) but that the SESSION is the thing handing it
+   * over, drained off the same bus it gives the caller.
+   *
+   * THIRTEEN TILES APART, and the number is doing work. Sight is twelve, so the
+   * enemy cannot possibly have SEEN anybody; the alert radius is fourteen, so he
+   * can hear the shot. The gap between those two constants is the only window in
+   * which this test means anything.
+   */
+  const outOfSightInEarshot = () =>
+    makeLevel({ avatars: [{ x: 3, y: 3 }], enemies: [{ x: 15, y: 8 }] })
+
+  it('sits out of sight and does nothing while the map is quiet', () => {
+    // The premise, as its own case: without it, an enemy that walked for some
+    // entirely different reason would make the case below pass.
+    const s = createSession(outOfSightInEarshot())
+    const enemy = s.world.entities.find((e) => e.team === 'enemy')!
+    const before = { x: enemy.x, z: enemy.z }
+    for (let f = 0; f < 60; f += 1) s.advance(1 / 60)
+    expect({ x: enemy.x, z: enemy.z }).toEqual(before)
+  })
+
+  it('comes to investigate once the player opens fire', () => {
+    const s = createSession(outOfSightInEarshot())
+    const player = s.selection()[0]!
+    const enemy = s.world.entities.find((e) => e.team === 'enemy')!
+    const before = enemy.x
+    s.queue.push({ type: 'fire', unitIds: [player], ordnance: 'rifle', target: { x: 6, y: 3 } })
+    // FIFTEEN TICKS, deliberately short. At three tiles a second he covers 0.75
+    // of a tile, so he is still more than twelve tiles from the player and
+    // cannot have acquired anyone by sight. Any movement at all in this window
+    // is movement he could only have started by HEARING something.
+    for (let f = 0; f < 15; f += 1) s.advance(1 / 60)
+    expect(s.world.get(enemy.id)!.x).toBeLessThan(before)
   })
 })

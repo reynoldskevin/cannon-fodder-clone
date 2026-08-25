@@ -20,6 +20,7 @@
  * this side of the boundary.
  */
 
+import { createAiSystem } from '../ai'
 import { applyCommand, createCommandQueue } from '../command'
 import { createCombatSystem } from '../combat'
 import { bakeNavGrid } from '../pathing'
@@ -119,8 +120,20 @@ export interface Session {
  */
 const DEFAULT_SEED = 1
 
-/** The teams that engage on their own. See where it is passed, in `createSession`. */
-const AUTO_ENGAGE_TEAMS: readonly Team[] = ['enemy']
+/**
+ * The teams that engage on their own: NOBODY, since ticket 012.
+ *
+ * It was `['enemy']`, and it had to be while the enemy was a stationary turret
+ * with nothing else to decide for it. The AI now owns that decision and issues
+ * `orderFire`/`ceaseFire` exactly as the player's pointer does. ONE SOURCE OF
+ * TRUTH: two mechanisms that both decide when an enemy shoots can disagree, and
+ * the disagreement is invisible — the man fires either way, and only the state
+ * machine's `engage`/`pursue` bookkeeping goes quietly wrong.
+ *
+ * `CombatOptions.autoEngageTeams` keeps its own both-teams default; ticket 011's
+ * contract is untouched, and this is the session changing its mind.
+ */
+const AUTO_ENGAGE_TEAMS: readonly Team[] = []
 
 /** The atlas source every simulated unit is drawn from. */
 const SOLDIER_SPRITE = 'soldier'
@@ -272,11 +285,11 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
   world.spawnFromLevel()
 
   const squad = createSquadSystem(grid, options.squad ?? {})
-  // WHO SHOOTS WITHOUT BEING TOLD (ticket 011a): the enemy, and only the enemy.
-  // The player squad holds fire until a `fire` command puts it on a standing
-  // order, which is the owner's call about when his men start a firefight. The
-  // enemy has to engage on its own or nothing shoots back until ticket 012's AI
-  // lands. A caller may override the policy wholesale through `options.combat`.
+  // WHO SHOOTS WITHOUT BEING TOLD (tickets 011a, 012): nobody at all. The player
+  // squad holds fire until a `fire` command puts it on a standing order, which
+  // is the owner's call about when his men start a firefight, and the enemy
+  // shoots when the state machine below tells it to. A caller may override the
+  // policy wholesale through `options.combat`.
   //
   // THE DEFAULT GOES AFTER THE SPREAD, RESOLVED WITH `??`, NOT BEFORE IT.
   // Spreading over `{ autoEngageTeams: AUTO_ENGAGE_TEAMS }` looks equivalent and
@@ -291,9 +304,21 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
     ...options.combat,
     autoEngageTeams: options.combat?.autoEngageTeams ?? AUTO_ENGAGE_TEAMS,
   })
+  // The enemy's brain (ticket 012). It is handed the two systems it drives
+  // rather than building any of its own: a pursuit is a `squad.order`, opening
+  // fire is the same `combat.orderFire` the player's pointer sends, and an
+  // enemy round is therefore subject to exactly the range and sightline checks
+  // a player's is.
+  const ai = createAiSystem(grid, { squad, combat })
+  // AI FIRST. A pursue order given this tick must move the man this tick, and a
+  // halt must land before the movement it is cancelling; ordered after squad,
+  // every decision the machine makes would take a whole tick to have any effect
+  // and the man would overshoot his firing position by a step. Combat stays
+  // last, so a unit shoots from where it now stands.
+  world.addSystem(ai)
   world.addSystem(squad)
   world.addSystem(combat)
-  const systemOrder: readonly string[] = Object.freeze(['squad', 'combat'])
+  const systemOrder: readonly string[] = Object.freeze(['ai', 'squad', 'combat'])
 
   const queue = createCommandQueue()
   const loop = createGameLoop()
@@ -396,6 +421,13 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
   /** Take the step's events: keep them for the caller, and read the deaths. */
   function collectEvents(): void {
     const batch = world.drainEvents()
+    // THE AI IS TOLD, IT DOES NOT LISTEN. `drainEvents` empties the bus, so a
+    // machine that drained it for itself would silently starve FX, audio and
+    // the HUD of everything it consumed. Handing it the batch drained here is
+    // also what fixes the reaction time at one tick: the AI runs before combat
+    // within a step, so there is nothing of this step's for it to read anyway,
+    // and an enemy hears a shot on the step after it was fired.
+    ai.hear(batch)
     for (let i = 0; i < batch.length; i += 1) {
       const event = batch[i]
       if (event === undefined) continue

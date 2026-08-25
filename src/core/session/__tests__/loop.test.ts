@@ -175,8 +175,12 @@ describe('commands are applied before the systems that read them', () => {
 })
 
 describe('system order', () => {
-  it('declares squad before combat', () => {
-    expect(createSession(makeLevel()).systemOrder).toEqual(['squad', 'combat'])
+  it('declares ai before squad, and squad before combat', () => {
+    // The AI joined the front of the list in ticket 012: a pursue order it gives
+    // this tick must move the man this tick, and its halt must land before the
+    // movement it cancels. `session/__tests__/ai-wiring.test.ts` is where that
+    // order is asserted through `advance` rather than read off a constant.
+    expect(createSession(makeLevel()).systemOrder).toEqual(['ai', 'squad', 'combat'])
   })
 
   it('actually runs squad movement before combat', () => {
@@ -311,9 +315,15 @@ describe('how many steps the frame ran', () => {
 
 describe('who shoots without being told', () => {
   /**
-   * The owner's call: the player squad holds fire until right-clicked, the
-   * enemy engages on its own. Enemies have to, or nothing shoots back until
-   * ticket 012's AI lands and the level is a shooting gallery in one direction.
+   * The owner's call: the player squad holds fire until right-clicked, and the
+   * enemy shoots back.
+   *
+   * WHAT MAKES THE ENEMY SHOOT CHANGED IN TICKET 012 AND THIS TEST DID NOT, which
+   * is the point of having written it through `advance` in the first place. It
+   * used to be `CombatSystem`'s auto-engage; it is now the AI's state machine
+   * issuing a standing fire order, and the session passes `autoEngageTeams: []`
+   * so that exactly one of the two decides. The behaviour the player sees is the
+   * same, so the assertion is the same.
    *
    * Asserted through `advance` rather than by inspecting the combat system's
    * options, because the thing that can break is the WIRING — a session that

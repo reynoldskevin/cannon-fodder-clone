@@ -21,7 +21,7 @@ import { RIFLE, WEAPONS } from '../../combat'
  * consequences live; this file is where the labels do.
  */
 
-const RANGE = WEAPONS[RIFLE].rangeTiles
+const RANGE = WEAPONS[RIFLE]!.rangeTiles
 
 describe('the states are a closed, enumerable set', () => {
   it('is exactly idle, alert, engage and pursue', () => {
