@@ -43,13 +43,17 @@ describe('the authored soldier clips', () => {
     }
   })
 
-  it('loops walk, but not fire and not die', () => {
-    // `fire` is ONE-SHOT: a trigger pull is a single recoil, not a cycle. As a
-    // looping clip it also picked up the per-id phase offset, which starts each
-    // man at an arbitrary point in his own recoil — so a burst showed whichever
-    // frame the global clock happened to be on rather than the four in order.
+  it('loops walk and fire, but not die', () => {
+    // `fire` LOOPS, because the pose now stands for as long as the player holds
+    // the button rather than for one recoil per round. A one-shot clip would run
+    // once and then freeze on its last frame for the rest of the burst.
+    //
+    // (It was briefly one-shot, on the way here: the original bug was that the
+    // session showed the pose for a single TICK, and making the clip one-shot
+    // was half of a fix that treated each round as its own recoil. Sustained
+    // fire is the better model and it wants a loop.)
     expect(visual.clip('soldier', 'walk').loop).toBe(true)
-    expect(visual.clip('soldier', 'fire').loop).toBe(false)
+    expect(visual.clip('soldier', 'fire').loop).toBe(true)
     expect(visual.clip('soldier', 'die').loop).toBe(false)
   })
 
@@ -241,9 +245,11 @@ describe('a burst plays all four frames of the fire cycle', () => {
     expect([...seen].sort((a, b) => a - b)).toEqual([0, 1, 2, 3])
   })
 
-  it('holds the fire pose for the length of the clip, not for one tick', () => {
-    // 4 frames at 12fps is a third of a second — 20 ticks at 60Hz. One tick is
-    // 1/60th, which is at most one display frame and usually none.
+  it('never drops out of the fire pose while the order stands', () => {
+    // The clip is 20 ticks and the rifle's cooldown is 32, so a pose tied to the
+    // ROUND leaves a 12-tick hole between shots — the man snaps back to idle
+    // three times a second. Holding the button has to look like holding the
+    // button, so the pose is tied to the ORDER, not to the round.
     const level = makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [] })
     const session = createSession(level)
     const shooter = session.selection()[0]!
@@ -254,42 +260,33 @@ describe('a burst plays all four frames of the fire cycle', () => {
       target: { x: 11, y: 7 },
     })
 
-    // Find the first tick he fires, then count consecutive firing ticks.
-    let run = 0
-    let best = 0
-    for (let f = 0; f < 200; f++) {
-      session.advance(1 / 60)
-      const drawn = session.renderEntities(() => 0).find((r) => r.id === shooter)
-      if (drawn?.animation === 'fire') {
-        run += 1
-        best = Math.max(best, run)
-      } else {
-        run = 0
-      }
-    }
-    expect(best).toBeGreaterThanOrEqual(20)
-  })
-
-  it('restarts the cycle on the next round rather than continuing the old one', () => {
-    // Each trigger pull is its own recoil. Continuing would leave the second
-    // shot showing the held last frame of the first.
-    const level = makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [] })
-    const session = createSession(level)
-    const shooter = session.selection()[0]!
-    session.queue.push({
-      type: 'fire',
-      unitIds: [shooter],
-      ordnance: 'rifle',
-      target: { x: 11, y: 7 },
-    })
-
-    const starts = new Set<number>()
+    const seen = new Set<string>()
     for (let f = 0; f < 300; f++) {
       session.advance(1 / 60)
       const drawn = session.renderEntities(() => 0).find((r) => r.id === shooter)
-      if (drawn?.animation === 'fire') starts.add(drawn.animationStart)
+      if (drawn) seen.add(drawn.animation)
     }
-    expect(starts.size).toBeGreaterThan(1) // more than one burst
+    expect([...seen]).toEqual(['fire'])
+  })
+
+  it('stops firing when the cease-fire arrives', () => {
+    const level = makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [] })
+    const session = createSession(level)
+    const shooter = session.selection()[0]!
+    session.queue.push({
+      type: 'fire',
+      unitIds: [shooter],
+      ordnance: 'rifle',
+      target: { x: 11, y: 7 },
+    })
+    for (let f = 0; f < 60; f++) session.advance(1 / 60)
+    expect(session.renderEntities(() => 0)[0]!.animation).toBe('fire')
+
+    session.queue.push({ type: 'ceaseFire', unitIds: [shooter] })
+    // Past the tail the last round earns, so this is the ORDER ending rather
+    // than the clip running out.
+    for (let f = 0; f < 60; f++) session.advance(1 / 60)
+    expect(session.renderEntities(() => 0)[0]!.animation).toBe('idle')
   })
 })
 
