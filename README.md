@@ -43,7 +43,7 @@ npm run dev
 | `npm run lint` | ESLint over the whole repo, including the architecture boundary rule |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run import:levels` | Offline level import pipeline (stub — see ticket 001) |
-| `npm run build:models` | Offline sprite-sheet voxelisation pipeline (stub — see ticket 001) |
+| `npm run build:models` | Offline sprite pipeline: sheets + props → `public/generated/sprites/` atlas, floor tile and manifest |
 
 ## Layout
 

@@ -91,7 +91,7 @@ are named explicitly below; none are built, but none are designed out of reach.
 | Post-processing polish pass | Extra (confirmed) | `render/PostFX` — `EffectComposer` chain behind a quality setting. |
 | Three.js + TypeScript | Platform | Vite + TS strict; Three.js confined to `render/`. |
 | Annotated images → offline importer → JSON | Platform | `tools/mapgen`, run via `npm run import:levels`. Game never reads an image as data. |
-| Sprite-stacking / voxel extrusion from 2D art | Platform | `tools/voxelize`, run via `npm run build:models`. Outputs GLB + a manifest. |
+| Camera-aligned sprite quads from 2D art | Platform | `tools/spritegen`, run via `npm run build:models`. Outputs a packed atlas + manifest. Supersedes the planned `tools/voxelize`: the art is drawn at the camera's own 55° angle and the camera never rotates, so a quad is pixel-exact from the only viewpoint that exists. |
 | Deployed static URL | Submission | Static Vite build; deploy wired in M1 ticket 006. |
 | Vitest logic-only testing | Engineering | The `core/` ↔ `render/` seam is what makes this enforceable; a lint rule bans Three.js imports under `core/`. |
 
