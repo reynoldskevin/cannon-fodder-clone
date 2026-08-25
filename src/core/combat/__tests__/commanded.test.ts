@@ -274,13 +274,36 @@ describe('what a commanded shot hits', () => {
     expect(fired.type === 'ShotFired' && fired.targetZ).toBeCloseTo(where.z, 6)
   })
 
-  it('still respects the weapon`s range', () => {
+  it('cannot kill an enemy beyond the weapon`s range', () => {
     const r = rig(OPEN, COMMANDED)
     const me = r.spawn(1, 4, 'player', 1000)
     const far = r.spawn(1 + WEAPONS[RIFLE]!.rangeTiles + 4, 4, 'enemy')
     r.combat.orderFire([me.id], r.aim(1 + WEAPONS[RIFLE]!.rangeTiles + 4, 4))
     r.run(120)
     expect(r.world.isAlive(far.id)).toBe(true)
+  })
+
+  it('does not send the round further than the rifle reaches', () => {
+    /**
+     * THE ASSERTION THE ONE ABOVE ONLY LOOKS LIKE. "The far enemy survives" is
+     * already guaranteed by the range check inside target selection, so it holds
+     * whether or not a round is emitted — and a first cut of this ticket had an
+     * 8-tile rifle emitting an 18-tile tracer, with that test green.
+     *
+     * The endpoint has to be checked directly. Aiming past the weapon's reach
+     * does not silence the man — he fires in the direction he was pointed, as far
+     * as his rifle carries, which is both honest and the only thing that gives
+     * the player feedback about what the range IS.
+     */
+    const r = rig(OPEN, COMMANDED)
+    const me = r.spawn(1, 4, 'player', 1000)
+    r.combat.orderFire([me.id], r.aim(19, 4)) // 18 tiles away
+    const fired = shots(r.run(30))
+    expect(fired.length).toBeGreaterThan(0) // he shoots — no silence
+    const shot = fired[0]!
+    if (shot.type !== 'ShotFired') throw new Error('expected a shot')
+    const reach = Math.hypot(shot.targetX - shot.originX, shot.targetZ - shot.originZ)
+    expect(reach).toBeLessThanOrEqual(WEAPONS[RIFLE]!.rangeTiles + 1e-6)
   })
 
   it('still respects line of sight', () => {
@@ -295,6 +318,47 @@ describe('what a commanded shot hits', () => {
     r.combat.orderFire([me.id], r.aim(7, 1))
     r.run(120)
     expect(r.world.isAlive(hidden.id)).toBe(true)
+  })
+
+  it('shoots at a wall when told to, rather than saying nothing', () => {
+    /**
+     * Right-clicking a tree is a COMMON click on a jungle map, and a first cut
+     * of this ticket answered it with total silence: `hasLineOfSight` refuses
+     * when either endpoint is inside solid terrain, so the order was accepted by
+     * the command layer and then dropped without a sound by the simulation.
+     *
+     * That is the exact failure this ticket was written to remove. Whether a
+     * bullet into a trunk accomplishes anything is beside the point — the player
+     * pressed a button and the game has to answer.
+     */
+    const WALL = `
+      ....................
+      .........#..........
+      ....................
+    `
+    const r = rig(WALL, COMMANDED)
+    const me = r.spawn(5, 1, 'player', 1000)
+    r.combat.orderFire([me.id], r.aim(9, 1)) // the wall itself, well within range
+    expect(shots(r.run(30)).length).toBeGreaterThan(0)
+  })
+
+  it('stops the round at the wall rather than through it', () => {
+    // Firing at something behind cover must not draw a tracer through the cover.
+    const WALL = `
+      ....................
+      .........#..........
+      ....................
+    `
+    const r = rig(WALL, COMMANDED)
+    const me = r.spawn(5, 1, 'player', 1000)
+    r.combat.orderFire([me.id], r.aim(13, 1)) // open ground on the far side
+    const fired = shots(r.run(30))
+    expect(fired.length).toBeGreaterThan(0)
+    const shot = fired[0]!
+    if (shot.type !== 'ShotFired') throw new Error('expected a shot')
+    // Tile 9 is the wall; its west face is at tile-centre 9 minus half a tile.
+    const wall = tileToWorld(9, 1, { w: 20, h: 3 })
+    expect(shot.targetX).toBeLessThan(wall.x)
   })
 
   it('does not shoot its own team, even when aimed at them', () => {
