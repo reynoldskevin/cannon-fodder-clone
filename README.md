@@ -43,7 +43,24 @@ npm run dev
 | `npm run lint` | ESLint over the whole repo, including the architecture boundary rule |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run import:levels` | Offline level import pipeline (stub — see ticket 001) |
-| `npm run build:models` | Offline sprite-sheet voxelisation pipeline (stub — see ticket 001) |
+| `npm run build:models` | Offline sprite pipeline: sheets + props → `public/generated/sprites/` atlas, floor tile and manifest |
+
+### Reading `sprites.manifest.json`
+
+Rects, offsets and anchors are **atlas pixels, top-left origin, y increasing downward** — the
+manifest says so in its `origin` field. Three.js UVs are bottom-left origin, so flip the v axis
+when building UVs:
+
+```
+u0 = rect.x / atlas.width
+v0 = 1 - (rect.y + rect.height) / atlas.height
+```
+
+To place a sprite in world space you need `rect` (quad size), `offset` (its position inside the
+source cell — do not re-centre on content), `anchor` (the cell's bottom-centre, the ground
+contact point) and `units.soldier.cell` (the post-downscale cell those are measured against).
+See the `sprites.manifest.json` contract in [ARCHITECTURE.md](ARCHITECTURE.md) for the full
+derivation.
 
 ## Layout
 

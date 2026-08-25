@@ -91,7 +91,7 @@ are named explicitly below; none are built, but none are designed out of reach.
 | Post-processing polish pass | Extra (confirmed) | `render/PostFX` — `EffectComposer` chain behind a quality setting. |
 | Three.js + TypeScript | Platform | Vite + TS strict; Three.js confined to `render/`. |
 | Annotated images → offline importer → JSON | Platform | `tools/mapgen`, run via `npm run import:levels`. Game never reads an image as data. |
-| Sprite-stacking / voxel extrusion from 2D art | Platform | `tools/voxelize`, run via `npm run build:models`. Outputs GLB + a manifest. |
+| Camera-aligned sprite quads from 2D art | Platform | `tools/spritegen`, run via `npm run build:models`. Outputs a packed atlas + manifest. Supersedes the planned `tools/voxelize`: the art is drawn at the camera's own 55° angle and the camera never rotates, so a quad is pixel-exact from the only viewpoint that exists. |
 | Deployed static URL | Submission | Static Vite build; deploy wired in M1 ticket 006. |
 | Vitest logic-only testing | Engineering | The `core/` ↔ `render/` seam is what makes this enforceable; a lint rule bans Three.js imports under `core/`. |
 
@@ -226,7 +226,11 @@ The system is a one-way loop with exactly two crossings of the sim/presentation 
 **Contracts.**
 
 - `level.json` — versioned. `{ schemaVersion, name, size, terrain: number[][], walkable: bool[][], spawns: { avatars[], enemies[], chests[] }, objectives[] }`. Validated on load; a schema mismatch is a loud, typed failure, not undefined behaviour.
-- `models.manifest.json` — `{ [modelId]: { animations: { [name]: { frames: string[], fps } } } }`, mapping logical unit types to GLB frame files.
+- `models.manifest.json` — `{ [modelId]: { animations: { [name]: { frames: string[], fps } } } }`, mapping logical unit types to GLB frame files. Superseded in practice by `sprites.manifest.json` below; see the sprite-quad decision above.
+- `sprites.manifest.json` — versioned. `{ version, origin, scale, atlas, units, props, floor }`, emitted by `tools/spritegen` alongside `atlas.png` and `floor.png`.
+  - **Coordinate origin.** Every `rect`, `offset` and `anchor` is in atlas pixels, **top-left origin, y increasing downward** — the PNG convention. The manifest states this as data in `origin: "top-left"` rather than leaving it to be inferred. Three.js texture UVs are **bottom-left** origin, so a consumer must flip: `v = 1 - (y + height) / atlas.height`. Getting this wrong does not crash and does not look broken — every sprite simply renders vertically mirrored.
+  - **Placing a sprite.** Four values are needed and all four are in the manifest: `rect` (size the quad), `offset` (where the trimmed pixels sat inside the source cell — never re-centre on content, or a dying soldier slides up the screen), `anchor` (the cell's bottom-centre, the point that meets the ground; constant across an animation), and `units.soldier.cell` (the post-downscale cell size the other three are measured against). The quad's pixel offset from the unit's world position is `(offset.x - anchor.x, offset.y - anchor.y)`, y-down; scale by `unitHeightInWorldUnits / cell.height` and negate y for y-up world space. `scale` is reported for the record — no consumer needs it to lay a sprite out, because `cell` is already post-downscale.
+  - `floor.png` is deliberately **not** in the atlas: it is the one texture that must wrap, and wrapping is a property of a whole texture, not a sub-rect.
 - `PersistencePort` — `{ load(): CampaignState | null; save(s: CampaignState): void }`.
 
 **Where state lives.** Transient battle state lives only in `World`, rebuilt from `LevelData`
