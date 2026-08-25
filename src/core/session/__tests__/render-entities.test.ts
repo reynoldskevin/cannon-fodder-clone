@@ -157,6 +157,64 @@ describe('renderEntities — animation', () => {
     expect({ dx: drawn.dx, dz: drawn.dz }).toEqual({ dx: 0, dz: 0 })
   })
 
+  describe('firing outranks walking', () => {
+    /**
+     * A MAN UNDER A FIRE ORDER LOOKS LIKE A MAN FIRING, whatever his feet are
+     * doing. This was the other way round to begin with, on the reasoning that
+     * "a man running is a man running whatever his rifle is doing" — which was a
+     * defensible call while nothing chose to fire, and stopped being one the
+     * moment firing became a button the player holds. Advancing under fire is
+     * the shape of most of the original's missions, and with the walk cycle
+     * winning, the squad looked like it was jogging through a firefight it was
+     * not taking part in.
+     *
+     * The mechanics were never wrong — a unit under a fire order has always kept
+     * shooting while it moved, and this file's sibling in `core/combat` pins
+     * that. Only the animation disagreed.
+     */
+    const marchingUnderFire = () => {
+      const level = makeLevel({ avatars: [{ x: 3, y: 7 }], enemies: [] })
+      const s = createSession(level)
+      const id = s.selection()[0]!
+      s.queue.push({ type: 'move', unitIds: [id], target: { x: 17, y: 7 } })
+      s.queue.push({ type: 'fire', unitIds: [id], ordnance: 'rifle', target: { x: 17, y: 7 } })
+      return { s, id }
+    }
+
+    it('shows `fire`, not `walk`, while advancing under a fire order', () => {
+      const { s, id } = marchingUnderFire()
+      const seen = new Set<string>()
+      let movingTicks = 0
+      for (let f = 0; f < 200; f++) {
+        s.advance(1 / 60)
+        if (s.world.get(id)?.state === 'moving') movingTicks += 1
+        const drawn = s.renderEntities(FLAT).find((r) => r.id === id)
+        if (drawn) seen.add(drawn.animation)
+      }
+      expect(movingTicks).toBeGreaterThan(100) // he really was walking
+      expect([...seen]).toEqual(['fire'])
+    })
+
+    it('goes back to walking when the fire order ends mid-march', () => {
+      const { s, id } = marchingUnderFire()
+      for (let f = 0; f < 60; f++) s.advance(1 / 60)
+      s.queue.push({ type: 'ceaseFire', unitIds: [id] })
+      for (let f = 0; f < 60; f++) s.advance(1 / 60)
+      expect(s.world.get(id)?.state).toBe('moving')
+      expect(s.renderEntities(FLAT).find((r) => r.id === id)!.animation).toBe('walk')
+    })
+
+    it('still faces the way it is walking while firing', () => {
+      // The pose changes; the facing must not. A man firing east while walking
+      // east should not turn to face wherever the fire order pointed.
+      const { s, id } = marchingUnderFire()
+      for (let f = 0; f < 60; f++) s.advance(1 / 60)
+      const drawn = s.renderEntities(FLAT).find((r) => r.id === id)!
+      expect(drawn.animation).toBe('fire')
+      expect(drawn.dx).toBeGreaterThan(0)
+    })
+  })
+
   it('plays `fire` on the tick a unit shoots', () => {
     // Combat sets no entity state at all, so this cannot be read off the entity
     // — it has to come from the ShotFired events of the tick just run.

@@ -517,9 +517,23 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
   /**
    * Which clip a living unit plays.
    *
-   * `walk` outranks `fire` because a man running is a man running whatever his
-   * rifle is doing, and it is the animation that carries the movement the player
-   * ordered.
+   * `fire` OUTRANKS `walk`. It was the other way round to begin with, on the
+   * reasoning that a man running is a man running whatever his rifle is doing —
+   * defensible while nothing chose to fire, and wrong the moment firing became a
+   * button the player holds. Advancing under fire is the shape of most of the
+   * original's missions, and with the walk cycle winning, a squad ordered to
+   * shoot while it moved looked like it was jogging through a firefight it was
+   * not part of. The mechanics were never in question: a unit under a fire order
+   * has always kept shooting while it moved.
+   *
+   * The pose follows the ORDER, not the round. The clip runs 20 ticks and the
+   * rifle's cooldown is 32, so keying it to `ShotFired` leaves a 12-tick hole
+   * between rounds — the man snapping back to idle three times a second. Holding
+   * the button has to look like holding the button.
+   *
+   * An auto-engaging unit has no order to read, so it falls back to "fired
+   * recently": enemies get the pose for the length of the clip after each round,
+   * which is the best that can be said about a unit nobody is aiming.
    *
    * A man doing neither IDLES. `tools/spritegen` emits no idle art — `walk`,
    * `fire` and `die` and nothing else — so `idle` is synthesised by the renderer
@@ -530,8 +544,9 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
    * and therefore no soldier who was ever NOT standing still.
    */
   function animationFor(entity: Entity): string {
-    if (entity.state === STATE_MOVING) return WALK_ANIMATION
+    if (combat.isFiring(entity.id)) return FIRE_ANIMATION
     if (firingTicksAgo(entity.id) !== null) return FIRE_ANIMATION
+    if (entity.state === STATE_MOVING) return WALK_ANIMATION
     return IDLE_ANIMATION
   }
 
@@ -553,18 +568,7 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
     return ago >= 0 && ago < FIRE_TICKS ? ago : null
   }
 
-  /**
-   * When this unit last fired, on the renderer's clock.
-   *
-   * The same conversion corpses use: sim ticks are the authority and the
-   * renderer counts seconds, and `MAX_FRAME_DT` keeps the two within a step of
-   * each other (see `DEATH_TICKS`). A unit that has not fired reports 0, which
-   * is unreachable — `animationFor` only asks for this when it has just said the
-   * unit is firing.
-   */
-  function firedAtSeconds(id: number): number {
-    return (lastFiredTick.get(id) ?? 0) * FIXED_TIMESTEP
-  }
+
 
   /**
    * The tile a world position stands in — `core/view/projection`'s own
@@ -612,12 +616,16 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
         y: groundHeightAt(tile.x, tile.y),
         dx: authored?.dx ?? dx,
         dz: authored?.dz ?? dz,
-        // `fire` is one-shot and must start on the round that caused it, so it
-        // carries the tick it was fired. `walk` and `idle` keep 0: `walk` is a
-        // cycle the renderer deliberately spreads across the squad with a
-        // per-id phase offset, and starting each man from his own last order
-        // would put the whole squad back in lockstep.
-        animationStart: animation === FIRE_ANIMATION ? firedAtSeconds(entity.id) : 0,
+        // Zero for every living unit, including `fire`.
+        //
+        // `fire` loops now, and a looping clip's phase comes from the renderer's
+        // own clock plus a per-id offset — the same machinery that stops a
+        // marching squad moving in lockstep, and just as welcome on a firing one.
+        // Handing it the tick of the last round instead would restart the cycle
+        // on every shot, which is the per-round model this deliberately is not.
+        // Only corpses carry a real start, because `die` is one-shot and has to
+        // begin at the death that caused it.
+        animationStart: 0,
         tint: entity.team === 'enemy' ? ENEMY_TINT : undefined,
       })
     }
