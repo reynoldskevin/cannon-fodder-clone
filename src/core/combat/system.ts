@@ -347,10 +347,14 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
     // could never be inherited by a live unit — but it would keep `isFiring`
     // answering true about a man who is gone, and the table would grow by one
     // per casualty for the length of the mission.
-    if (orders.size > 0) {
-      for (const id of [...orders.keys()]) {
-        if (!world.isAlive(id)) orders.delete(id)
-      }
+    //
+    // Walked LIVE, not over a copy of the keys. Deleting the entry a `Map`
+    // iterator is standing on is defined behaviour — the walk continues from the
+    // next entry — so the snapshot bought nothing but an array per tick, for
+    // every tick in which anybody was under a standing order. Iterating a `Map`
+    // is safe here at all only because this loop DELETES and decides nothing.
+    for (const id of orders.keys()) {
+      if (!world.isAlive(id)) orders.delete(id)
     }
 
     // ---- Pass 1: decide. Read-only; mutates nothing in the world. ----------

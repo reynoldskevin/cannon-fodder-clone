@@ -99,6 +99,22 @@ export interface SquadSystem {
    */
   order(unitIds: readonly number[], target: TileCoord): void
   /**
+   * Stop these units where they stand (ticket 012). Ids that name no living
+   * unit are ignored, and a unit that was under nobody's command is unaffected.
+   *
+   * A REAL PRIMITIVE, NOT A CONVENIENCE. The alternative is ordering a man to
+   * the tile he is already standing on — and an order aims at a tile CENTRE, so
+   * he shuffles up to 0.71 tiles sideways at the exact moment he was meant to
+   * plant his feet and shoot. Ordering a stop and getting a step is not a stop.
+   *
+   * It also resets `Entity.state` to `'idle'`, which is half the point and the
+   * easier half to leave out: the apply pass writes that field every tick it
+   * runs, so a unit dropped out of its detachment keeps whatever its last step
+   * wrote and walk-animates on the spot forever. The reset lands on the NEXT
+   * tick, not inside this call — see `halted`.
+   */
+  halt(unitIds: readonly number[]): void
+  /**
    * The unit currently leading this unit's detachment, or `undefined`.
    *
    * Liveness is checked against the world this system was last ticked with, so
@@ -288,6 +304,21 @@ export function createSquadSystem(grid: NavGrid, options: SquadOptions = {}): Sq
   let stepCount = 0
 
   /**
+   * Units taken out of command by `halt` whose `Entity.state` has not been reset
+   * yet.
+   *
+   * DEFERRED, AND IT HAS TO BE. `halt` is handed ids and not entities — the
+   * system holds a grid, and before its first tick there is no world to look one
+   * up in, exactly as `order` documents on `attached`. Writing the state from
+   * inside `halt` would therefore be a no-op for an order given during setup and
+   * would silently depend on the caller having ticked first. Applied at the top
+   * of the pass below instead, where a world is in hand and where a unit
+   * re-ordered in the meantime is about to have `'moving'` written over it
+   * anyway by the apply pass.
+   */
+  const halted: number[] = []
+
+  /**
    * The world this system was last ticked with, or `null` before its first tick.
    *
    * `order` uses it to drop ids that name nothing living. It cannot be captured
@@ -457,6 +488,49 @@ export function createSquadSystem(grid: NavGrid, options: SquadOptions = {}): Sq
   }
 
   /**
+   * Pull these ids out of every detachment holding them, dropping any
+   * detachment the removal empties.
+   *
+   * The whole of what "squad splitting" is, and shared by `order` and `halt`
+   * because it is the same operation: the remainder keeps its old target and
+   * re-promotes whoever is now first in what is left of its roster. Ids naming
+   * nothing are simply not found.
+   */
+  function detach(ids: readonly number[]): void {
+    let write = 0
+    for (let i = 0; i < detachments.length; i += 1) {
+      const detachment = detachments[i]
+      if (detachment === undefined) continue
+      const held = detachment.roster
+      let kept = 0
+      for (let r = 0; r < held.length; r += 1) {
+        const id = held[r]
+        if (id === undefined || ids.includes(id)) continue
+        held[kept] = id
+        kept += 1
+      }
+      held.length = kept
+      if (kept === 0) continue
+      detachments[write] = detachment
+      write += 1
+    }
+    detachments.length = write
+  }
+
+  /** Cancel the pending idle reset for these ids. Compacted in place. */
+  function forgetHalted(ids: readonly number[]): void {
+    if (halted.length === 0) return
+    let write = 0
+    for (let i = 0; i < halted.length; i += 1) {
+      const id = halted[i]
+      if (id === undefined || ids.includes(id)) continue
+      halted[write] = id
+      write += 1
+    }
+    halted.length = write
+  }
+
+  /**
    * Give an order. See `SquadSystem.order`.
    *
    * The named ids are removed from every existing detachment before the new one
@@ -478,24 +552,11 @@ export function createSquadSystem(grid: NavGrid, options: SquadOptions = {}): Sq
       roster.push(id)
     }
 
-    let write = 0
-    for (let i = 0; i < detachments.length; i += 1) {
-      const detachment = detachments[i]
-      if (detachment === undefined) continue
-      const held = detachment.roster
-      let kept = 0
-      for (let r = 0; r < held.length; r += 1) {
-        const id = held[r]
-        if (id === undefined || roster.includes(id)) continue
-        held[kept] = id
-        kept += 1
-      }
-      held.length = kept
-      if (kept === 0) continue
-      detachments[write] = detachment
-      write += 1
-    }
-    detachments.length = write
+    detach(roster)
+    // A unit put back under command is no longer a halted one: it is about to
+    // have `'moving'` written over its state by the apply pass, and leaving it
+    // queued would idle it a tick later for an order it has already been given.
+    forgetHalted(roster)
 
     // An order naming nobody living is an order to nobody. It leaves the ids it
     // named detached, which is the correct reading of "those units are gone".
@@ -508,6 +569,22 @@ export function createSquadSystem(grid: NavGrid, options: SquadOptions = {}): Sq
       facingY: 1,
       field: null,
     })
+  }
+
+  /**
+   * Stop these units. See `SquadSystem.halt`.
+   *
+   * Nothing is written to the world here — not the position, which is already
+   * where the man should stop, and not the state, which is queued for the top of
+   * the next pass. A halt is therefore exactly a detach plus a promise, and the
+   * promise is the only part with a tick of latency.
+   */
+  function halt(unitIds: readonly number[]): void {
+    detach(unitIds)
+    for (const id of unitIds) {
+      if (halted.includes(id)) continue
+      halted.push(id)
+    }
   }
 
   function leaderOf(unitId: number): number | undefined {
@@ -541,6 +618,24 @@ export function createSquadSystem(grid: NavGrid, options: SquadOptions = {}): Sq
 
   function squadSystem(world: World): void {
     attached = world
+
+    // ---- Pass 0: land the state reset `halt` promised ----------------------
+    // BEFORE the snapshot, not after the apply: a unit halted and then ordered
+    // again in the same window is back in a roster, and pass 4 must be free to
+    // write `'moving'` over this. A halted unit is in no roster at all, so
+    // nothing downstream touches it and the reset stands.
+    if (halted.length > 0) {
+      for (let i = 0; i < halted.length; i += 1) {
+        const id = halted[i]
+        if (id === undefined) continue
+        const entity = world.get(id)
+        // The man died between the halt and this tick. Nothing to reset, and
+        // nothing to complain about — a corpse takes no orders.
+        if (entity === undefined) continue
+        entity.state = STATE_IDLE
+      }
+      halted.length = 0
+    }
 
     // ---- Pass 1: snapshot, and bury the dead ------------------------------
     // Compaction and snapshot in one walk, so the step buffer's layout matches
@@ -683,5 +778,5 @@ export function createSquadSystem(grid: NavGrid, options: SquadOptions = {}): Sq
   // missing is the accessor defined immediately above, which a data-property
   // spread could not have carried anyway (`Object.assign` would have copied the
   // getter's value once and frozen the count at zero).
-  return Object.assign(squadSystem, { order, leaderOf, targetOf }) as SquadSystem
+  return Object.assign(squadSystem, { order, halt, leaderOf, targetOf }) as SquadSystem
 }

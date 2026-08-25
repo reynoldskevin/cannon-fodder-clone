@@ -69,12 +69,27 @@ export function tileToWorld(x: number, y: number, size: LevelSize): WorldPoint {
  * here and that copy needs the same change.
  */
 export function worldToTile(wx: number, wz: number, size: LevelSize): TileCoord {
-  const x = Math.round(wx / TILE_WORLD_SIZE + (size.w - 1) / 2)
-  const y = Math.round(wz / TILE_WORLD_SIZE + (size.h - 1) / 2)
-  return {
-    x: clamp(x, 0, size.w - 1),
-    y: clamp(y, 0, size.h - 1),
-  }
+  return { x: worldToTileX(wx, size), y: worldToTileY(wz, size) }
+}
+
+/**
+ * The two axes of `worldToTile`, separately — same rounding, same clamp, no
+ * object.
+ *
+ * `worldToTile` is DEFINED in terms of these rather than the other way round, so
+ * there is exactly one spelling of the mapping in the codebase and no chance of
+ * the pair drifting half a tile apart. They exist for the per-tick callers (the
+ * AI's order and aim dedupes, `core/ai/system.ts`) that need to know WHICH TILE a
+ * position is in without allocating a `TileCoord` to find out, 60 times a second,
+ * only to discover the answer has not changed. Prefer `worldToTile` anywhere the
+ * coordinate is actually used as a pair.
+ */
+export function worldToTileX(wx: number, size: LevelSize): number {
+  return clamp(Math.round(wx / TILE_WORLD_SIZE + (size.w - 1) / 2), 0, size.w - 1)
+}
+
+export function worldToTileY(wz: number, size: LevelSize): number {
+  return clamp(Math.round(wz / TILE_WORLD_SIZE + (size.h - 1) / 2), 0, size.h - 1)
 }
 
 /** The level's full extent on the ground plane, symmetric about the origin. */
