@@ -16,7 +16,10 @@ const repoRoot = resolve(__dirname, '../../..')
 const SOURCE = join(repoRoot, 'assets/source/sprites')
 
 const ANIMATIONS = ['walk', 'fire', 'die'] as const
-const PROPS = ['tree1', 'tree2', 'tree3', 'bush'] as const
+// Listed literally rather than imported from `../index`, on purpose: this file
+// is ground truth about what art exists on disk, so a prop dropped from the
+// pipeline's own PROPS must fail here rather than quietly narrow the test.
+const PROPS = ['tree1', 'tree2', 'tree3', 'palmtree1', 'palmtree2', 'palmtree3', 'bush'] as const
 
 let out: ReturnType<typeof buildSprites>
 let manifest: Record<string, unknown>

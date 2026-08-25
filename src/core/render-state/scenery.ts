@@ -45,10 +45,33 @@ export const CANOPY_TILE_ID = 2
 /**
  * The tree sprites in the ticket-004 atlas, in the order variants are chosen
  * from. Order is not meaningful beyond determinism.
+ *
+ * THE BROADLEAF ART, AND ONLY THE BROADLEAF ART. `tree1/2/3` is the dense,
+ * dark, vine-hung canopy the source map paints across half the level, so it is
+ * what the canopy TERRAIN is drawn with. The atlas also carries `palmtree1/2/3`
+ * and they are deliberately absent here: palms belong to the map's hand-placed
+ * `tree` ANNOTATIONS (see `PALM_VARIANTS` below and `src/render/level-entities.ts`),
+ * which is a different thing on the map and should read as a different thing on
+ * screen. The two families are painted in different styles — one rendered, one
+ * flat cel-shaded — so mixing them across the forest fringe would look like two
+ * games sharing a map rather than like variety.
  */
 export const TREE_VARIANTS = ['tree1', 'tree2', 'tree3'] as const
 
 export type TreeVariant = (typeof TREE_VARIANTS)[number]
+
+/**
+ * The palm sprites, for a tile the map ANNOTATES as a `tree`.
+ *
+ * A landmark rather than terrain: there is one of these on level 1, hand-placed,
+ * and its job is to be a distinct thing you can point at. Kept beside
+ * `TREE_VARIANTS` because both answer "which tree art stands here" and both must
+ * answer it the same way on every load; kept separate from it because the two
+ * pools are chosen by different questions about the map.
+ */
+export const PALM_VARIANTS = ['palmtree1', 'palmtree2', 'palmtree3'] as const
+
+export type PalmVariant = (typeof PALM_VARIANTS)[number]
 
 /**
  * How far a tree may be displaced from its tile centre, in tiles.
@@ -60,10 +83,11 @@ export type TreeVariant = (typeof TREE_VARIANTS)[number]
  */
 const JITTER_RADIUS = 0.42
 
-/** Distinct salts so the variant choice and the two jitter axes never correlate. */
+/** Distinct salts so the variant choices and the two jitter axes never correlate. */
 const SALT_VARIANT = 0x9e3779b1
 const SALT_JITTER_X = 0x85ebca6b
 const SALT_JITTER_Y = 0xc2b2ae35
+const SALT_PALM = 0x27d4eb2d
 
 /** A displacement within a tile, in tiles. Both components are within ±0.5. */
 export interface TileJitter {
@@ -122,13 +146,26 @@ function unitHash(x: number, y: number, salt: number): number {
 /**
  * Which tree stands on a tile.
  *
- * Deterministic in the tile's coordinates, evenly spread across the three
+ * Deterministic in the tile's coordinates, evenly spread across the declared
  * variants, and — because the hash avalanches — uncorrelated between
  * neighbours, so the forest has no visible period.
  */
 export function treeVariantFor(tileX: number, tileY: number): TreeVariant {
   const index = hash2(tileX, tileY, SALT_VARIANT) % TREE_VARIANTS.length
   return TREE_VARIANTS[index] ?? TREE_VARIANTS[0]
+}
+
+/**
+ * Which palm stands on a tile the map annotates as a `tree`.
+ *
+ * Same contract as `treeVariantFor` — decided by the tile alone, so the palm at
+ * a given annotation is the same palm on every load and moving the annotation is
+ * the only thing that changes it. Its own salt, so a tile does not get its palm
+ * and its canopy tree from the same roll.
+ */
+export function palmVariantFor(tileX: number, tileY: number): PalmVariant {
+  const index = hash2(tileX, tileY, SALT_PALM) % PALM_VARIANTS.length
+  return PALM_VARIANTS[index] ?? PALM_VARIANTS[0]
 }
 
 /**

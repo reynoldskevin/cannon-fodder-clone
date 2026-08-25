@@ -145,9 +145,25 @@ export interface SpriteManifest {
  * Trees and bushes share a 768px cell but are emphatically not the same size in
  * the world, so they are listed separately rather than derived from the cell.
  *
- * TREES AT 2.85 (ticket 010a). The palms' painted bbox is 487x726 of their
- * 768px cell, so this draws a crown 1.81 tiles across and 2.69 world units tall
- * — 1.75x a soldier's 1.539.
+ * TREES AT 2.85 (ticket 010a). Measured on the palms, whose painted bbox is
+ * 487x726 of their 768px cell: a crown 1.81 tiles across and 2.69 world units
+ * tall — 1.75x a soldier's 1.539.
+ *
+ * THE BROADLEAVES SHARE IT, and that is a measurement rather than an
+ * assumption. `tree1/2/3` — the canopy art, drawn on every fringe canopy tile —
+ * is painted to nearly the same fraction of its cell as the palms, so at 2.85
+ * those crowns stand 2.59, 2.60 and 2.79 world units tall against the palms'
+ * 2.69: 1.68x to 1.81x a soldier, a spread narrow enough to read as one
+ * treeline. Width varies more (1.94, 2.03 and 2.43 tiles against the palms'
+ * 1.81): `tree3` is a deliberately broad crown, and since a tree is jittered up
+ * to 0.42 tiles off its own tile it was always going to overhang its
+ * neighbours. Overhang is what makes a canopy look continuous rather than
+ * planted, so nothing here corrects for it.
+ *
+ * The palms keep the same height even though only the map's hand-placed `tree`
+ * annotations draw them now. A landmark that is not to scale with the treeline
+ * behind it reads as a mistake rather than as a landmark; its silhouette and
+ * style are what make it stand out, and those are already different enough.
  *
  * The history is worth keeping, because both ends of it were wrong. 4.4 drew a
  * palm 2.8 tiles wide and 4.2 tall, and one per canopy tile was a plantation
@@ -165,6 +181,9 @@ const CELL_WORLD_HEIGHT: Readonly<Record<string, number>> = {
   tree1: 2.85,
   tree2: 2.85,
   tree3: 2.85,
+  palmtree1: 2.85,
+  palmtree2: 2.85,
+  palmtree3: 2.85,
   bush: 1.9,
 }
 

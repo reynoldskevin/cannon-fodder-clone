@@ -12,6 +12,7 @@
 
 import type { LevelData, SpawnPoint } from '../core/level'
 import type { RenderEntity } from '../core/render-state/entity'
+import { palmVariantFor } from '../core/render-state/scenery'
 import { tileToWorld } from '../core/view/projection'
 
 /**
@@ -23,13 +24,21 @@ import { tileToWorld } from '../core/view/projection'
  *
  * - `shrub` -> `bush`. A substitution, and a defensible one: bush is the only
  *   shrub-like thing in the atlas and a shrub drawn as a bush is a shrub.
- * - `tree` -> nothing. Ticket 010 pointed this at a palm, which is where that
- *   ticket went wrong twice over. The map's trees are its 1,000 CANOPY TILES
- *   (see `scenery-entities.ts`); this single annotation at (45,36) is a
- *   separate gameplay marker — an objective landmark, a patrol anchor,
- *   something the sim will read — that has no art of its own yet. Drawing a
- *   palm there made one arbitrary tile look like the only tree on a map that is
- *   half jungle.
+ * - `tree` -> a PALM, picked per tile from `palmtree1/2/3`. Not a fixed sprite,
+ *   so it is not in the table below; see `propSprite`.
+ *
+ *   The history matters, because this entry has now been wrong in both
+ *   directions. Ticket 010 drew a palm here AND left the actual jungle as bare
+ *   green blocks, so the map's one annotated tree was the only tree on a map
+ *   that is half forest — the palm was not the mistake, the missing forest was.
+ *   Ticket 010a fixed the forest (`scenery-entities.ts` plants the broadleaf art
+ *   on the canopy fringe) and then over-corrected here, drawing nothing at all,
+ *   which silently discards a thing the map's author deliberately placed. An
+ *   annotation is a hand-made mark: the forest is terrain, this is a landmark,
+ *   and the palms are the art that says so — a different silhouette in a
+ *   different style, which is exactly what a landmark in a broadleaf jungle
+ *   should be. The tile still carries whatever gameplay meaning the sim later
+ *   reads off it; drawing it does not spend that.
  * - `bird_left` -> nothing. `tools/spritegen` emits no birds. The previous
  *   fallback drew a bush, on the argument that a hole in the level is worse
  *   than a stand-in. It is not: a bush where a bird should be is a lie that
@@ -40,6 +49,9 @@ const PROP_SPRITES: Readonly<Record<string, string>> = {
   shrub: 'bush',
   bush: 'bush',
 }
+
+/** Prop types drawn with a per-tile palm rather than one fixed sprite. */
+const PALM_PROP_TYPES: ReadonlySet<string> = new Set(['tree'])
 
 /** Enemies are tinted so the two sides read apart at a glance. */
 const ENEMY_TINT = 0xff9a86
@@ -115,9 +127,16 @@ export function levelRenderEntities(
   return entities
 }
 
-/** The atlas source for a prop, or `null` when this build has no art for it. */
+/**
+ * The atlas source for a prop, or `null` when this build has no art for it.
+ *
+ * Palms are chosen from the spawn's own tile, not from its index in the list, so
+ * re-ordering or adding annotations elsewhere on the map never changes which
+ * palm an existing one draws.
+ */
 function propSprite(spawn: SpawnPoint): string | null {
   const type = typeof spawn.type === 'string' ? spawn.type : ''
+  if (PALM_PROP_TYPES.has(type)) return palmVariantFor(spawn.x, spawn.y)
   return PROP_SPRITES[type] ?? null
 }
 
