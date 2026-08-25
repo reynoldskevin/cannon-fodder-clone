@@ -2,10 +2,11 @@
  * Applying a command to the world (ticket 008).
  *
  * WHERE VALIDATION LIVES. All of it, and only here. The queue is a buffer; this
- * is the one function that holds a `World`, a `NavGrid` and a `SquadSystem` and
- * can therefore answer whether an id names anything living and whether a tile
- * exists. Keeping the two apart means a command that is going to be dropped is
- * still visible in the drained batch of the frame that dropped it.
+ * is the one function that holds a `World`, a `NavGrid`, a `SquadSystem` and a
+ * `CombatSystem`, and can therefore answer whether an id names anything living
+ * and whether a tile exists. Keeping the two apart means a command that is going
+ * to be dropped is still visible in the drained batch of the frame that dropped
+ * it.
  *
  * REJECT, DO NOT CLAMP. `core/view/projection.worldToTile` clamps an off-map
  * point to the nearest legal tile, which is right for a camera hint and wrong
@@ -23,9 +24,16 @@
  * what lets a caller count refusals without this function needing to throw or
  * log. Accepted is not the same as "changed something": `selectOrdnance` has
  * nothing to act on yet and is accepted without touching the world.
+ *
+ * WHY A FIRE COMMAND HAS TO REACH SOMETHING (ticket 011a). `fire` used to
+ * validate and return true having done nothing at all, which is exactly what a
+ * right-click that appears broken looks like from here: a well-formed command,
+ * accepted, and no bullet ever leaving a rifle. A boolean that means
+ * "well-formed" is not a boolean that means "something happened".
  */
 
 import { INFANTRY, type NavGrid } from '../pathing'
+import type { CombatSystem } from '../combat'
 import type { SquadSystem } from '../squad'
 import type { World } from '../world/world'
 import type { Command, CommandTarget } from './types'
@@ -34,6 +42,8 @@ import type { Command, CommandTarget } from './types'
 export interface CommandContext {
   readonly world: World
   readonly squad: SquadSystem
+  /** Where `fire` and `ceaseFire` go. Holds the standing orders. */
+  readonly combat: CombatSystem
   readonly grid: NavGrid
 }
 
@@ -54,9 +64,10 @@ const MAX_RETARGET_RADIUS = 8
  * Apply one command. Returns true when it was accepted, false when it was
  * refused — an unknown target, or an id list with nobody living in it.
  *
- * Accepted, not "changed something": `fire` and `selectOrdnance` have nothing to
- * act on until later tickets, so they validate and return true having changed
- * nothing. Only `move` currently writes to the world.
+ * Accepted, not "changed something": `selectOrdnance` has nothing to act on
+ * until ticket 016, so it validates and returns true having changed nothing.
+ * `move` retargets the squad system; `fire` and `ceaseFire` set and clear a
+ * standing order on the combat system.
  *
  * Never throws on bad input: commands arrive from a click on a world a mortar
  * round may have edited since, so a stale id is expected traffic, not an error.
@@ -77,7 +88,18 @@ export function applyCommand(command: Command, ctx: CommandContext): boolean {
       // No retargeting here: unlike a move, an order to put ordnance onto a
       // blocked tile is exactly what shooting at a wall means. Only "that tile
       // is not on the map" is a refusal.
-      return inBounds(command.target, ctx.grid)
+      if (!inBounds(command.target, ctx.grid)) return false
+      // A STANDING order, not a single round: the combat system fires it once
+      // per cooldown until a `ceaseFire` arrives. `ordnance` is not consulted
+      // yet — ticket 016 owns selection, and there is only the rifle.
+      ctx.combat.orderFire(ids, command.target)
+      return true
+    }
+    case 'ceaseFire': {
+      const ids = livingIds(command.unitIds, ctx.world)
+      if (ids.length === 0) return false
+      ctx.combat.ceaseFire(ids)
+      return true
     }
     case 'selectOrdnance':
       // Names no units and no tile, so there is nothing to validate against the

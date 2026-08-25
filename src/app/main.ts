@@ -282,10 +282,18 @@ async function boot(): Promise<void> {
     rig.resize(window.innerWidth, window.innerHeight)
   }
 
+  // Alt-tabbing away mid-burst delivers no pointer event at all to the canvas,
+  // so the release that would stop the shooting never arrives. Only something
+  // holding the `window` can hear it, which is here.
+  const onBlur = (): void => {
+    pointer.ceaseFire()
+  }
+
   /** Tear the whole session down: loop, listeners, controllers, GPU resources. */
   const teardown = (): void => {
     renderer.setAnimationLoop(null)
     window.removeEventListener('resize', onResize)
+    window.removeEventListener('blur', onBlur)
     pointer.dispose()
     zoom.dispose()
     pan.dispose()
@@ -304,6 +312,7 @@ async function boot(): Promise<void> {
   )
 
   window.addEventListener('resize', onResize)
+  window.addEventListener('blur', onBlur)
 
   // A context loss AFTER boot would otherwise leave exactly the black canvas the
   // error overlay exists to prevent, since `boot()`'s catch has long since run.

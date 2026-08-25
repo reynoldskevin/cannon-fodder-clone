@@ -23,5 +23,6 @@ export type {
   CommandTarget,
   MoveCommand,
   FireCommand,
+  CeaseFireCommand,
   SelectOrdnanceCommand,
 } from './types'

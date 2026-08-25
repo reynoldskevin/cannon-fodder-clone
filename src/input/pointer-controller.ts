@@ -16,6 +16,13 @@
  * as a function and CALLED AT EVERY CLICK, and the ids it returns are copied
  * into the command. With nothing selected, nothing is queued.
  *
+ * FIRE IS A HELD BUTTON (ticket 011a). Right down orders the fire, dragging
+ * while held re-aims it, and releasing — or the pointer leaving, or the browser
+ * cancelling it — orders the cease-fire. Only the press half would make
+ * right-click a latch: the men would start shooting and nothing would ever tell
+ * them to stop. Window blur is the one case this cannot see, so `ceaseFire` is
+ * public for `main.ts` to drive; see it.
+ *
  * WHY IT REJECTS RATHER THAN CLAMPS. `core/view/projection.worldToTile` rounds
  * AND clamps, and using it here would be a bug: a click on the grass a hundred
  * tiles past the east edge would clamp to the edge column and become a
@@ -80,6 +87,22 @@ export class PointerController {
   private readonly hit = new THREE.Vector3()
   private disposed = false
 
+  /**
+   * Who is currently under a fire order, or `null` when the button is not held.
+   *
+   * FIRE IS A HELD BUTTON, NOT A CLICK (ticket 011a). The squad holds fire until
+   * ordered and keeps shooting while the order stands, so the press and the
+   * release are two different commands and this is what tells them apart: a
+   * release with nothing held issues nothing, which is what stops a left-click
+   * or a stray `pointerup` from stopping a burst.
+   *
+   * The ids are the ones the FIRE was issued with rather than the selection as
+   * it stands at release time. The player may have re-selected mid-burst, and a
+   * cease-fire naming the new selection would leave the men who were actually
+   * shooting still shooting.
+   */
+  private firing: readonly number[] | null = null
+
   private readonly onPointerDown = (event: PointerEvent): void => {
     // Cheap guard for the window between `dispose` and a listener that some
     // host implementation has already dispatched into.
@@ -96,10 +119,59 @@ export class PointerController {
     // queueing it would only put noise in front of the orders that are real.
     if (unitIds.length === 0) return
 
+    // THE BUTTON BEING HELD IS THE STATE, and it is set before the tile is even
+    // looked for. The release path is purely button-driven — a right `pointerup`
+    // ends the burst whatever the pointer is over — so making the press half
+    // conditional on finding a tile made the two halves disagree: a right-press
+    // that started on the sky and was then dragged onto the map would move the
+    // pointer over the battlefield, still held, issuing nothing, because the
+    // burst had never begun. Held is held; where he is pointing is the separate
+    // question below, asked again on every move.
+    //
+    // The cost is a `ceaseFire` with no `fire` before it, when a press and its
+    // release both happen off the map. `applyCommand` accepts it and
+    // `CombatSystem.ceaseFire` deletes an order nobody has — a no-op, and a far
+    // smaller thing to be wrong about than a dead right button.
+    if (type === 'fire') this.firing = unitIds
+
     const tile = this.tileUnderPointer(event)
     if (tile === null) return
 
     this.queue.push(buildCommand(type, tile, unitIds))
+  }
+
+  /**
+   * Dragging while the right button is held RE-AIMS: the same standing order,
+   * a new point. A move with nothing held is just the pointer crossing the
+   * canvas and must issue nothing at all, or every mouse movement is an order.
+   */
+  private readonly onPointerMove = (event: PointerEvent): void => {
+    if (this.disposed) return
+    const unitIds = this.firing
+    if (unitIds === null) return
+    const tile = this.tileUnderPointer(event)
+    if (tile === null) return
+    this.queue.push(buildCommand('fire', tile, unitIds))
+  }
+
+  /**
+   * A release only ends the burst if it is the RIGHT button. Left is move, and
+   * a left-click during a burst must not stop the shooting.
+   */
+  private readonly onPointerUp = (event: PointerEvent): void => {
+    if (this.disposed) return
+    if (event.button !== RIGHT_BUTTON) return
+    this.ceaseFire()
+  }
+
+  /**
+   * The pointer leaving the canvas, or the browser taking it away — a touch
+   * turning into a scroll gesture, the OS grabbing it. No `pointerup` follows a
+   * cancel, so without this the squad fires forever.
+   */
+  private readonly onPointerLost = (): void => {
+    if (this.disposed) return
+    this.ceaseFire()
   }
 
   /** Right-click on the canvas is an order, so it must not open the browser menu. */
@@ -115,15 +187,57 @@ export class PointerController {
     private readonly selection: SelectionProvider,
   ) {
     this.host.addEventListener('pointerdown', this.onPointerDown as EventListener)
+    this.host.addEventListener('pointermove', this.onPointerMove as EventListener)
+    this.host.addEventListener('pointerup', this.onPointerUp as EventListener)
+    this.host.addEventListener('pointerleave', this.onPointerLost)
+    this.host.addEventListener('pointercancel', this.onPointerLost)
     this.host.addEventListener('contextmenu', this.onContextMenu)
   }
 
+  /**
+   * Stop the burst, if there is one. Idempotent, so a caller may drive it from
+   * anything that means "the player is no longer holding the button".
+   *
+   * Public because WINDOW BLUR CANNOT BE HEARD FROM HERE: alt-tabbing away
+   * mid-burst delivers no pointer event at all to the canvas, and only
+   * something holding the `window` — `main.ts`, which already owns one — can
+   * hear it. Pretending to handle it here would leave the squad firing until
+   * the player came back.
+   */
+  ceaseFire(): void {
+    const unitIds = this.firing
+    if (unitIds === null) return
+    this.firing = null
+    this.queue.push({ type: 'ceaseFire', unitIds })
+  }
+
   dispose(): void {
+    // Before the listeners come off, and before `disposed` is set, so a
+    // controller is never torn down with a burst still outstanding.
+    //
+    // WHAT THIS DOES NOT DO, stated because the obvious reading is wrong.
+    // `main.ts`'s `teardown` calls `renderer.setAnimationLoop(null)` BEFORE it
+    // calls this, and the animation loop is the only thing that ever calls
+    // `session.advance` — which is the only thing that drains the queue. So the
+    // `ceaseFire` pushed here is pushed onto a queue that will not be read
+    // again, into a session dropped whole a few lines later. It stops no
+    // shooting, because nothing is going to tick.
+    //
+    // It is still right, and cheap. What it buys is a property of THIS class:
+    // disposing never leaves a burst hanging, which `__tests__` asserts by
+    // reading the queue directly, and a host that disposes the controller while
+    // KEEPING the session — swapping input modes rather than levels — gets the
+    // cease-fire it is owed without having to know to ask.
+    this.ceaseFire()
     // Idempotent: ticket 020 loads a second level into the same page, and a
     // teardown path that throws the second time it runs is a teardown path
     // people start guarding at the call site instead.
     this.disposed = true
     this.host.removeEventListener('pointerdown', this.onPointerDown as EventListener)
+    this.host.removeEventListener('pointermove', this.onPointerMove as EventListener)
+    this.host.removeEventListener('pointerup', this.onPointerUp as EventListener)
+    this.host.removeEventListener('pointerleave', this.onPointerLost)
+    this.host.removeEventListener('pointercancel', this.onPointerLost)
     this.host.removeEventListener('contextmenu', this.onContextMenu)
   }
 
