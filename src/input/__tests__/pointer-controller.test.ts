@@ -77,18 +77,32 @@ interface Fixture {
   readonly host: FakeHost
   readonly controller: PointerController
   readonly drain: () => readonly Command[]
+  /** Mutable, so a test can change the selection between clicks. */
+  selected: number[]
 }
 
 function fixture(size = { w: 20, h: 15 }): Fixture {
   const host = new FakeHost()
   const queue = createCommandQueue()
+  const state: { selected: number[] } = { selected: [1, 2, 3] }
   const controller = new PointerController(
     host as unknown as HTMLElement,
     overheadCamera(),
     queue,
     size,
+    () => state.selected,
   )
-  return { host, controller, drain: () => queue.drain() }
+  return {
+    host,
+    controller,
+    drain: () => queue.drain(),
+    get selected() {
+      return state.selected
+    },
+    set selected(ids: number[]) {
+      state.selected = ids
+    },
+  }
 }
 
 /** A pointer event at the centre of the 800x600 host. */
@@ -119,6 +133,73 @@ describe('PointerController — button mapping', () => {
     const f = fixture()
     f.host.fire('pointerdown', centre(1))
     expect(f.drain()).toEqual([])
+  })
+})
+
+describe('PointerController — who the order is for', () => {
+  /**
+   * THE HOLE THIS CLOSES. A first cut of this ticket queued `unitIds: []`,
+   * because the controller may not reach into `core/` to find out who is
+   * selected. Every command it produced was then refused by `applyCommand` for
+   * naming nobody — the tests passed, the types were right, and clicking the
+   * ground did precisely nothing. A command that names no units is not a
+   * command, so the selection is a constructor argument: whoever builds the
+   * controller has to answer "who does this?".
+   */
+  it('names the selected units in a move', () => {
+    const f = fixture()
+    f.selected = [7, 8]
+    f.host.fire('pointerdown', centre(0))
+    const command = f.drain()[0]!
+    if (command.type !== 'move') throw new Error('expected a move')
+    expect([...command.unitIds]).toEqual([7, 8])
+  })
+
+  it('names the selected units in a fire', () => {
+    const f = fixture()
+    f.selected = [4]
+    f.host.fire('pointerdown', centre(2))
+    const command = f.drain()[0]!
+    if (command.type !== 'fire') throw new Error('expected a fire')
+    expect([...command.unitIds]).toEqual([4])
+  })
+
+  it('asks for the selection at click time, not at construction', () => {
+    // The squad changes as men die and as the player splits it. A selection
+    // captured once at construction is the roster from the start of the mission.
+    const f = fixture()
+    f.selected = [1]
+    f.host.fire('pointerdown', centre(0))
+    f.selected = [2, 3]
+    f.host.fire('pointerdown', centre(0))
+    const commands = f.drain()
+    expect(commands).toHaveLength(2)
+    const ids = commands.map((c) => (c.type === 'move' ? [...c.unitIds] : null))
+    expect(ids).toEqual([[1], [2, 3]])
+  })
+
+  it('queues nothing when nothing is selected', () => {
+    // Not "queue a command naming nobody" — there is no order to give, and a
+    // command that will certainly be refused is noise in the queue.
+    const f = fixture()
+    f.selected = []
+    f.host.fire('pointerdown', centre(0))
+    f.host.fire('pointerdown', centre(2))
+    expect(f.drain()).toEqual([])
+  })
+
+  it('copies the selection rather than aliasing it', () => {
+    // The provider hands back a live array in the real wiring. A command that
+    // holds a reference to it would silently change its own id list when the
+    // squad next takes a casualty.
+    const f = fixture()
+    const live = [5, 6]
+    f.selected = live
+    f.host.fire('pointerdown', centre(0))
+    live.push(99)
+    const command = f.drain()[0]!
+    if (command.type !== 'move') throw new Error('expected a move')
+    expect([...command.unitIds]).toEqual([5, 6])
   })
 })
 
@@ -184,6 +265,7 @@ describe('PointerController — clicks that are not orders', () => {
       camera,
       queue,
       { w: 20, h: 15 },
+      () => [1],
     )
     host.fire('pointerdown', { button: 0, clientX: 400, clientY: 10 })
     expect(queue.drain()).toEqual([])

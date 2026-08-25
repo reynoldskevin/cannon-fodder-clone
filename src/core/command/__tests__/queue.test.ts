@@ -90,7 +90,9 @@ describe('createCommandQueue', () => {
     const second = move([2], 2, 2)
     q.push(first)
     const batch = q.drain()
-    for (const _ of batch) q.push(second)
+    batch.forEach(() => {
+      q.push(second)
+    })
     expect(batch).toEqual([first])
     expect(q.drain()).toEqual([second])
   })

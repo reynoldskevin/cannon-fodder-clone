@@ -225,6 +225,21 @@ describe('applyCommand — the other variants', () => {
   })
 })
 
+describe('the whole path, end to end', () => {
+  it('a queued move actually relocates a squad', () => {
+    // The one assertion that would have caught a pointer emitting `unitIds: []`
+    // and an `applyCommand` dutifully refusing it: every unit test green, and
+    // clicking the ground doing nothing. Push, drain, apply, tick, look.
+    const r = rig()
+    const squad = [r.spawn(2, 5), r.spawn(2, 6), r.spawn(3, 5)]
+    const q = createCommandQueue()
+    q.push(move(squad, 17, 6))
+    for (const c of q.drain()) r.apply(c)
+    r.run(600)
+    for (const id of squad) expect(r.tileOf(id).x).toBeGreaterThan(13)
+  })
+})
+
 describe('queue and apply together', () => {
   it('drains a frame of commands and applies them in order', () => {
     const r = rig()
