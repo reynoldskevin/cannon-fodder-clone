@@ -1,9 +1,9 @@
 /**
  * What the renderer is handed each frame (ticket 010).
  *
- * Deliberately a PLAIN ARRAY OF PLAIN DATA. Ticket 005's `World` does not exist
- * yet, so today these are built from level spawn data; when the sim lands it
- * emits the same shape and the renderer does not change, because the renderer
+ * Deliberately a PLAIN ARRAY OF PLAIN DATA. These were built from level spawn
+ * data before there was a sim and are now built by `core/session` from `World`;
+ * the shape did not change and neither did the renderer, because the renderer
  * never depended on `World` in the first place.
  */
 

@@ -13,6 +13,7 @@ import { centroid, type GroundPoint } from '../core/view/camera'
 import { parseElevation } from '../core/view/orientation'
 import { tileToWorld } from '../core/view/projection'
 import { levelRelief } from '../core/view/relief'
+import { createSession } from '../core/session'
 import { CameraRig } from '../render/camera-rig'
 import { SceneBuilder } from '../render/scene-builder'
 import {
@@ -24,6 +25,7 @@ import {
 } from '../render/sprite-atlas'
 import { FloorTextureError, loadFloorTexture } from '../render/floor-texture'
 import { PanController } from '../input/pan-controller'
+import { PointerController } from '../input/pointer-controller'
 import { ZoomController } from '../input/zoom-controller'
 import { showControlHint } from '../ui/control-hint'
 import { showFatalError, type FatalErrorReport } from '../ui/error-overlay'
@@ -232,7 +234,16 @@ async function boot(): Promise<void> {
     fetchVisual(manifest, SPRITES_URL),
     fetchFloor(manifest, SPRITES_URL, renderer.capabilities.getMaxAnisotropy()),
   ])
-  const built = SceneBuilder.build(level, visual, floor, elevation)
+  // The simulation. Everything that decides what happens in the world lives on
+  // the far side of this call — see `core/session` — so what is left here is the
+  // browser's half: a frame delta in, a list of drawables and an alpha out.
+  const session = createSession(level)
+  const built = SceneBuilder.build(level, visual, floor, elevation, (heightAt) =>
+    session.renderEntities(heightAt),
+  )
+  /** Feet sit on the top face of the tile they stand on, not on the ground plane. */
+  const groundHeightAt = (tileX: number, tileY: number): number =>
+    built.terrain.heightAt(tileX, tileY)
 
   // The rig reasons about the level's SILHOUETTE, not its footprint: the terrain
   // is extruded, so the zoom cap has to know how far this particular level's
@@ -254,6 +265,17 @@ async function boot(): Promise<void> {
   // driving the dead rig — doubling every pan and zoom step.
   const pan = new PanController(rig)
   const zoom = new ZoomController(rig, window, renderer.domElement)
+  // The only input path into the simulation: a click on the canvas becomes a
+  // `Command` on the session's queue, which the tick drains. The selection is
+  // handed in as a function and asked afresh at every click, so an order always
+  // goes to the men who are alive when it is given.
+  const pointer = new PointerController(
+    renderer.domElement,
+    rig.camera,
+    session.queue,
+    level.size,
+    () => session.selection(),
+  )
 
   const onResize = (): void => {
     renderer.setSize(window.innerWidth, window.innerHeight)
@@ -264,6 +286,7 @@ async function boot(): Promise<void> {
   const teardown = (): void => {
     renderer.setAnimationLoop(null)
     window.removeEventListener('resize', onResize)
+    pointer.dispose()
     zoom.dispose()
     pan.dispose()
     built.dispose()
@@ -314,10 +337,24 @@ async function boot(): Promise<void> {
       elapsed += dt
       pan.update(dt)
       rig.update(dt)
-      // Alpha 1 until ticket 005's fixed-timestep loop exists: with no sim
-      // there is no partial tick to be between, and 1 means "the state you were
-      // last given", which is the honest answer.
-      built.entities.update(elapsed, 1)
+      // The simulation runs at its own fixed 60 Hz whatever this display does.
+      // `advance` returns how far into the step after the last one the frame
+      // ended, which is what the renderer blends the two states it holds by —
+      // the hardcoded 1 that stood here while there was no sim would pin every
+      // frame to the latest tick and throw the interpolation away.
+      const alpha = session.advance(dt)
+      // ONLY ON A FRAME THAT STEPPED. `setEntities` shifts current to previous,
+      // so it is a per-SIM-TICK call, not a per-frame one (see its docstring).
+      // Above 60 Hz most frames run no steps, and pushing on those would make
+      // previous and current the same state — `alpha` would then blend a state
+      // with itself and the interpolation would be worth nothing. Note a frame
+      // that ran several steps still hands over a state 2+ ticks after the last
+      // one it saw, so its blend spans more than one tick; that is inherent to
+      // catching up after a hitch and is not smoothed away here.
+      if (session.stepsLastAdvance > 0) {
+        built.entities.setEntities(session.renderEntities(groundHeightAt))
+      }
+      built.entities.update(elapsed, alpha)
       renderer.render(built.scene, rig.camera)
     } catch (error: unknown) {
       teardown()

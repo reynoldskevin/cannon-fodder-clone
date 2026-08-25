@@ -8,11 +8,12 @@
  * instanced batching for free: level 1's 727 fringe trees over three atlas rects
  * is three draws, the same three whether the forest is 727 trees or 10,000.
  *
- * SEPARATE FROM `level-entities.ts` DELIBERATELY. That file is a documented
- * stand-in for ticket 005's `World` and is meant to be deleted the day the sim
- * lands. Canopy scenery is not a stand-in for anything — it is derived from the
- * level's terrain grid, which the sim does not own and will not replace. Mixing
- * the two would mean deleting a file that still had load-bearing code in it.
+ * SEPARATE FROM THE SESSION'S RENDER STATE DELIBERATELY. `core/session` assembles
+ * the frame's soldiers, corpses and prop annotations — things that change, or at
+ * least that a level author placed one at a time. The canopy is derived from the
+ * terrain grid, is identical on every frame of the level's life, and is written
+ * to the GPU once by `setScenery`; running it through the per-frame path would
+ * rebuild 727 instances a frame to draw the same forest.
  */
 
 import { canopyScenery, type SceneryLevel } from '../core/render-state/scenery'
@@ -20,13 +21,13 @@ import type { RenderEntity } from '../core/render-state/entity'
 import { TILE_WORLD_SIZE, tileToWorld } from '../core/view/projection'
 
 /**
- * Id space for scenery, kept clear of the entity ids `levelRenderEntities`
- * hands out from 1.
+ * Id space for scenery, kept clear of the simulation entity ids `World` issues
+ * from 1 and of the prop-annotation ids `core/session` issues from 2,000,000.
  *
  * Ids are the key for facing memory and animation phase inside
  * `EntityRenderer`, so a collision between a tree and a soldier would have them
  * overwrite each other's state. A base far above any plausible unit count is
- * cheaper than a shared allocator that both files would have to agree on.
+ * cheaper than a shared allocator that every producer would have to agree on.
  */
 export const SCENERY_ID_BASE = 1_000_000
 
