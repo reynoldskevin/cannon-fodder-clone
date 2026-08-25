@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { canopyScenery, treeVariantFor, tileJitter, TREE_VARIANTS } from '../scenery'
+import {
+  canopyScenery,
+  treeVariantFor,
+  palmVariantFor,
+  tileJitter,
+  TREE_VARIANTS,
+  PALM_VARIANTS,
+} from '../scenery'
 
 /**
  * Ticket 010a — scenery derived from the terrain itself.
@@ -122,6 +129,18 @@ describe('treeVariantFor', () => {
     expect(seen.size).toBe(3)
   })
 
+  it('never puts a palm on canopy terrain', () => {
+    // The two pools are separate ON PURPOSE: palms are for the map's hand-placed
+    // `tree` annotations, the broadleaves are the forest. A palm leaking into
+    // the canopy is the exact regression this split exists to prevent, and it
+    // would be invisible in a passing suite that only checked "some variant".
+    for (let y = 0; y < 30; y++) {
+      for (let x = 0; x < 30; x++) {
+        expect(PALM_VARIANTS).not.toContain(treeVariantFor(x, y))
+      }
+    }
+  })
+
   it('spreads variants reasonably evenly', () => {
     const counts = new Map<string, number>()
     for (let y = 0; y < 40; y++) {
@@ -140,6 +159,41 @@ describe('treeVariantFor', () => {
     let differing = 0
     for (let x = 0; x < 40; x++) if (treeVariantFor(x, 0) !== treeVariantFor(x + 1, 0)) differing++
     expect(differing).toBeGreaterThan(10)
+  })
+})
+
+describe('palmVariantFor', () => {
+  it('is deterministic for a tile', () => {
+    expect(palmVariantFor(45, 36)).toBe(palmVariantFor(45, 36))
+  })
+
+  it('returns a declared palm for any tile', () => {
+    for (let y = 0; y < 20; y++) {
+      for (let x = 0; x < 20; x++) expect(PALM_VARIANTS).toContain(palmVariantFor(x, y))
+    }
+  })
+
+  it('uses all three palms across a field', () => {
+    const seen = new Set<string>()
+    for (let y = 0; y < 30; y++) for (let x = 0; x < 30; x++) seen.add(palmVariantFor(x, y))
+    expect(seen.size).toBe(3)
+  })
+
+  it('does not track the canopy choice — the two rolls are independent', () => {
+    // Both hash the same two coordinates. Sharing a salt would make the palm a
+    // pure function of the tree variant, which is not wrong on a map with one
+    // annotation but is a trap waiting for a map with fifty.
+    let agreements = 0
+    for (let y = 0; y < 30; y++) {
+      for (let x = 0; x < 30; x++) {
+        const treeIndex = TREE_VARIANTS.indexOf(treeVariantFor(x, y))
+        const palmIndex = PALM_VARIANTS.indexOf(palmVariantFor(x, y))
+        if (treeIndex === palmIndex) agreements++
+      }
+    }
+    // 900 tiles, 3 buckets: correlated salts would agree on all 900; independent
+    // ones land near 300. Anything under half is comfortably not lock-step.
+    expect(agreements).toBeLessThan(450)
   })
 })
 

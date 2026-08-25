@@ -39,8 +39,23 @@ export { type MatteDecision } from './image'
 export const ANIMATIONS = ['walk', 'fire', 'die'] as const
 export type AnimationName = (typeof ANIMATIONS)[number]
 
-/** The four props, in a fixed order. */
-export const PROPS = ['tree1', 'tree2', 'tree3', 'bush'] as const
+/**
+ * The props, in a fixed order.
+ *
+ * Two families of canopy tree — `tree1/2/3` broadleaf, `palmtree1/2/3` palm —
+ * because `core/render-state/scenery.ts` plants both on canopy tiles and one
+ * silhouette repeated across a forest reads as wallpaper. Each costs one 768px
+ * cell in the atlas.
+ */
+export const PROPS = [
+  'tree1',
+  'tree2',
+  'tree3',
+  'palmtree1',
+  'palmtree2',
+  'palmtree3',
+  'bush',
+] as const
 export type PropName = (typeof PROPS)[number]
 
 /**
