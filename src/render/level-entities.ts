@@ -17,23 +17,29 @@ import { tileToWorld } from '../core/view/projection'
 /**
  * What the level's prop `type` strings map to in the ticket-004 atlas.
  *
- * The atlas holds `tree1`, `tree2`, `tree3` and `bush` and nothing else, while
- * level 1 annotates `tree`, `shrub` and `bird_left`. Trees pick a variant from
- * their tile position so a future forest is not one sprite repeated; `shrub`
- * is the bush.
+ * EVERY ENTRY HERE IS A CLAIM THAT THE ART IS THE RIGHT ART, and a prop with no
+ * entry draws NOTHING (ticket 010a). There is no default. Level 1 annotates
+ * three props:
  *
- * `bird_left` has no art in this atlas — `tools/spritegen` does not emit birds
- * yet — so it falls through to the default and draws as scenery. That is a
- * knowing placeholder, not an oversight: leaving it undrawn would put a hole in
- * the level where the annotation says something is, and inventing a bird from
- * the tree art would be worse.
+ * - `shrub` -> `bush`. A substitution, and a defensible one: bush is the only
+ *   shrub-like thing in the atlas and a shrub drawn as a bush is a shrub.
+ * - `tree` -> nothing. Ticket 010 pointed this at a palm, which is where that
+ *   ticket went wrong twice over. The map's trees are its 1,000 CANOPY TILES
+ *   (see `scenery-entities.ts`); this single annotation at (45,36) is a
+ *   separate gameplay marker — an objective landmark, a patrol anchor,
+ *   something the sim will read — that has no art of its own yet. Drawing a
+ *   palm there made one arbitrary tile look like the only tree on a map that is
+ *   half jungle.
+ * - `bird_left` -> nothing. `tools/spritegen` emits no birds. The previous
+ *   fallback drew a bush, on the argument that a hole in the level is worse
+ *   than a stand-in. It is not: a bush where a bird should be is a lie that
+ *   nobody will ever notice and therefore nobody will ever fix, whereas an
+ *   empty tile is a visible, honest, findable gap.
  */
-const TREE_VARIANTS = ['tree1', 'tree2', 'tree3'] as const
 const PROP_SPRITES: Readonly<Record<string, string>> = {
   shrub: 'bush',
   bush: 'bush',
 }
-const DEFAULT_PROP_SPRITE = 'bush'
 
 /** Enemies are tinted so the two sides read apart at a glance. */
 const ENEMY_TINT = 0xff9a86
@@ -85,10 +91,14 @@ export function levelRenderEntities(
   for (const spawn of level.spawns.enemies) entities.push(unit(spawn, ENEMY_TINT))
 
   for (const spawn of level.spawns.props) {
+    const sprite = propSprite(spawn)
+    // No art, no entity — and no id burned either, so the ids a level produces
+    // do not shift the day a bird sprite appears.
+    if (!sprite) continue
     const world = tileToWorld(spawn.x, spawn.y, level.size)
     entities.push({
       id: nextId++,
-      unit: propSprite(spawn),
+      unit: sprite,
       // Props are static; `UnitVisual` resolves any animation name to their one
       // held frame, so this never has to know that.
       animation: 'static',
@@ -105,15 +115,10 @@ export function levelRenderEntities(
   return entities
 }
 
-function propSprite(spawn: SpawnPoint): string {
+/** The atlas source for a prop, or `null` when this build has no art for it. */
+function propSprite(spawn: SpawnPoint): string | null {
   const type = typeof spawn.type === 'string' ? spawn.type : ''
-  if (type.startsWith('tree')) {
-    // Position-derived, not random: the same level must look the same on every
-    // load, and re-rolling on a mission restart would be visible churn.
-    const index = (spawn.x * 7 + spawn.y * 13) % TREE_VARIANTS.length
-    return TREE_VARIANTS[index] ?? TREE_VARIANTS[0]
-  }
-  return PROP_SPRITES[type] ?? DEFAULT_PROP_SPRITE
+  return PROP_SPRITES[type] ?? null
 }
 
 interface Direction {

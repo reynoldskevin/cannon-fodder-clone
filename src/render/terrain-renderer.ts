@@ -20,7 +20,8 @@ import * as THREE from 'three'
 import type { LevelData } from '../core/level'
 import { TILE_WORLD_SIZE, tileToWorld } from '../core/view/projection'
 import { TERRAIN_SKIRT_FLOOR } from '../core/view/relief'
-import { tileStyle } from '../core/view/terrain-style'
+import { CANOPY_INTERIOR_COLOUR, canopyMassHeight, tileStyle } from '../core/view/terrain-style'
+import { CANOPY_TILE_ID, canopyDepth } from '../core/render-state/scenery'
 
 /**
  * Bottom of the skirt at the map edge — deep enough that no gap shows at any
@@ -62,8 +63,15 @@ export class TerrainRenderer {
         const walkable = walkRow?.[x] ?? false
         const style = tileStyle(id, walkable)
         const index = y * w + x
-        this.heights[index] = style.height
-        colours[index] = new THREE.Color(style.colour)
+
+        // THE CANOPY MASS (ticket 010a revision). Trees are planted on the
+        // fringe of the jungle only, so interior canopy has nothing standing on
+        // it and must read as solid canopy by itself: it rises toward the middle
+        // of the mass and takes a lighter, sunlit-crown green. Height and colour
+        // only — `walkable` is untouched, so nothing about movement changes.
+        const depth = !walkable && id === CANOPY_TILE_ID ? canopyDepth(level, x, y) : 0
+        this.heights[index] = depth > 0 ? canopyMassHeight(depth) : style.height
+        colours[index] = new THREE.Color(depth > 0 ? CANOPY_INTERIOR_COLOUR : style.colour)
       }
     }
 
