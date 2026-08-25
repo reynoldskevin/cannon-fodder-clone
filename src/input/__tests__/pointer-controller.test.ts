@@ -232,6 +232,62 @@ describe('PointerController — screen to tile', () => {
     expect(command.target.y).toBeLessThan(7)
   })
 
+  it('assigns a click past a tile centre to the NEXT tile', () => {
+    /**
+     * THE DRIFT GUARD for the convention this file duplicates.
+     *
+     * `pointer-controller.ts` cannot import `core/view/projection` — the layering
+     * rule forbids it — so it carries its own copy of the world→tile map, and a
+     * silent second copy is exactly the kind of thing that rots. What it must
+     * NOT be is `Math.floor(wx + (w-1)/2)`, which is the spelling ticket 007
+     * shipped by mistake and which cost that ticket a full review cycle.
+     *
+     * Note that `Math.round(wx + (w-1)/2)` and `Math.floor(wx + w/2)` are the
+     * SAME function — `round(x)` is `floor(x + 0.5)` — so testing one against
+     * the other proves nothing. The error worth catching is the half-tile shift,
+     * and it only shows up strictly between tile centres. Integer tile centres
+     * agree under every candidate, which is why the centre-of-viewport case
+     * above is not enough on its own.
+     *
+     * Tile `n` spans `[n - 0.5, n + 0.5)`, so a hit 0.6 tiles east of tile n's
+     * centre is in tile n+1. The floored version says n.
+     */
+    const size = { w: 20, h: 15 }
+    const camera = overheadCamera()
+    const host = new FakeHost()
+    const queue = createCommandQueue()
+    const controller = new PointerController(
+      host as unknown as HTMLElement,
+      camera,
+      queue,
+      size,
+      () => [1],
+    )
+
+    /** Client coordinates of a point on the ground plane, via the real camera. */
+    const clientAt = (worldX: number, worldZ: number): { clientX: number; clientY: number } => {
+      const ndc = new THREE.Vector3(worldX, 0, worldZ).project(camera)
+      return {
+        clientX: ((ndc.x + 1) / 2) * host.clientWidth,
+        clientY: ((1 - ndc.y) / 2) * host.clientHeight,
+      }
+    }
+
+    // Tile 12's centre in world x, then a hit 0.6 tiles east of it.
+    const centreOfTile12 = 12 - (size.w - 1) / 2
+    const past = clientAt(centreOfTile12 + 0.6, 0)
+    host.fire('pointerdown', { button: 0, ...past })
+
+    // And 0.4 east, which is still tile 12 — so the assertion above is a
+    // boundary, not just "bigger numbers give bigger tiles".
+    const short = clientAt(centreOfTile12 + 0.4, 0)
+    host.fire('pointerdown', { button: 0, ...short })
+
+    const targets = queue.drain().map((c) => (c.type === 'move' ? c.target.x : -1))
+    expect(targets).toEqual([13, 12])
+    controller.dispose()
+  })
+
   it('produces integer tile coordinates', () => {
     const f = fixture()
     for (const [x, y] of [
