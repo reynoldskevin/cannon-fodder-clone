@@ -54,12 +54,6 @@ function candidateWidths(maxSize: number): number[] {
   return out
 }
 
-function nextPowerOfTwo(n: number): number {
-  let p = 1
-  while (p < n) p *= 2
-  return p
-}
-
 /**
  * Shelf-pack the (already sorted) padded boxes into a strip `width` wide.
  * Returns the used height, or null if any box is too wide for the strip.
@@ -134,7 +128,16 @@ export function packRects(rects: readonly PackInput[], options: PackOptions): Pa
     if (usable <= 0) continue
     const packed = shelfPack(boxes, usable)
     if (!packed) continue
-    const height = nextPowerOfTwo(packed.height + padding)
+    // The height is the content height, NOT rounded up to a power of two.
+    // Rounding cost 1675 empty rows on the real asset set (content ends at
+    // y=2421, POT would be 4096) — 32.0 MB of VRAM against 18.9 MB tight, and
+    // worse again with mipmaps. WebGL2 samples NPOT textures fine under
+    // CLAMP_TO_EDGE, which is what this atlas uses; the one texture that must
+    // genuinely wrap is the floor tile, and that is emitted separately.
+    // The candidate widths stay powers of two, which costs nothing here (the
+    // strip is filled either way) and keeps the width friendly to any driver
+    // that still prefers it.
+    const height = packed.height + padding
     if (height > maxSize) continue
     const area = stripWidth * height
     if (best === null || area < best.width * best.height) {

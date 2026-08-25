@@ -24,6 +24,8 @@ import {
   encodePng,
   extrudeEdges,
   resampleRegion,
+  stripLightMatte,
+  type MatteDecision,
 } from './image'
 import { packRects, type PackInput } from './pack'
 import { cellAnchor, DIRECTIONS, sliceGrid, trimFrame, type Direction } from './slice'
@@ -31,6 +33,7 @@ import { cellAnchor, DIRECTIONS, sliceGrid, trimFrame, type Direction } from './
 export { DIRECTIONS, type Direction } from './slice'
 export { SpritegenError } from './errors'
 export { PackError } from './pack'
+export { type MatteDecision } from './image'
 
 /** The three authored soldier animations, in a fixed order. */
 export const ANIMATIONS = ['walk', 'fire', 'die'] as const
@@ -52,15 +55,28 @@ const FPS: Record<AnimationName, number> = { walk: 12, fire: 12, die: 8 }
 const SHEET_GRID = { cols: 4, rows: 8 } as const
 
 /**
- * Default downscale factor for source art.
+ * Default downscale factor for source art — a deliberate quality/payload trade,
+ * not a free lunch.
  *
- * The soldier stands ~1.5 world units tall. At the closest zoom the camera
- * reaches (viewHeight 10 over a ~1000px viewport) that is ~150 screen pixels,
- * against 217px of authored content — so full resolution is more texture than
- * the camera can ever show, at every zoom level. 0.75 lands the soldier at
- * ~163 texels: still above the worst-case screen size, so nothing is ever
- * magnified, while cutting atlas area to 56%. It is also a clean fraction of
- * the 480x240 cell (360x180), which keeps the anchor on an exact pixel.
+ * The honest numbers. The soldier stands ~1.5 world units tall. The closest
+ * zoom is `MIN_VIEW_HEIGHT = 10` world units (src/render/camera-rig.ts), so the
+ * soldier occupies 15% of the viewport height. On a 1000 CSS-px-tall viewport
+ * that is ~150 CSS px — but src/app/main.ts calls
+ * `setPixelRatio(Math.min(devicePixelRatio, 2))`, so on any HiDPI display the
+ * framebuffer is 2000 device px tall and the soldier is ~300 DEVICE pixels.
+ * Against the 217px of authored content in a 480x240 cell, even scale 1.0 is
+ * already ~1.38x magnified at closest zoom; at 0.75 the soldier is ~163 texels
+ * and the magnification is ~1.85x.
+ *
+ * So this is not "nothing is ever magnified" — it is a decision to accept mild
+ * softness at the extreme of the zoom range in exchange for atlas area at 56%
+ * (4.27 MB shipped rather than ~7.6 MB). True 1:1 at max zoom on a 2x display
+ * would need scale ~1.38, i.e. UPSCALING the source art, which buys no real
+ * detail; the source itself is the ceiling. Anything above ~0.75 spends payload
+ * on resampling artefacts rather than information.
+ *
+ * 0.75 is also a clean fraction of the 480x240 cell (360x180), which keeps the
+ * anchor on an exact pixel.
  */
 export const DEFAULT_SCALE = 0.75
 
@@ -79,6 +95,22 @@ const FLOOR_DIVISOR = 2
 /** Hard atlas ceiling — the dimension every target GPU is guaranteed to allow. */
 const MAX_ATLAS = 4096
 
+/**
+ * A rectangle in ATLAS PIXELS, origin TOP-LEFT, y increasing DOWNWARD — the
+ * convention PNG itself uses, and the one `manifest.origin` states explicitly.
+ *
+ * This matters because Three.js texture UVs are bottom-left origin with v
+ * increasing upward, so a consumer MUST flip:
+ *
+ *   u0 = rect.x / atlas.width
+ *   u1 = (rect.x + rect.width) / atlas.width
+ *   v0 = 1 - (rect.y + rect.height) / atlas.height   // bottom edge
+ *   v1 = 1 - rect.y / atlas.height                   // top edge
+ *
+ * Forgetting the flip does not crash and does not look obviously broken — every
+ * sprite simply comes out vertically mirrored — which is why it is written down
+ * here and in the manifest rather than left to be inferred.
+ */
 export interface Rect {
   x: number
   y: number
@@ -86,15 +118,35 @@ export interface Rect {
   height: number
 }
 
+/** A 2D point, in the same top-left-origin, y-down pixel space as `Rect`. */
 export interface Vec2 {
   x: number
   y: number
 }
 
+/**
+ * One animation frame.
+ *
+ * To place it in world space, the consumer needs all four of `rect`, `offset`,
+ * `anchor` and `UnitEntry.cell` (plus its own world-units-per-cell scale):
+ *
+ *   1. Size the quad `rect.width x rect.height` atlas pixels.
+ *   2. Its top-left sits at `offset` within the cell — do NOT centre it on its
+ *      own content, or the dying soldier slides back up the screen.
+ *   3. `anchor` is the point of the CELL that meets the ground: bottom-centre,
+ *      i.e. `(cell.width / 2, cell.height)`. The quad's offset from the unit's
+ *      world position is therefore `(offset.x - anchor.x, offset.y - anchor.y)`
+ *      in pixels, y-down.
+ *   4. Multiply by world units per pixel — `unitHeightInWorldUnits /
+ *      cell.height` — and negate y to go from y-down pixels to y-up world.
+ *
+ * `cell` is post-downscale, so the same number works for every animation of the
+ * unit and no consumer needs to know `manifest.scale` to lay a sprite out.
+ */
 export interface FrameEntry {
-  /** Where the trimmed pixels live in the atlas. */
+  /** Where the trimmed pixels live in the atlas. Top-left origin, y-down. */
   rect: Rect
-  /** Where those pixels sat inside the source cell — the un-trim. */
+  /** Where those pixels sat inside the source cell — the un-trim. y-down. */
   offset: Vec2
   /** Bottom-centre of the source CELL. Constant across the animation. */
   anchor: Vec2
@@ -130,8 +182,22 @@ export interface FloorEntry {
   tileable: true
 }
 
+/**
+ * The coordinate origin every `Rect` and `Vec2` in the manifest is expressed
+ * in. Stated as data, not just prose, so a consumer can assert on it and a
+ * future change of convention cannot pass silently. See `Rect` for the UV flip
+ * a bottom-left-origin renderer (i.e. Three.js) has to apply.
+ */
+export const MANIFEST_ORIGIN = 'top-left' as const
+
 export interface SpriteManifest {
   version: number
+  /**
+   * Coordinate origin of every rect, offset and anchor below: pixels, top-left
+   * origin, y increasing downward. Three.js UVs are bottom-left origin, so
+   * `v = 1 - (y + height) / atlas.height`. See `Rect`.
+   */
+  origin: typeof MANIFEST_ORIGIN
   /** The downscale factor applied to all source art in the atlas. */
   scale: number
   atlas: { file: string; width: number; height: number; padding: number }
@@ -145,6 +211,18 @@ export interface BuildOptions {
   outDir: string
   /** Downscale factor for atlas art; defaults to `DEFAULT_SCALE`. */
   scale?: number
+  /**
+   * Per-asset override of the light-matte heuristic, keyed by asset id
+   * (`soldier/walk`, `soldier/fire`, `soldier/die`, `prop/tree1`, ...). `true`
+   * forces the de-matte bleed, `false` forbids it; absent means let
+   * `stripLightMatte` decide from the score.
+   *
+   * This exists so the heuristic's two known blind spots — a genuinely white
+   * soft-edged sprite that would be flattened, an off-white matte that scores
+   * below the threshold — are settled by a one-line entry here rather than by
+   * retuning a detector that is currently correct on every supplied asset.
+   */
+  matte?: Partial<Record<string, boolean>>
 }
 
 export interface BuildResult {
@@ -152,6 +230,11 @@ export interface BuildResult {
   atlasPath: string
   manifestPath: string
   floorPath: string
+  /**
+   * What the light-matte heuristic decided for each source image, in build
+   * order. `build:models` prints these so the decision is never invisible.
+   */
+  matteDecisions: MatteDecision[]
 }
 
 interface PendingImage {
@@ -178,8 +261,20 @@ function sliceSheet(
   path: string,
   anim: AnimationName,
   scale: number,
-): { cell: { width: number; height: number }; frames: PendingImage[] } {
-  const sheet = decodePngFile(path, `soldier ${anim} sheet`)
+  matteOverride: boolean | undefined,
+): {
+  cell: { width: number; height: number }
+  frames: PendingImage[]
+  matte: MatteDecision
+  sourceCell: { width: number; height: number }
+} {
+  // Before the downscale, so the box filter averages corrected colours rather
+  // than spreading the matte further into the sprite.
+  const { image: sheet, decision: matte } = stripLightMatte(
+    `soldier/${anim}`,
+    decodePngFile(path, `soldier ${anim} sheet`),
+    matteOverride,
+  )
   const cells = sliceGrid(sheet, SHEET_GRID)
   const cellW = scaled(sheet.width / SHEET_GRID.cols, scale)
   const cellH = scaled(sheet.height / SHEET_GRID.rows, scale)
@@ -216,7 +311,12 @@ function sliceSheet(
       cell: { width: cellW, height: cellH },
     })
   }
-  return { cell: { width: cellW, height: cellH }, frames }
+  return {
+    cell: { width: cellW, height: cellH },
+    frames,
+    matte,
+    sourceCell: { width: sheet.width / SHEET_GRID.cols, height: sheet.height / SHEET_GRID.rows },
+  }
 }
 
 /** Build the atlas + manifest. Every failure is a named `SpritegenError`. */
@@ -231,28 +331,63 @@ export function buildSprites(options: BuildOptions): BuildResult {
   }
 
   const pending: PendingImage[] = []
+  const matteDecisions: MatteDecision[] = []
 
   // --- soldier animations -------------------------------------------------
-  const animations = {} as Record<AnimationName, AnimationEntry>
-  let unitCell = { width: 0, height: 0 }
+  const fps = {} as Record<AnimationName, number>
+  // The unit's cell size, established by the FIRST sheet and then required of
+  // every other sheet.
+  //
+  // A single `cell` is published for the whole unit, and every consumer sizes
+  // its quads and places its anchors from it — so a sheet that disagrees is not
+  // a cosmetic mismatch, it silently mis-scales and mis-anchors an entire
+  // animation. (A 1920x1440 `die` sheet still divides evenly by 4x8, so the
+  // grid check below cannot catch it; it would simply overwrite `cell` with
+  // 360x135 and shift every walk and fire anchor 45px off the ground.) Since
+  // the frames themselves were trimmed against their own sheet's cell, there is
+  // no correct single answer once they disagree — the only safe outcome is to
+  // stop and name both sheets.
+  let unitCell: { width: number; height: number } | null = null
+  let unitCellFrom: { anim: AnimationName; source: { width: number; height: number } } | null = null
   for (const anim of ANIMATIONS) {
     const path = join(sourceDir, 'soldier', `soldier-${anim}-sheet.png`)
     if (!existsSync(path)) {
       throw new SpritegenError(`soldier ${anim} sheet is missing: ${path}`)
     }
-    const { cell, frames } = sliceSheet(path, anim, scale)
-    unitCell = cell
-    const directions = {} as Record<Direction, DirectionEntry>
-    for (const d of DIRECTIONS) directions[d] = { frames: [] }
-    animations[anim] = { fps: FPS[anim], directions }
+    const { cell, frames, matte, sourceCell } = sliceSheet(path, anim, scale, options.matte?.[`soldier/${anim}`])
+    if (unitCell === null || unitCellFrom === null) {
+      unitCell = cell
+      unitCellFrom = { anim, source: sourceCell }
+    } else if (cell.width !== unitCell.width || cell.height !== unitCell.height) {
+      const dim = (c: { width: number; height: number }) => `${String(c.width)}x${String(c.height)}`
+      throw new SpritegenError(
+        `soldier sheets disagree on cell size: the ${anim} sheet slices to ` +
+          `${dim(sourceCell)} cells (${dim(cell)} at scale ${String(scale)}) but the ` +
+          `${unitCellFrom.anim} sheet slices to ${dim(unitCellFrom.source)} ` +
+          `(${dim(unitCell)}). Every animation of a unit shares one published cell, ` +
+          `so mismatched sheets would silently mis-size and mis-anchor a whole ` +
+          `animation. Re-export at a consistent sheet size: ${path}`,
+      )
+    }
+    matteDecisions.push(matte)
+    fps[anim] = FPS[anim]
     pending.push(...frames)
+  }
+  /* c8 ignore next 3 */
+  if (unitCell === null) {
+    throw new SpritegenError('no soldier animations are defined')
   }
 
   // --- props --------------------------------------------------------------
   for (const prop of PROPS) {
     const path = join(sourceDir, `${prop}.png`)
     if (!existsSync(path)) throw new SpritegenError(`prop is missing: ${path}`)
-    const image = decodePngFile(path, `prop ${prop}`)
+    const { image, decision } = stripLightMatte(
+      `prop/${prop}`,
+      decodePngFile(path, `prop ${prop}`),
+      options.matte?.[`prop/${prop}`],
+    )
+    matteDecisions.push(decision)
     const dstW = scaled(image.width, scale)
     const dstH = scaled(image.height, scale)
     const small = resampleRegion(
@@ -311,7 +446,14 @@ export function buildSprites(options: BuildOptions): BuildResult {
     return rect
   }
 
+  // Every direction of every animation is built here, from the frames that were
+  // actually packed. There is no pre-seeded empty entry to fall back on: a
+  // direction that produced no frames is a bug in slicing, and it throws below
+  // rather than reaching the manifest as an empty list a consumer would render
+  // as an invisible soldier.
+  const animations = {} as Record<AnimationName, AnimationEntry>
   for (const anim of ANIMATIONS) {
+    const directions = {} as Record<Direction, DirectionEntry>
     for (const direction of DIRECTIONS) {
       const frames: FrameEntry[] = []
       for (let col = 0; col < SHEET_GRID.cols; col++) {
@@ -320,8 +462,9 @@ export function buildSprites(options: BuildOptions): BuildResult {
         if (!src) throw new SpritegenError(`missing frame ${id}`)
         frames.push({ rect: take(id), offset: src.offset, anchor: src.anchor })
       }
-      animations[anim].directions[direction] = { frames }
+      directions[direction] = { frames }
     }
+    animations[anim] = { fps: fps[anim], directions }
   }
 
   const props: Record<string, PropEntry> = {}
@@ -371,6 +514,7 @@ export function buildSprites(options: BuildOptions): BuildResult {
 
   const manifest: SpriteManifest = {
     version: 1,
+    origin: MANIFEST_ORIGIN,
     scale,
     atlas: { file: 'atlas.png', width: packed.width, height: packed.height, padding: PADDING },
     units: { soldier: { cell: unitCell, animations } },
@@ -382,5 +526,5 @@ export function buildSprites(options: BuildOptions): BuildResult {
   writeFileSync(floorPath, encodePng(floor))
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 
-  return { manifest, atlasPath, manifestPath, floorPath }
+  return { manifest, atlasPath, manifestPath, floorPath, matteDecisions }
 }

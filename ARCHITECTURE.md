@@ -226,7 +226,11 @@ The system is a one-way loop with exactly two crossings of the sim/presentation 
 **Contracts.**
 
 - `level.json` — versioned. `{ schemaVersion, name, size, terrain: number[][], walkable: bool[][], spawns: { avatars[], enemies[], chests[] }, objectives[] }`. Validated on load; a schema mismatch is a loud, typed failure, not undefined behaviour.
-- `models.manifest.json` — `{ [modelId]: { animations: { [name]: { frames: string[], fps } } } }`, mapping logical unit types to GLB frame files.
+- `models.manifest.json` — `{ [modelId]: { animations: { [name]: { frames: string[], fps } } } }`, mapping logical unit types to GLB frame files. Superseded in practice by `sprites.manifest.json` below; see the sprite-quad decision above.
+- `sprites.manifest.json` — versioned. `{ version, origin, scale, atlas, units, props, floor }`, emitted by `tools/spritegen` alongside `atlas.png` and `floor.png`.
+  - **Coordinate origin.** Every `rect`, `offset` and `anchor` is in atlas pixels, **top-left origin, y increasing downward** — the PNG convention. The manifest states this as data in `origin: "top-left"` rather than leaving it to be inferred. Three.js texture UVs are **bottom-left** origin, so a consumer must flip: `v = 1 - (y + height) / atlas.height`. Getting this wrong does not crash and does not look broken — every sprite simply renders vertically mirrored.
+  - **Placing a sprite.** Four values are needed and all four are in the manifest: `rect` (size the quad), `offset` (where the trimmed pixels sat inside the source cell — never re-centre on content, or a dying soldier slides up the screen), `anchor` (the cell's bottom-centre, the point that meets the ground; constant across an animation), and `units.soldier.cell` (the post-downscale cell size the other three are measured against). The quad's pixel offset from the unit's world position is `(offset.x - anchor.x, offset.y - anchor.y)`, y-down; scale by `unitHeightInWorldUnits / cell.height` and negate y for y-up world space. `scale` is reported for the record — no consumer needs it to lay a sprite out, because `cell` is already post-downscale.
+  - `floor.png` is deliberately **not** in the atlas: it is the one texture that must wrap, and wrapping is a property of a whole texture, not a sub-rect.
 - `PersistencePort` — `{ load(): CampaignState | null; save(s: CampaignState): void }`.
 
 **Where state lives.** Transient battle state lives only in `World`, rebuilt from `LevelData`

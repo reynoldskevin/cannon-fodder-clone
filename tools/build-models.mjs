@@ -43,7 +43,10 @@ const { buildSprites, SpritegenError, DIRECTIONS } = await import('./spritegen/i
 const kb = (path) => `${(statSync(path).size / 1024).toFixed(0)} KB`
 
 try {
-  const { manifest, atlasPath, manifestPath, floorPath } = buildSprites({ sourceDir, outDir })
+  const { manifest, atlasPath, manifestPath, floorPath, matteDecisions } = buildSprites({
+    sourceDir,
+    outDir,
+  })
 
   let frames = 0
   for (const anim of Object.values(manifest.units.soldier.animations)) {
@@ -63,7 +66,21 @@ try {
     `  floor ${manifest.floor.width}x${manifest.floor.height} kept out of the atlas so it ` +
       `still tiles (${kb(floorPath)})`,
   )
-  console.log(`  manifest ${kb(manifestPath)} -> ${manifestPath}`)
+  console.log(`  manifest ${kb(manifestPath)} -> ${manifestPath} (rects are ${manifest.origin} origin, y-down)`)
+
+  // The de-matte heuristic decides per image whether to bleed opaque colour
+  // into the antialiased rim. It is a heuristic, so it prints its working:
+  // a wrong call here shows up in game as a white halo (missed) or a flattened
+  // soft gradient (over-applied), and neither is obvious from the atlas alone.
+  // Override any line with `matte: { 'prop/bush': false }` in BuildOptions.
+  console.log('  light-matte pass:')
+  for (const d of matteDecisions) {
+    const how = d.reason === 'override' ? ' (BuildOptions override)' : ''
+    console.log(
+      `    ${d.bled ? 'bled  ' : 'kept  '} ${d.id.padEnd(14)} near-white rim fraction ` +
+        `${d.score.toFixed(4)}${how}`,
+    )
+  }
 } catch (err) {
   if (err instanceof SpritegenError) {
     console.error(`build:models — ${err.message}`)

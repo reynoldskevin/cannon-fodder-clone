@@ -55,14 +55,180 @@ export function encodePng(image: RgbaImage): Buffer {
 }
 
 /**
+ * Alpha below which a pixel counts as "mostly matte" for `lightMatteFraction`,
+ * and the per-channel level at which a pixel counts as near-white.
+ */
+const MATTE_PROBE_ALPHA = 128
+const NEAR_WHITE = 200
+
+/**
+ * Fraction of an image's low-alpha antialiased pixels that are near-white.
+ *
+ * This is the fingerprint of art that was flattened over a light background
+ * before its alpha channel was cut: the antialiased rim of the silhouette is a
+ * blend of the subject with the backdrop, so a white backdrop leaves white RGB
+ * sitting under partial alpha. Over the atlas's own transparent field that is
+ * invisible; composited over the dark jungle terrain in game it is a white halo
+ * round the whole silhouette.
+ *
+ * Measured on the supplied art the statistic separates cleanly — 0.56/0.93 for
+ * the matted sheets and props, exactly 0.0000 for the one sheet that is clean —
+ * so `LIGHT_MATTE_THRESHOLD` sits in a very wide empty gap rather than on a
+ * tuned edge.
+ */
+export function lightMatteFraction(src: RgbaImage): number {
+  let total = 0
+  let white = 0
+  for (let i = 0; i < src.data.length; i += 4) {
+    const a = src.data[i + 3] ?? 0
+    if (a === 0 || a >= MATTE_PROBE_ALPHA) continue
+    total++
+    const r = src.data[i] ?? 0
+    const g = src.data[i + 1] ?? 0
+    const b = src.data[i + 2] ?? 0
+    if (r > NEAR_WHITE && g > NEAR_WHITE && b > NEAR_WHITE) white++
+  }
+  return total === 0 ? 0 : white / total
+}
+
+/** Above this, an image is treated as light-matted. See `lightMatteFraction`. */
+export const LIGHT_MATTE_THRESHOLD = 0.1
+
+/**
+ * Replace the RGB of every partially transparent pixel with the RGB of its
+ * nearest fully opaque pixel. Alpha is never read as anything but a mask and
+ * never written, so the silhouette is bit-identical afterwards.
+ *
+ * Why this and not the algebraic un-matte `true = (observed - (1-a)*255) / a`:
+ * that formula assumes alpha is exactly the backdrop's coverage, and on this art
+ * it is not — the mask was derived separately from the RGB, so pixels that are
+ * pure 255,255,255 sit at alpha 70. White is a FIXED POINT of the un-matte (any
+ * alpha maps 255 to 255), so those pixels survive it untouched. Measured, the
+ * un-matte only moved the near-white share of the soldier's edge pixels from
+ * 24.9% to 19.9% and the trees' from 45.6% to 14.1% — it does not remove the
+ * halo. Both estimate the same thing (the subject's colour under the rim), but
+ * the un-matte is *biased* wherever alpha understates coverage, whereas the
+ * nearest opaque neighbour is only wrong by the subject's own colour gradient
+ * over one or two pixels. So the neighbour wins on the merits, and it collapses
+ * the near-white share to ~0%.
+ *
+ * It cannot desaturate the art: opaque pixels are never written, and a rim pixel
+ * beside a legitimately light detail inherits that light detail's colour.
+ *
+ * The search is a multi-source BFS seeded from every opaque pixel in raster
+ * order with a fixed neighbour order, so the result is deterministic — the atlas
+ * is a committed artifact.
+ */
+export function bleedOpaqueColour(src: RgbaImage): MutableImage {
+  const { width, height } = src
+  const out = { width, height, data: new Uint8Array(src.data) }
+  const count = width * height
+  const from = new Int32Array(count).fill(-1)
+  const queue = new Int32Array(count)
+  let head = 0
+  let tail = 0
+
+  for (let p = 0; p < count; p++) {
+    if (src.data[p * 4 + 3] === 255) {
+      from[p] = p
+      queue[tail++] = p
+    }
+  }
+  // No opaque pixel to bleed from — nothing this function can say about colour.
+  if (tail === 0) return out
+
+  while (head < tail) {
+    const p = queue[head++]!
+    const x = p % width
+    const y = (p - x) / width
+    for (let dy = -1; dy <= 1; dy++) {
+      const ny = y + dy
+      if (ny < 0 || ny >= height) continue
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx
+        if (nx < 0 || nx >= width) continue
+        const np = ny * width + nx
+        if (from[np] !== -1) continue
+        from[np] = from[p]!
+        queue[tail++] = np
+      }
+    }
+  }
+
+  for (let p = 0; p < count; p++) {
+    const a = src.data[p * 4 + 3] ?? 0
+    if (a === 0 || a === 255) continue
+    const s = (from[p] ?? -1) * 4
+    if (s < 0) continue
+    out.data[p * 4] = src.data[s] ?? 0
+    out.data[p * 4 + 1] = src.data[s + 1] ?? 0
+    out.data[p * 4 + 2] = src.data[s + 2] ?? 0
+  }
+  return out
+}
+
+/** Why an image was or was not de-matted. Reported so the choice is auditable. */
+export type MatteReason = 'score' | 'override'
+
+/** The de-matte decision for one source image. Surfaced in `BuildResult`. */
+export interface MatteDecision {
+  /** The asset id, e.g. `soldier/walk` or `prop/tree1`. */
+  readonly id: string
+  /** `lightMatteFraction` for this image, always measured even when overridden. */
+  readonly score: number
+  /** True when `bleedOpaqueColour` was applied. */
+  readonly bled: boolean
+  /** `override` when a `BuildOptions.matte` entry decided it, else `score`. */
+  readonly reason: MatteReason
+}
+
+/**
+ * Strip a baked-in light matte from `src` if it has one, otherwise hand back
+ * `src` untouched. Always reports what it decided and why.
+ *
+ * Detection is per image and not a blanket rule because the supplied art is
+ * mixed: the walk and die sheets and all four props are matted, the fire sheet
+ * is not. The fire sheet also carries genuinely soft semi-transparent content
+ * (muzzle smoke reaching 53px from the nearest opaque pixel, against 1-3px of
+ * plain antialiasing on the matted art), so bleeding it would flatten real
+ * artwork to fix a problem it does not have.
+ *
+ * The heuristic is deliberately simple, and it has two known blind spots. A
+ * genuinely white soft-edged sprite — smoke, a muzzle flash, a cloud — scores
+ * 1.0 by construction and would be bled flat, which is exactly the damage
+ * excluding the fire sheet avoids. And `NEAR_WHITE` is a hard cliff: a matte
+ * laid over grey 200 scores 0.00 while grey 201 scores 1.00, so an off-white
+ * matte keeps its halo. Rather than chase a cleverer detector, `override` lets
+ * a caller settle either case per asset, and the returned decision (logged by
+ * `build:models`) means the automatic choice is never invisible. On today's
+ * seven assets the two populations are 0.00 against 0.56-0.93, so the automatic
+ * path is not close to either failure.
+ *
+ * Must run BEFORE any downscale, so the box filter averages corrected colours
+ * instead of smearing the matte further into the sprite.
+ */
+export function stripLightMatte(
+  id: string,
+  src: RgbaImage,
+  override?: boolean,
+): { image: RgbaImage; decision: MatteDecision } {
+  const score = lightMatteFraction(src)
+  const bled = override ?? score > LIGHT_MATTE_THRESHOLD
+  return {
+    image: bled ? bleedOpaqueColour(src) : src,
+    decision: { id, score, bled, reason: override === undefined ? 'score' : 'override' },
+  }
+}
+
+/**
  * Area-average (box filter) resample of `rect` from `src` into a `dstW x dstH`
  * image.
  *
  * Averaging is done on PREMULTIPLIED alpha and un-premultiplied afterwards.
  * Averaging straight RGB would pull the (arbitrary) colour of fully transparent
- * pixels into every antialiased edge, which on this art — transparent black
- * surround — produces a dark halo round every soldier at exactly the edges the
- * artist antialiased to hide.
+ * pixels into every antialiased edge — black on the soldier sheets, white on the
+ * props — producing a halo round every sprite at exactly the edges the artist
+ * antialiased to hide.
  */
 export function resampleRegion(
   src: RgbaImage,

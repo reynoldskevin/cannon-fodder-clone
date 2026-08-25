@@ -14,8 +14,15 @@ export class SpritegenError extends Error {
   }
 }
 
-/** Raised when the requested rects cannot be placed inside `maxSize`. */
-export class PackError extends Error {
+/**
+ * Raised when the requested rects cannot be placed inside `maxSize`.
+ *
+ * It extends `SpritegenError` on purpose: a packing failure is a spritegen
+ * failure like any other, and callers (notably `tools/build-models.mjs`) catch
+ * the base type to print one clean message instead of a raw stack. A sibling
+ * class that escaped that catch would be a worse error report for the same bug.
+ */
+export class PackError extends SpritegenError {
   constructor(message: string) {
     super(message)
     this.name = 'PackError'
