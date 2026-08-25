@@ -7,7 +7,6 @@
     "255,220,0": "props"
   },
   "labels": [
-    { "at": [795, 438], "type": "bird_left", "category": "props" },
     { "at": [148, 585], "type": "shrub", "category": "props" },
     { "at": [720, 591], "type": "tree", "category": "props" }
   ]
