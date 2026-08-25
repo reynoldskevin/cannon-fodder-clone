@@ -229,8 +229,16 @@ const IDLE_SOURCE = 'walk'
  *
  * The manifest declares `fps` but not looping, so the decision lives here. A
  * looping `die` resurrects corpses, which acceptance calls out by name.
+ *
+ * `fire` is here too, and for a reason worth stating: a trigger pull is a single
+ * recoil, not a cycle. As a looping clip it also collected the per-id phase
+ * offset that `EntityRenderer` applies to loops — which is right for a walk
+ * cycle, where it stops a squad marching in lockstep, and wrong for a recoil,
+ * where it starts each man at an arbitrary point in his own. Combined with the
+ * session showing the pose for one tick, that is why a burst appeared to use
+ * only one of the four frames.
  */
-const ONE_SHOT_ANIMATIONS: ReadonlySet<string> = new Set(['die'])
+const ONE_SHOT_ANIMATIONS: ReadonlySet<string> = new Set(['die', 'fire'])
 
 /* ------------------------------------------------------------ implementation */
 
