@@ -161,7 +161,11 @@ function missionEvents(who: readonly number[], outcome: 'complete' | 'failed'): 
     seq: i + 1,
   }))
   if (outcome === 'complete') {
-    events.push({ type: 'MissionComplete', tick: 100, seq: 100 })
+    // `objective` names the condition that finished it. Supplied because
+    // `ObjectiveSystem` always supplies it and this fixture stands in for its
+    // output — a fixture that omitted it would be arguing for a weaker
+    // production type than the one the only real producer satisfies.
+    events.push({ type: 'MissionComplete', objective: 'kill_all', tick: 100, seq: 100 })
   } else {
     events.push({ type: 'MissionFailed', reason: 'squad eliminated', tick: 100, seq: 100 })
   }
@@ -553,15 +557,67 @@ describe('assigning a squad', () => {
     expect(names.size).toBe(3)
   })
 
-  it('re-assigning on the Recruitment screen replaces the squad rather than appending', () => {
-    // A player toggling his selection reaches this: two assigns in a row with
-    // no deploy between them. The second is the one that counts.
+  it('the next mission`s squad REPLACES the last one rather than joining it', () => {
+    /**
+     * The second time round the loop is where this bites, and it is the only
+     * place it can: assigning moves the player straight to Briefing, which has
+     * no `squadAssigned` row, so two assigns in a row on one Recruitment screen
+     * are impossible. A second campaign cycle is not — and by then `squad` is
+     * still holding the men who fought the last mission.
+     *
+     * `squad = [...squad, ...selection.squad]` would hand the host six men for a
+     * three-slot level, including one who is already dead. Stated on the LENGTH
+     * as well as the contents, because a contents check alone passes on a squad
+     * that merely starts with the right men.
+     *
+     * The first draft of this test asserted against a 1-of-3 first selection,
+     * which `selectSquad` refuses outright — so `squad` was `[]` and there was
+     * nothing to append to. It passed against the very mutant it names.
+     */
+    const { runner } = runnerFor(THREE_LEVELS)
+    const first = deploy(runner)
+    expect(first).toHaveLength(3)
+    runner.finishMission(missionEvents([1], 'complete'), assignmentFor(first))
+    runner.recordCasualties()
+    runner.advanceFromBootHill()
+    expect(runner.screen()).toBe('Recruitment')
+
+    const wanted = [...offered(runner, 3)].reverse()
+    expect(runner.assignSquad(wanted).ok).toBe(true)
+    expect(runner.squad()).toHaveLength(3)
+    expect(runner.squad().map((m) => m.id)).toEqual(wanted)
+    // And the man who fell on the first mission is not among them, which he
+    // would be if the two selections had been concatenated.
+    expect(runner.squad().some((m) => m.id === first[0]?.id)).toBe(false)
+  })
+
+  it('is refused from a screen with no row for it, with a selection that is otherwise valid', () => {
+    /**
+     * THE REFUSAL TEST THAT ACTUALLY TESTS THE REFUSAL. Handing `assignSquad` an
+     * empty list from the wrong screen proves nothing: `selectSquad` refuses an
+     * under-selection on its own merits, so a runner that never consulted the
+     * chart at all would refuse it too and the assertion would be satisfied for
+     * the wrong reason. The payload here is one the chart is the ONLY thing
+     * standing in the way of.
+     *
+     * What it costs to get wrong: assigning mid-mission would burn
+     * `recruitsIssued` on a campaign the chart says never assigned, and swap the
+     * squad out from under a running host.
+     */
     const { runner } = runnerFor(ONE_LEVEL)
     runner.startCampaign()
-    runner.assignSquad(offered(runner, 1))
-    const wanted = offered(runner, 3)
-    expect(runner.assignSquad(wanted).ok).toBe(true)
-    expect(runner.squad().map((m) => m.id)).toEqual(wanted)
+    const valid = offered(runner, 3)
+    runner.assignSquad(valid)
+    runner.deploy()
+    expect(runner.screen()).toBe('Mission')
+
+    const issued = runner.campaign().recruitsIssued
+    const held = runner.squad()
+    const result = runner.assignSquad([...valid].reverse())
+    expect(result.ok).toBe(false)
+    expect(runner.screen()).toBe('Mission')
+    expect(runner.squad()).toEqual(held)
+    expect(runner.campaign().recruitsIssued).toBe(issued)
   })
 })
 
@@ -759,6 +815,27 @@ describe('the campaign is loaded once and saved when it changes', () => {
     expect(runner.campaign().recruits.length).toBeGreaterThan(0)
   })
 
+  it('survives a save whose progress is a fraction', () => {
+    /**
+     * `parseState` rejects `unlockedLevels < 1` and DELIBERATELY accepts any
+     * finite value at or above it — so `1.5` loads clean, with no notice. An
+     * index derived from it without flooring is `0.5`, `levels[0.5]` is
+     * `undefined`, and the game dies on boot inside the first Recruitment draw,
+     * on a line whose own comment calls itself unreachable.
+     *
+     * A save file is a string on somebody's disk. It does not have to be a
+     * plausible one to have to not crash.
+     */
+    const base = createCampaign({ seed: 8, recruits: 6 })
+    const port = fakePort({ version: CAMPAIGN_SCHEMA_VERSION, ...base, unlockedLevels: 1.5 })
+    const { runner } = runnerFor(THREE_LEVELS, { port })
+    expect(runner.levelIndex()).toBe(0)
+    expect(() => runner.level()).not.toThrow()
+    expect(() => runner.recruitment()).not.toThrow()
+    expect(runner.startCampaign().ok).toBe(true)
+    expect(runner.assignSquad(offered(runner, 3)).ok).toBe(true)
+  })
+
   it('writes the campaign when a mission ends', () => {
     const { runner, port } = runnerFor(ONE_LEVEL)
     const squad = deploy(runner)
@@ -891,6 +968,25 @@ describe('the models the shell draws come from core, unchanged', () => {
     expect(briefing.objectives).toEqual(['kill_all'])
   })
 
+  it('and lists the men in the order the player picked them, not the roster`s', () => {
+    /**
+     * The Briefing is where the player confirms the placement he chose, and
+     * ticket 021's contract is that the nth man takes the nth avatar spawn. A
+     * briefing that showed roster order would disagree with the ground he is
+     * about to land on — and every existing order assertion reads
+     * `runner.squad()` rather than the model, so nothing would say so.
+     *
+     * REVERSED, because a selection taken in roster order cannot tell the two
+     * apart. This is the same class of fixture-on-a-convenient-value that has
+     * hidden three defects in this milestone.
+     */
+    const { runner } = runnerFor(ONE_LEVEL)
+    runner.startCampaign()
+    const wanted = [...offered(runner, 3)].reverse()
+    runner.assignSquad(wanted)
+    expect(runner.briefing().squad.map((s) => s.id)).toEqual(wanted)
+  })
+
   it('the recruitment model caps the squad at the level`s landing positions', () => {
     const { runner } = runnerFor([makeLevel('Two Slots', 2)])
     runner.startCampaign()
@@ -973,6 +1069,48 @@ describe('the demo shortcut', () => {
     }
     expect(host.starts()).toBe(0)
     expect(runner.screen()).toBe('Menu')
+  })
+
+  it('is refused off the Menu, and starts nothing, on an index that is perfectly valid', () => {
+    /**
+     * The same argument as `assignSquad`'s: a bad index is refused by the bounds
+     * check whether or not the chart was ever asked, so only a GOOD index from a
+     * screen with no `demoShortcut` row can prove the chart is consulted first.
+     *
+     * With that check skipped, a deep link fired mid-mission returns a refusal
+     * AND builds a second Three.js scene — the leak this whole ticket is
+     * arranged to prevent, arriving through the one command that does the most
+     * work before it settles.
+     */
+    const { runner, host } = runnerFor(THREE_LEVELS)
+    deploy(runner)
+    expect(runner.screen()).toBe('Mission')
+    const issued = runner.campaign().recruitsIssued
+    const held = runner.squad()
+
+    const result = runner.demoShortcut(2)
+    expect(result.ok).toBe(false)
+    expect(host.starts()).toBe(1)
+    expect(runner.screen()).toBe('Mission')
+    expect(runner.squad()).toEqual(held)
+    expect(runner.campaign().recruitsIssued).toBe(issued)
+  })
+
+  it('buries a demo mission`s dead under the level it was played on', () => {
+    /**
+     * `demoShortcut(1)` on a fresh campaign is the one case where the level the
+     * MISSION is on and the level the PLAYER is up to disagree: `levelIndex()`
+     * is 0 and the mission is level 2. A report that took the campaign's
+     * progress instead would carve the wrong place on the gravestone and unlock
+     * the level the player just finished.
+     */
+    const { runner } = runnerFor(THREE_LEVELS)
+    expect(runner.levelIndex()).toBe(0)
+    runner.demoShortcut(1)
+    const squad = runner.squad()
+    runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
+    expect(runner.campaign().dead[0]?.diedOnLevel).toBe(2)
+    expect(runner.campaign().unlockedLevels).toBe(3)
   })
 
   it('a demo mission still finishes into the campaign', () => {
