@@ -25,7 +25,17 @@ export function parseAscii(art: string): { w: number; h: number; rows: string[] 
   return { w, h: rows.length, rows }
 }
 
-/** A valid `LevelData` whose walkability is the ASCII picture. */
+/**
+ * A valid `LevelData` whose walkability is the ASCII picture.
+ *
+ * `#` is blocked canopy; `~` is WATER — walkable, and carrying the terrain id
+ * that ticket 003a gave a traversal rule and 007b gave a speed and a fire ban.
+ * Everything else is grass.
+ *
+ * ADDITIVE BY CONSTRUCTION: art that uses neither character is classified
+ * exactly as it was before `~` existed, so no fixture written against this
+ * helper can have moved.
+ */
 export function asciiLevel(art: string): LevelData {
   const { w, h, rows } = parseAscii(art)
   const terrain: number[][] = []
@@ -35,8 +45,13 @@ export function asciiLevel(art: string): LevelData {
     const trow: number[] = []
     const wrow: boolean[] = []
     for (let x = 0; x < w; x++) {
-      const blocked = row[x] === '#'
-      trow.push(blocked ? 2 : 1)
+      const cell = row[x]
+      const blocked = cell === '#'
+      const water = cell === '~'
+      trow.push(blocked ? 2 : water ? 4 : 1)
+      // Water is passable — that is ticket 003a's whole point — so only `#`
+      // blocks. A `~` that came out unwalkable here would make every swimming
+      // fixture below assert against a wall.
       wrow.push(!blocked)
     }
     terrain.push(trow)
