@@ -23,11 +23,15 @@ export {
   recruitsAvailable,
   applyMissionReport,
   missionReport,
+  // Shared with `core/flow` on purpose: the Debrief screen and the roster read
+  // the same `MissionReport`, and a second copy of the folding rules is a second
+  // answer to "who died" that nothing would ever compare.
+  foldMissionEntries,
   DEFAULT_RECRUITS,
   MAX_ROSTER,
   MAX_UNLOCKED_LEVELS,
 } from './roster'
-export type { CreateCampaignOptions } from './roster'
+export type { CreateCampaignOptions, MissionTally } from './roster'
 export { RANKS, rankFor } from './ranks'
 export type { Rank } from './ranks'
 export { NAME_POOL } from './names'
