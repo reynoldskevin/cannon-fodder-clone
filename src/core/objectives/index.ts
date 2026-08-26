@@ -5,7 +5,7 @@
  * This is the public face of `src/core/objectives`. The session builds one
  * `createObjectiveSystem(level)` and registers it LAST, after the systems whose
  * results it judges; `src/ui/hud.ts` reads `progress()` and `elapsedTicks` and
- * `src/ui/mission-end.ts` reads `outcome()`. Nothing above this directory needs
+ * `src/app/main.ts` reads `outcome()` to end the mission. Nothing above this directory needs
  * to know how a `reach_area` is measured or where a death is counted.
  *
  * `types.ts` is the data surface — the type names, the parameter names, the
