@@ -16,6 +16,10 @@ import { levelRelief } from '../core/view/relief'
 import { createSession } from '../core/session'
 import { ordnanceForHotkey } from '../core/armoury'
 import { createTracerBuffer } from '../core/render-state/tracers'
+import { createCampaignRunner } from '../core/flow'
+import type { AdvanceResult, MissionHost } from '../core/flow'
+import type { SquadMember } from '../core/campaign'
+import type { SimEvent } from '../core/world'
 import { CameraRig } from '../render/camera-rig'
 import { TracerRenderer } from '../render/tracer-renderer'
 import { SceneBuilder } from '../render/scene-builder'
@@ -35,6 +39,8 @@ import { showControlHint } from '../ui/control-hint'
 import { showFatalError, type FatalErrorReport } from '../ui/error-overlay'
 import { createHud, type RosterMember } from '../ui/hud'
 import { showMissionEnd, type MissionEndScreen } from '../ui/mission-end'
+import { createBootHill, type BootHillScreen } from '../ui/boot-hill'
+import { createLocalStoragePort } from './local-storage-port'
 import { CORE_VERSION } from '../core/version'
 
 /**
@@ -244,7 +250,7 @@ async function boot(): Promise<void> {
   // the far side of this call — see `core/session` — so what is left here is the
   // browser's half: a frame delta in, a list of drawables and an alpha out.
   //
-  // A `let`, because `restart()` replaces it. Every closure below reads the
+  // A `let`, because `startMission()` replaces it. Every closure below reads the
   // variable rather than capturing the object, so a restarted mission is picked
   // up by the render loop, the scene builder and the HUD without any of them
   // being rebuilt — and without the page reload that would cost the player the
@@ -264,13 +270,13 @@ async function boot(): Promise<void> {
    * THE RENDERER'S CLOCK AND NOT THE SIMULATION'S, deliberately. A tracer is a
    * visual afterimage measured in real milliseconds — it has to look the same at
    * 30 fps and at 144 fps, and it must not be able to change the mission. Feeding
-   * it `elapsed` (declared below, and reset by `restart` for the reason stated
+   * it `elapsed` (declared below, and reset by `startMission` for the reason stated
    * there) is what keeps it presentation: a headless replay of the same level,
    * seed and commands produces an identical mission whether or not anybody ever
    * drew a streak.
    *
-   * A `let`, because `restart()` REPLACES it. The buffer stamps tracers with a
-   * clock the restart puts back to zero, so rounds from the previous mission
+   * A `let`, because `startMission()` REPLACES it. The buffer stamps tracers with a
+   * clock the new mission puts back to zero, so rounds from the previous mission
    * would not merely linger — they would sit at a `firedAt` in the future,
    * unaged and therefore unfading, for the length of the next mission.
    */
@@ -457,7 +463,7 @@ async function boot(): Promise<void> {
           size: level.size,
           heightAt: groundHeightAt,
           elevationRad: elevation,
-          // The CURRENT session, not the one that exists now: `restart()`
+          // The CURRENT session, not the one that exists now: `startMission()`
           // replaces it, and an overlay holding the old one would draw a dead
           // mission over the live one.
           session: () => session,
@@ -471,8 +477,17 @@ async function boot(): Promise<void> {
       })
   }
 
-  /** The end screen, while one is up. `undefined` means the mission is still on. */
+  /**
+   * The end screen, while one is up. `undefined` means the mission is still on.
+   *
+   * IT IS THE DEBRIEF NOW (ticket 022a), as a stand-in: its heading and its
+   * "Play again" button are `mission-end.ts`'s, unchanged, but the button walks
+   * the runner on to Boot Hill instead of restarting the level. Ticket 022b
+   * replaces it with a screen drawn from `runner.debrief()`.
+   */
   let ending: MissionEndScreen | undefined
+  /** Boot Hill, while it is up. Ticket 022 wrote the screen; this is its caller. */
+  let hill: BootHillScreen | undefined
   /** `MissionFailed.reason`, kept because the event is a one-shot and the screen is not. */
   let failure: string | undefined
 
@@ -486,19 +501,72 @@ async function boot(): Promise<void> {
    * `performance.now()`: a backgrounded tab would otherwise return to a clock
    * that had run on without it and snap every walk cycle to a random frame.
    *
-   * THE INVARIANT, AND `restart()` IS WHERE IT BREAKS. This clock and the
+   * THE INVARIANT, AND `startMission()` IS WHERE IT BREAKS. This clock and the
    * simulation's tick count measure the same zero. `core/session` hands a
    * corpse `animationStart = diedAtTick * FIXED_TIMESTEP` — a SIM-clock value —
    * and `EntityRenderer` plays the one-shot `die` clip from
    * `elapsedSeconds - animationStart`. Rebuilding the session puts `tickCount`
    * back to 0, so an animation clock left running is permanently ahead by the
    * length of every mission before it: `frameAt` clamps a non-looping clip to
-   * its last frame, and every death after the first restart is pinned to the
+   * its last frame, and every death after the first rebuild is pinned to the
    * final pose from the instant it happens. The man the player just lost simply
-   * blinks into a corpse. Declared HERE, above `restart()`, so the two can only
+   * blinks into a corpse. Declared HERE, above `startMission()`, so the two can only
    * be reset together — nothing in Vitest can catch this, there being no DOM.
    */
   let elapsed = 0
+
+  /**
+   * EVERY EVENT THIS MISSION HAS PRODUCED, in order (ticket 022a).
+   *
+   * A REAL ADDITION RATHER THAN A REFACTOR, and the only way the campaign can
+   * learn who died. The loop below drains `session.events()` every frame for
+   * tracers and throws the batch away; `missionReport` reads the WHOLE stream —
+   * the `UnitDied` events are spread across the frames the men fell on and the
+   * `MissionComplete` lands on one frame near the end — so a campaign fed a
+   * single frame's batch would bury nobody and record every mission as lost.
+   *
+   * CLEARED BY `host.start`, which is what keeps one mission's dead out of the
+   * next one's report.
+   */
+  let missionLog: SimEvent[] = []
+
+  /**
+   * The browser's half of a mission (ticket 022a): the old `restart()`, given
+   * the level and the men it always implied.
+   *
+   * `core/flow`'s runner owns the screen, the campaign and the squad and calls
+   * these two; it can do that under Node because everything untestable about a
+   * mission is on this side of the interface. What was `restart()` is `start`
+   * with two arguments, and every comment on its steps is kept because every one
+   * of them is a bug somebody already paid for.
+   */
+  const host: MissionHost = {
+    start: startMission,
+    /**
+     * Release the mission that is ending.
+     *
+     * WHAT A MISSION OWNS HERE IS THE SESSION, THE TRACERS AND THE POINTER — NOT
+     * THE SCENE. The terrain, the atlas and the floor are built once, for the
+     * level this page fetched, and `start` re-enters that same scene; disposing
+     * them here would leave nothing to come back to and a black canvas behind the
+     * Debrief. They are freed by `teardown()` below, which ends the page rather
+     * than the mission. Ticket 023 brings more than one level and is where a
+     * scene rebuild belongs.
+     *
+     * THE POINTER IS DISPOSED HERE AND AGAIN IN `startMission`, AND BOTH CALLS
+     * ARE DELIBERATE. `dispose` is idempotent, so the pair is safe. This one
+     * exists because the pointer holds the finished session's command queue by
+     * reference and the mission it would push orders onto is over — the player
+     * sits on the Debrief and Boot Hill for minutes, and a live pointer over a
+     * dead session for all of that is what this releases. `startMission`'s call
+     * is the one that actually REPLACES it, and it cannot be dropped: a mission
+     * started without an intervening `teardown` (the first deploy of the page)
+     * never reaches this method at all.
+     */
+    teardown(): void {
+      pointer.dispose()
+    },
+  }
 
   /**
    * Start a fresh mission in the page that is already running.
@@ -509,16 +577,30 @@ async function boot(): Promise<void> {
    * below. The scene, the rig and the controllers outlive the session by
    * design; only the simulation and the things holding a reference into it are
    * replaced.
+   *
+   * `next` IS HONOURED RATHER THAN IGNORED, but the scene above was built for
+   * the one level this page fetched, so today it is always that same document —
+   * see the note on `teardown`.
    */
-  function restart(): void {
+  function startMission(next: LevelData, squad: readonly SquadMember[]): void {
     ending?.dispose()
     ending = undefined
+    hill?.dispose()
+    hill = undefined
     failure = undefined
-    session = createSession(level)
+    // EMPTIED FOR THE NEW MISSION, so the men who died in the last one are not
+    // buried a second time in this one's report. Nothing subtle about the
+    // placement — this function is synchronous, so no frame can run between here
+    // and the `createSession` below; it sits next to its session for reading.
+    missionLog = []
+    // WITH THE MEN THE PLAYER CHOSE. `Session.assignment` is built from this and
+    // is the map `missionReport` takes verbatim — it is the only place the sim's
+    // entity ids and the campaign's recruit ids ever meet.
+    session = createSession(next, { squad })
     // WITH THE SESSION, NOT AFTER IT. The new world's tick count starts at 0 and
     // the animation clock is keyed to sim time — see the invariant where it is
     // declared. `previous` goes with them so the first frame of the new mission
-    // measures its delta from the restart and not from the frame before it.
+    // measures its delta from the new mission and not from the frame before it.
     elapsed = 0
     // WITH THE CLOCK THEY ARE STAMPED AGAINST. A tracer's age is `elapsed -
     // firedAt`, so rounds carried over from the mission that just ended would
@@ -534,7 +616,7 @@ async function boot(): Promise<void> {
     pointer = newPointer()
     // TWICE, DELIBERATELY. `setEntities` shifts current to previous, so a single
     // call would leave the renderer interpolating from the dead mission's last
-    // frame — and entity ids restart from 1, so the new squad would be blended
+    // frame — and entity ids start again from 1, so the new squad would be blended
     // out of wherever the old squad's ids last stood. Two calls make previous
     // and current the same state: no blend, which is right for a mission that
     // did not move, it began.
@@ -556,6 +638,7 @@ async function boot(): Promise<void> {
     window.removeEventListener('keydown', onSelectKey)
     renderer.domElement.removeEventListener('wheel', onSelectWheel)
     ending?.dispose()
+    hill?.dispose()
     // Its own group, its own listener, its own GPU buffers — none of which the
     // scene's `dispose` knows about, because the overlay was added to the scene
     // from outside it.
@@ -571,6 +654,117 @@ async function boot(): Promise<void> {
     // Owned here, not by the terrain: it is loaded once for the session and
     // outlives any single level (ticket 020), so it is freed with the session.
     floor.dispose()
+  }
+
+  /**
+   * The campaign (ticket 022a): one owner for the screen, the roster, the squad
+   * and the mission lifecycle.
+   *
+   * EVERY DECISION BELOW IS ITS, NOT THIS FILE'S. Which screen follows a
+   * mission, who is on the squad, who is buried and whether the campaign is over
+   * are all answered in `core/flow` and `core/campaign`, where Vitest can see
+   * them; what is left here is showing a `div` and calling the next command.
+   *
+   * ONE LEVEL TODAY. Ticket 023 loads the other four, and the array is the whole
+   * change that takes: `levelIndex` is derived from the campaign's own
+   * `unlockedLevels` against this list's length.
+   */
+  const runner = createCampaignRunner({
+    levels: [level],
+    port: createLocalStoragePort(),
+    host,
+  })
+
+  const openingNotice = runner.notice()
+  if (openingNotice !== null) {
+    // The console, because there is no Menu to print it on until ticket 022b.
+    // Not silence: a discarded save the player is never told about is the one
+    // failure `loadCampaign` exists to prevent.
+    console.warn(`game-week: ${openingNotice}`)
+  }
+
+  /**
+   * Take a command's answer, or say why it was refused.
+   *
+   * `AdvanceResult` carries a reason rather than throwing so that a
+   * double-clicked button is ordinary traffic — but a refusal nobody prints is
+   * exactly the dead button that shape exists to prevent, so it is logged.
+   */
+  function announce(result: AdvanceResult, what: string): boolean {
+    if (result.ok) return true
+    console.error(`game-week: ${what} was refused — ${result.reason}`)
+    return false
+  }
+
+  /** The mission is over: record it against the campaign and show the Debrief. */
+  function endMission(): void {
+    // `session.assignment` is read BEFORE the runner tears the mission down: it
+    // is the map that says which recruit each entity was, and it is the only
+    // thing that can name the man who just died.
+    if (!announce(runner.finishMission(missionLog, session.assignment), 'the mission result')) {
+      return
+    }
+    const debrief = runner.debrief()
+    ending = showMissionEnd(mount, {
+      // FROM THE MODEL, so the screen and the roster cannot disagree about
+      // whether that was a win — `missionReport` decided it from the stream.
+      kind: debrief?.outcome ?? 'failed',
+      ...(failure === undefined ? {} : { reason: failure }),
+      elapsedTicks: session.objectives.elapsedTicks,
+      onRestart: showBootHill,
+    })
+  }
+
+  /** Off the Debrief and onto the hill. */
+  function showBootHill(): void {
+    // THE CHART IS ASKED BEFORE THE SCREEN IS TORN DOWN, for the reason the
+    // runner's header gives about the host: a refusal must change nothing. The
+    // dispose-first order left a refused move with the Debrief already gone and
+    // no Boot Hill to replace it — no screen and no way forward. No refusal is
+    // reachable from `Debrief` today, so this is the ordering being made safe
+    // rather than a bug being fixed.
+    if (!announce(runner.recordCasualties(), 'recording the casualties')) return
+    ending?.dispose()
+    ending = undefined
+    hill = createBootHill(mount, { onContinue: leaveBootHill, continueLabel: 'Carry on' })
+    hill.update(runner.bootHill())
+  }
+
+  /** Off the hill and into whatever the chart says comes next. */
+  function leaveBootHill(): void {
+    // Asked before the hill is disposed, for the reason `showBootHill` gives.
+    if (!announce(runner.advanceFromBootHill(), 'leaving Boot Hill')) return
+    hill?.dispose()
+    hill = undefined
+    enterMission()
+  }
+
+  /**
+   * Get from wherever the chart just landed back into a mission.
+   *
+   * A TEMPORARY BRIDGE, AND TICKET 022b DELETES IT. There is no Menu,
+   * Recruitment or Briefing screen yet, so there is nothing for the player to
+   * press on any of the three — and a shell that stopped on them would be a game
+   * that ends after one mission. Standing in for them here is what makes every
+   * runner command exercised by a human playing the game in THIS ticket, rather
+   * than first being exercised in the ticket that also introduces four new
+   * screens.
+   *
+   * The two branches are the two places `advanceFromBootHill` can land. From the
+   * Menu it takes the chart's own `Menu -> Mission` shortcut; from Recruitment
+   * there is no row back to the Menu, so it makes the choice the player would
+   * have made — the first full squad the roster offers — and deploys.
+   */
+  function enterMission(): void {
+    if (runner.screen() === 'Menu') {
+      announce(runner.demoShortcut(runner.levelIndex()), 'the demo shortcut')
+      return
+    }
+    if (runner.screen() !== 'Recruitment') return
+    const model = runner.recruitment()
+    const chosen = model.available.slice(0, model.maxSquad).map((man) => man.id)
+    if (!announce(runner.assignSquad(chosen), 'assigning the squad')) return
+    announce(runner.deploy(), 'deploying')
   }
 
   // "F to zoom out", not "F to fit": since ticket 009b the zoom-out limit stops
@@ -604,6 +798,14 @@ async function boot(): Promise<void> {
     })
   })
 
+  // INTO THE FIRST MISSION BEFORE THE LOOP STARTS, so the squad the player sees
+  // on frame one is the campaign's and not the anonymous one the scene was built
+  // from. On a fresh page this is `demoShortcut(0)` — the chart's `Menu ->
+  // Mission` row — and the game boots straight into level 1 exactly as it did
+  // before this ticket, with the difference that the men now have names, records
+  // and gravestones.
+  enterMission()
+
   renderer.setAnimationLoop((now) => {
     // A throw here repeats every frame and is invisible behind a frozen canvas.
     // Stop the loop on the first one and say so on screen instead.
@@ -634,7 +836,19 @@ async function boot(): Promise<void> {
       // is the only channel out of the sim, and left undrained it would grow
       // for the length of the mission. The reason is kept because the event
       // fires once and the screen it explains outlives it by minutes.
+      // ONLY WHILE THE MISSION IS ON, and off the same guard `endMission` uses
+      // below rather than a second flag of this file's. The session keeps
+      // stepping and keeps emitting for as long as the player leaves the Debrief
+      // and Boot Hill up, and a log that kept growing after the report it feeds
+      // was written is an array with no bound and no reader — the pre-022a loop
+      // discarded those events. `endMission` runs after this drain, so the final
+      // frame's `MissionComplete` is still logged on the frame it lands.
+      const logging = runner.screen() === 'Mission'
       for (const event of session.events()) {
+        // KEPT, NOT JUST READ (ticket 022a). The batch is the only channel out
+        // of the sim and it is drained once; the campaign needs the whole
+        // mission's worth at the end of it. See `missionLog`.
+        if (logging) missionLog.push(event)
         if (event.type === 'MissionFailed') failure = event.reason
         // ONE TRACER PER ROUND, from the event's own endpoints. Ticket 011a
         // already clamps the far end to the near face of whatever the round
@@ -654,14 +868,13 @@ async function boot(): Promise<void> {
       // that occasionally never appears. `outcome()` is latched and can be
       // asked at any time.
       const outcome = session.outcome()
-      if (ending === undefined && outcome !== 'playing') {
-        ending = showMissionEnd(mount, {
-          kind: outcome,
-          ...(failure === undefined ? {} : { reason: failure }),
-          elapsedTicks: session.objectives.elapsedTicks,
-          onRestart: restart,
-        })
-      }
+      // THE RUNNER'S SCREEN IS THE GUARD, not a flag of this file's: the mission
+      // is over exactly once, and `Mission -> Debrief` is a transition the chart
+      // will not make twice. An `ending === undefined` check would have said the
+      // same thing until the Debrief was dismissed, at which point it would fire
+      // again over a mission that had already been recorded — and the campaign
+      // would bury the same men twice.
+      if (outcome !== 'playing' && runner.screen() === 'Mission') endMission()
       built.entities.update(elapsed, alpha)
       // EVERY FRAME, not only on a stepping one: a tracer fades on the display's
       // clock, so a frame that ran no simulation step still has to redraw the
