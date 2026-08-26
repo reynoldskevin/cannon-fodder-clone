@@ -80,6 +80,27 @@ export interface CombatSystem extends SimSystem {
   ceaseFire(unitIds: readonly number[]): void
   /** Whether this unit currently holds a standing fire order. */
   isFiring(unitId: number): boolean
+  /**
+   * The world-space point this unit's standing order is aimed at, or `undefined`
+   * when it holds none (ticket 025a).
+   *
+   * EXPOSED RATHER THAN RECOMPUTED, and that is the whole reason it exists. The
+   * renderer has to turn a firing soldier toward the point he is shooting at,
+   * and it must be the point THIS SYSTEM is actually firing along. Deriving a
+   * second answer from the pointer, or from the nearest enemy, is the
+   * dual-source mistake ticket 012 spent a design section avoiding: two rules
+   * agree until they don't, and when they diverge the man faces one way while
+   * his rounds go another — which reads as a targeting bug and is really a
+   * bookkeeping one. The same shape, for the same reason, as `AiSystem.targetOf`.
+   *
+   * It is the AIM, not the victim. `AIM_TOLERANCE_TILES` lets a round aimed near
+   * a man hit him, so the two are routinely a tile or more apart, and the
+   * shooter should face where the PLAYER pointed.
+   *
+   * A READ, AND ONLY A READ. Nothing about how a shot is aimed, chosen or
+   * resolved changes because somebody asked this.
+   */
+  aimOf(unitId: number): { x: number; z: number } | undefined
 }
 
 /** Both teams, which is what `autoEngageTeams` defaults to. See `CombatOptions`. */
@@ -339,6 +360,21 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
 
   const isFiring = (unitId: number): boolean => orders.has(unitId)
 
+  /**
+   * See `CombatSystem.aimOf`.
+   *
+   * A fresh point per call rather than the live `FireOrder`, which is mutated in
+   * place when the order is re-aimed: a caller holding the order itself would
+   * watch its aim point change under it, and could write to it. It needs no
+   * liveness check of its own — the tick sweep above deletes the orders of the
+   * dead, so a despawned unit answers `undefined` from the next tick on.
+   */
+  function aimOf(unitId: number): { x: number; z: number } | undefined {
+    const order = orders.get(unitId)
+    if (order === undefined) return undefined
+    return { x: order.worldX, z: order.worldZ }
+  }
+
   function combatSystem(world: World): void {
     attached = world
     const tick = world.tickCount
@@ -535,5 +571,5 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
     }
   }
 
-  return Object.assign(combatSystem, { orderFire, ceaseFire, isFiring })
+  return Object.assign(combatSystem, { orderFire, ceaseFire, isFiring, aimOf })
 }

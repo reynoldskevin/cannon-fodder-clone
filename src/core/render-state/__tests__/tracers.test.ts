@@ -202,3 +202,72 @@ describe('hostile inputs', () => {
     expect(createTracerBuffer().visible(0)).toEqual([])
   })
 })
+
+describe('what `visible` hands back is the caller`s to keep', () => {
+  it('does not alias the ring, so a later shot cannot rewrite an earlier read', () => {
+    /**
+     * THE OPTIMISATION SOMEONE WILL REACH FOR, and it is silently wrong.
+     *
+     * `visible` allocates a small object per live tracer, and the obvious way to
+     * avoid that is to hand back the ring's own entries with a `fade` bolted on.
+     * The buffer then overwrites those entries in place as new rounds arrive —
+     * so a renderer holding last frame's array would watch its tracers teleport
+     * to the endpoints of shots fired after it looked.
+     *
+     * A reviewer made exactly that change and the entire suite stayed green,
+     * which is why this case exists. The docstring promises `visible` mutates
+     * nothing; the expiry test covers half of that promise and this covers the
+     * other half.
+     */
+    const b = createTracerBuffer({ capacity: 2, lifetimeSeconds: 100 })
+    b.add(shot(1, 1, 2, 2), 0)
+    const held = b.visible(0)
+    expect(held[0]).toMatchObject({ originX: 1, targetX: 2 })
+
+    // Enough shots to wrap the ring and overwrite the slot the held tracer came
+    // from, several times over.
+    for (let i = 0; i < 6; i += 1) b.add(shot(90 + i, 0, 91 + i, 0), 0)
+
+    expect(held[0]).toMatchObject({ originX: 1, originZ: 1, targetX: 2, targetZ: 2 })
+  })
+
+  it('hands back a different array each time', () => {
+    const b = createTracerBuffer({ lifetimeSeconds: 10 })
+    b.add(A, 0)
+    expect(b.visible(0)).not.toBe(b.visible(0))
+  })
+})
+
+describe('the options are guarded, because one day somebody will pass nonsense', () => {
+  it('refuses a capacity of zero rather than swallowing every shot', () => {
+    // A zero-length ring accepts rounds and shows none of them — a tracer
+    // feature that is silently off, which is worse than one that is loudly
+    // broken.
+    const b = createTracerBuffer({ capacity: 0, lifetimeSeconds: 10 })
+    expect(b.capacity).toBeGreaterThanOrEqual(1)
+    b.add(A, 0)
+    expect(b.visible(0)).toHaveLength(1)
+  })
+
+  it('refuses a fractional capacity rather than indexing past the ring', () => {
+    const b = createTracerBuffer({ capacity: 2.5, lifetimeSeconds: 10 })
+    expect(Number.isInteger(b.capacity)).toBe(true)
+    for (let i = 0; i < 5; i += 1) b.add(shot(i, 0, i + 1, 0), 0)
+    expect(b.visible(0).length).toBeLessThanOrEqual(b.capacity)
+  })
+
+  it('refuses a lifetime of zero or less', () => {
+    // A non-positive lifetime divides by zero or goes negative, and a negative
+    // fade would light a tracer BRIGHTER than a live round — forever, since it
+    // never reaches 1 and never expires.
+    for (const lifetimeSeconds of [0, -1]) {
+      const b = createTracerBuffer({ lifetimeSeconds })
+      b.add(A, 0)
+      const fade = b.visible(0)[0]?.fade
+      expect({ lifetimeSeconds, ok: fade !== undefined && fade >= 0 && fade < 1 }).toEqual({
+        lifetimeSeconds,
+        ok: true,
+      })
+    }
+  })
+})

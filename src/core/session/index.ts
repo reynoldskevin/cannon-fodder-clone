@@ -662,6 +662,29 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
     worldToTile(worldX, worldZ, level.size)
 
   /**
+   * Whether a unit's aim point is the tile it is standing on — a DEGENERATE aim,
+   * with no direction in it (ticket 025a).
+   *
+   * A zero vector has no direction and `facingFromVector` answers SOUTH for one,
+   * so honouring an aim at your own feet spins the man round to face the camera.
+   * Right-clicking your own squad is an easy misclick and it must not do that.
+   *
+   * COMPARED AS TILES, NOT AS AN EXACT ZERO. An order names a TILE and
+   * `orderFire` stores its CENTRE, while a walking man is somewhere inside his
+   * tile rather than on its centre — so "aimed at the tile under my feet"
+   * produces a vector that is small, non-zero, and pointing at whichever side of
+   * the centre he has not reached yet. A man mid-stride would therefore be
+   * turned to face backwards by a fifth of a tile, which is precisely the spin
+   * this exists to stop. The tile comparison is the question actually being
+   * asked. Both sides go through `worldToTile`, so the centre-indexed convention
+   * is stated in exactly one place (see `tileOf`).
+   */
+  function aimedAtOwnTile(aim: { x: number; z: number }, standingOn: TileCoord): boolean {
+    const aimed = tileOf(aim.x, aim.z)
+    return aimed.x === standingOn.x && aimed.y === standingOn.y
+  }
+
+  /**
    * This frame's drawables. A PURE READ: it consults the world, the corpse list
    * and the tracks, and writes to none of them. A headless replay and a rendered
    * one must produce the same mission, and the only way to guarantee that is for
@@ -676,11 +699,29 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
       if (entity === undefined) continue
       const track = tracks.get(entity.id)
       const tile = tileOf(entity.x, entity.z)
-      const dx = track === undefined ? 0 : entity.x - track.x
-      const dz = track === undefined ? 0 : entity.z - track.z
-      // Movement WINS. The authored facing is only ever a starting pose, and the
-      // entry is gone the moment he moves anyway; this covers the frames before
-      // the first step, when there is no movement to read at all.
+      let dx = track === undefined ? 0 : entity.x - track.x
+      let dz = track === undefined ? 0 : entity.z - track.z
+      // AIM OUTRANKS MOVEMENT (ticket 025a), and the mechanic it is catching up
+      // with is years older than this line. A right-click has always fired along
+      // the ray from the shooter to the CURSOR rather than along his facing, so
+      // a man marching north with the cursor east put his rounds east — and was
+      // drawn facing north, because movement was the only thing feeding the
+      // facing. With no tracer to contradict it the sprite was the player's only
+      // feedback, and it was pointing the wrong way: it reads as "he fires where
+      // he is facing", which is a targeting bug that does not exist.
+      //
+      // Firing wins for the same reason `fire` outranks `walk` in `animationFor`
+      // — the player is holding a button that means "look there". `stableFacing`
+      // downstream smooths the result, and its dead zone is what stops a dragged
+      // cursor strobing between two sprites.
+      const aim = combat.aimOf(entity.id)
+      if (aim !== undefined && !aimedAtOwnTile(aim, tile)) {
+        dx = aim.x - entity.x
+        dz = aim.z - entity.z
+      }
+      // The authored facing is only ever a starting pose, and the entry is gone
+      // the moment he moves anyway; this covers the frames before the first step,
+      // when there is neither an aim nor any movement to read at all.
       const authored = dx === 0 && dz === 0 ? spawnFacings.get(entity.id) : undefined
       const animation = animationFor(entity)
       out.push({

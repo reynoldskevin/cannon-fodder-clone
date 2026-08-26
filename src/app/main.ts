@@ -14,7 +14,9 @@ import { parseElevation } from '../core/view/orientation'
 import { tileToWorld } from '../core/view/projection'
 import { levelRelief } from '../core/view/relief'
 import { createSession } from '../core/session'
+import { createTracerBuffer } from '../core/render-state/tracers'
 import { CameraRig } from '../render/camera-rig'
+import { TracerRenderer } from '../render/tracer-renderer'
 import { SceneBuilder } from '../render/scene-builder'
 import {
   buildSpriteAtlas,
@@ -253,6 +255,33 @@ async function boot(): Promise<void> {
   const groundHeightAt = (tileX: number, tileY: number): number =>
     built.terrain.heightAt(tileX, tileY)
 
+  /**
+   * The live tracers (ticket 025a): every `ShotFired` this frame drained, stamped
+   * with the RENDERER's clock.
+   *
+   * THE RENDERER'S CLOCK AND NOT THE SIMULATION'S, deliberately. A tracer is a
+   * visual afterimage measured in real milliseconds — it has to look the same at
+   * 30 fps and at 144 fps, and it must not be able to change the mission. Feeding
+   * it `elapsed` (declared below, and reset by `restart` for the reason stated
+   * there) is what keeps it presentation: a headless replay of the same level,
+   * seed and commands produces an identical mission whether or not anybody ever
+   * drew a streak.
+   *
+   * A `let`, because `restart()` REPLACES it. The buffer stamps tracers with a
+   * clock the restart puts back to zero, so rounds from the previous mission
+   * would not merely linger — they would sit at a `firedAt` in the future,
+   * unaged and therefore unfading, for the length of the next mission.
+   */
+  let tracers = createTracerBuffer()
+  // Sized from the buffer's own capacity, which is what lets the geometry be
+  // allocated once and never grown. See `TracerRenderer`.
+  const tracerFx = new TracerRenderer({
+    size: level.size,
+    heightAt: groundHeightAt,
+    capacity: tracers.capacity,
+  })
+  built.scene.add(tracerFx.object)
+
   // The rig reasons about the level's SILHOUETTE, not its footprint: the terrain
   // is extruded, so the zoom cap has to know how far this particular level's
   // tiles rise and fall — raised terrain at the far edge is what would otherwise
@@ -429,6 +458,14 @@ async function boot(): Promise<void> {
     // declared. `previous` goes with them so the first frame of the new mission
     // measures its delta from the restart and not from the frame before it.
     elapsed = 0
+    // WITH THE CLOCK THEY ARE STAMPED AGAINST. A tracer's age is `elapsed -
+    // firedAt`, so rounds carried over from the mission that just ended would
+    // have a `firedAt` in the future of the clock that just went back to zero —
+    // an age that is negative rather than expired, which the buffer floors to
+    // "brand new". The new mission would open under the last one's fire, and it
+    // would never fade.
+    tracers = createTracerBuffer()
+    tracerFx.update(tracers.visible(elapsed))
     previous = performance.now()
     roster = playerIds()
     pointer.dispose()
@@ -455,6 +492,9 @@ async function boot(): Promise<void> {
     // scene's `dispose` knows about, because the overlay was added to the scene
     // from outside it.
     debug?.dispose()
+    // Its own geometry and material, added to the scene from out here — so
+    // `built.dispose()` does not know about them.
+    tracerFx.dispose()
     hud.dispose()
     pointer.dispose()
     zoom.dispose()
@@ -522,6 +562,11 @@ async function boot(): Promise<void> {
       // fires once and the screen it explains outlives it by minutes.
       for (const event of session.events()) {
         if (event.type === 'MissionFailed') failure = event.reason
+        // ONE TRACER PER ROUND, from the event's own endpoints. Ticket 011a
+        // already clamps the far end to the near face of whatever the round
+        // meets, so a tracer drawn to `targetX`/`targetZ` stops at the wall
+        // without a line of geometry code asking whether it should.
+        else if (event.type === 'ShotFired') tracers.add(event, elapsed)
       }
       hud.update({
         squad: rosterNow(),
@@ -543,6 +588,10 @@ async function boot(): Promise<void> {
         })
       }
       built.entities.update(elapsed, alpha)
+      // EVERY FRAME, not only on a stepping one: a tracer fades on the display's
+      // clock, so a frame that ran no simulation step still has to redraw the
+      // streaks a little dimmer than it found them.
+      tracerFx.update(tracers.visible(elapsed))
       // BEFORE the render, so this frame draws what this frame decided. Absent
       // `?debug=1` this is one optional-call check per frame and no debug module
       // was ever fetched, let alone evaluated.

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createSession } from '../index'
 import { makeLevel } from './fixture'
-import { tileToWorld } from '../../view/projection'
+import { tileToWorld, worldToTile } from '../../view/projection'
 import type { RenderEntity } from '../../render-state/entity'
 
 /**
@@ -75,16 +75,34 @@ describe('a firing unit faces its aim point', () => {
   })
 
   it('faces the aim, not the man it happens to hit', () => {
-    // `AIM_TOLERANCE_TILES` lets a round aimed near a target hit it, so the aim
-    // point and the victim are routinely a tile or two apart. The player pointed
-    // at the ground; the man looks at the ground.
+    /**
+     * `AIM_TOLERANCE_TILES` lets a round aimed near a target hit it, so the aim
+     * point and the victim are routinely a tile or two apart. The player pointed
+     * at the ground; the man looks at the ground.
+     *
+     * THE SHOOTER IS SPAWNED WITH 10,000 HIT POINTS, and that is not decoration.
+     * At `INFANTRY_HEALTH = 1` the level's own avatar is killed by the enemy on
+     * the very first tick — the AI orders fire before combat runs, and a rifle
+     * round is exactly lethal — so `renderEntities` returns his CORPSE, which
+     * deliberately reports `dx: 0, dz: 0` so a body falls the way the man was
+     * looking. The first draft of this case asserted a facing on a dead man.
+     */
     const level = makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [{ x: 8, y: 3 }] })
     const s = createSession(level)
-    const id = s.selection()[0]!
+    const at = tileToWorld(9, 7, level.size)
+    const shooter = s.world.spawn({
+      kind: 'rifleman',
+      team: 'player',
+      x: at.x,
+      z: at.z,
+      health: 10_000,
+    })
     // Aimed due EAST while the only enemy is due NORTH.
-    s.queue.push({ type: 'fire', unitIds: [id], ordnance: 'rifle', target: { x: 14, y: 7 } })
-    s.advance(1 / 60)
-    const e = drawn(s, id)
+    s.queue.push({ type: 'fire', unitIds: [shooter.id], ordnance: 'rifle', target: { x: 15, y: 7 } })
+    for (let f = 0; f < 4; f += 1) s.advance(1 / 60)
+
+    expect(s.world.get(shooter.id)).toBeDefined() // he survived to be looked at
+    const e = drawn(s, shooter.id)
     expect({ east: e.dx > 0, notNorth: Math.abs(e.dz) < Math.abs(e.dx) }).toEqual({
       east: true,
       notNorth: true,
@@ -137,27 +155,59 @@ describe('a unit that is not firing is unaffected', () => {
 })
 
 describe('a degenerate aim does not spin anybody round', () => {
-  it('aiming at your own tile leaves the facing alone', () => {
-    /**
-     * A zero-length vector has no direction, and `facingFromVector` answers
-     * south for one — so a man ordered to fire at the tile under his own feet
-     * would snap to face the camera. Right-clicking your own squad is an easy
-     * misclick, and it must not spin the man round.
-     */
-    const s = createSession(alone())
+  /**
+   * A zero-length vector has no direction, and `facingFromVector` answers south
+   * for one — so a man ordered to fire at the tile under his own feet would snap
+   * to face the camera. Right-clicking your own squad is an easy misclick and it
+   * must not spin the man round.
+   */
+  it('leaves a marching man facing his march', () => {
+    const level = alone()
+    const s = createSession(level)
     const id = s.selection()[0]!
     s.queue.push({ type: 'move', unitIds: [id], target: { x: 15, y: 7 } })
     for (let f = 0; f < 20; f += 1) s.advance(1 / 60)
-    const before = drawn(s, id)
-    expect(before.dx).toBeGreaterThan(0)
+    expect(drawn(s, id).dx).toBeGreaterThan(0)
 
     const here = s.world.get(id)!
-    const tile = { x: Math.round(here.x + (20 - 1) / 2), y: Math.round(here.z + (15 - 1) / 2) }
-    s.queue.push({ type: 'fire', unitIds: [id], ordnance: 'rifle', target: tile })
+    // Through `worldToTile`, not by re-spelling the half-tile mapping: a
+    // hand-rolled `worldX + (w - 1) / 2` here would be the exact off-by-half
+    // error that has cost this project two review cycles, and it would be
+    // hiding inside the test that is meant to catch facing bugs.
+    s.queue.push({
+      type: 'fire',
+      unitIds: [id],
+      ordnance: 'rifle',
+      target: worldToTile(here.x, here.z, level.size),
+    })
+    s.advance(1 / 60)
+    expect(drawn(s, id).dx).toBeGreaterThan(0) // still east, not south
+  })
+
+  it('leaves a STANDING man exactly as he was', () => {
+    /**
+     * The case the first draft missed. Standing still, there is no movement to
+     * fall back on either — so a degenerate aim must fall all the way through to
+     * the authored spawn facing and change nothing at all. Asserted as exact
+     * equality, because "unchanged" is the whole claim and a movement fallback
+     * could otherwise satisfy a looser one.
+     */
+    const level = alone()
+    const s = createSession(level)
+    const id = s.selection()[0]!
+    s.advance(1 / 60)
+    const before = drawn(s, id)
+
+    const here = s.world.get(id)!
+    s.queue.push({
+      type: 'fire',
+      unitIds: [id],
+      ordnance: 'rifle',
+      target: worldToTile(here.x, here.z, level.size),
+    })
     s.advance(1 / 60)
     const after = drawn(s, id)
-    // Not south, and not zero: whatever it was facing, it still is.
-    expect(after.dx > 0 || (after.dx === before.dx && after.dz === before.dz)).toBe(true)
+    expect({ dx: after.dx, dz: after.dz }).toEqual({ dx: before.dx, dz: before.dz })
   })
 })
 
