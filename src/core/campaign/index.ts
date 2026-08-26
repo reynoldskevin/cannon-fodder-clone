@@ -42,6 +42,10 @@ export type {
   SquadMember,
   SquadSelection,
 } from './selection'
+// Ticket 022. Two pure selectors and NO NEW STATE — Boot Hill is drawn entirely
+// from what 019 already stores, which is the test of the three tickets before it.
+export { bootHillModel, promotionsBetween } from './boothill'
+export type { BootHillModel, Grave, Promotion } from './boothill'
 export { RANKS, rankFor } from './ranks'
 export type { Rank } from './ranks'
 export { NAME_POOL } from './names'

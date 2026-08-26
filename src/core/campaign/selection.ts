@@ -71,6 +71,18 @@ export interface RecruitmentModel {
   readonly maxSquad: number
   /** The living only, in roster order. Never the dead. */
   readonly available: readonly RecruitmentEntry[]
+  /**
+   * How many men auto-fill would assign if the player deployed with the
+   * selection he has made so far. 0 when he has picked a full squad, and 0 when
+   * a short selection would be REFUSED rather than completed.
+   *
+   * TICKET 021 LEFT THIS TRAP ON PURPOSE. `selectSquad` silently finishes a
+   * short selection when the living roster is no bigger than the squad, so the
+   * same click on the same button means "refused" or "deploys three men you did
+   * not pick" depending on a quantity the screen never showed. A number the
+   * Deploy button can print is the whole fix.
+   */
+  readonly autoFilled: number
 }
 
 /**
@@ -211,6 +223,39 @@ function autoFill(
 }
 
 /**
+ * How many men deploying right now would assign on the player's behalf.
+ *
+ * BY ASKING `selectSquad` RATHER THAN RE-DERIVING THE RULE. The condition it
+ * would have to restate — "short, and the living roster is no bigger than the
+ * squad" — is the one thing on this screen that must not drift from what the
+ * button actually does: a notice reading "3 men will be assigned" over a click
+ * that refuses is worse than no notice, because it is a lie the player acts on.
+ * One rule, one function, and the answer is right by construction.
+ *
+ * The recruiting `selectSquad` may do is DISCARDED with the state it returns.
+ * Every transition here is pure, so asking the question costs a few names in a
+ * value nobody keeps; nothing is issued against the campaign until the player
+ * really deploys.
+ *
+ * A REFUSAL IS 0, not a negative number and not a throw: nothing is assigned
+ * for a player whose click is about to be rejected, and the screen has a
+ * separate job telling him why.
+ */
+function autoFilledFor(
+  state: CampaignState,
+  level: LevelData,
+  chosenIds: readonly string[],
+): number {
+  const result = selectSquad(state, level, chosenIds)
+  if (!result.ok) return 0
+  // Clamped, because this is the count printed on a button. `selectSquad`
+  // refuses every over-selection so the subtraction cannot go negative today;
+  // "-1 men will be assigned" is not a sentence worth risking on that staying
+  // true.
+  return Math.max(0, result.squad.length - chosenIds.length)
+}
+
+/**
  * What the Recruitment screen draws.
  *
  * A COPY, NOT A WINDOW. It crosses into `src/ui`, and a screen holding a view
@@ -220,10 +265,20 @@ function autoFill(
  * The dead never appear, which `recruitsAvailable` already guarantees by reading
  * the living list; the screen a player picks a squad on is the last place a man
  * he buried last mission should be offered to him.
+ *
+ * `chosenIds` IS OPTIONAL BECAUSE THE SCREEN RENDERS BEFORE THE PLAYER CLICKS
+ * ANYTHING. An empty selection is a real state the screen has to draw, not a
+ * caller who forgot an argument, and requiring it would push a `[]` into every
+ * call site for the sake of the first frame.
  */
-export function recruitmentModel(state: CampaignState, level: LevelData): RecruitmentModel {
+export function recruitmentModel(
+  state: CampaignState,
+  level: LevelData,
+  chosenIds: readonly string[] = [],
+): RecruitmentModel {
   return {
     maxSquad: maxSquadFor(level),
+    autoFilled: autoFilledFor(state, level, chosenIds),
     available: recruitsAvailable(state).map((man) => ({
       id: man.id,
       name: man.name,
