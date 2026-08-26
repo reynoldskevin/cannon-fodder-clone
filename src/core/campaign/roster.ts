@@ -25,6 +25,7 @@ import { rankFor } from './ranks'
 import type {
   CampaignState,
   DeadRecruit,
+  MissionEntry,
   MissionReport,
   Recruit,
   RecruitRecord,
@@ -142,9 +143,51 @@ export function recruitsAvailable(state: CampaignState): readonly Recruit[] {
 }
 
 /** What one mission did to one man, once his duplicate entries are folded together. */
-interface Tally {
-  kills: number
-  died: boolean
+export interface MissionTally {
+  readonly kills: number
+  readonly died: boolean
+}
+
+/**
+ * Fold a report's entries down to one tally per man, applying the two rules that
+ * make a self-contradicting report readable.
+ *
+ * EXPORTED BECAUSE TWO MODULES READ THE SAME STRUCT. `applyMissionReport` writes
+ * Boot Hill from a `MissionReport` and `core/flow`'s `debriefModel` writes the
+ * Debrief screen from the very same one; if they folded it differently the
+ * Debrief would list a man among the survivors while his gravestone was being
+ * carved, and nothing would report the disagreement. `MissionReport` is a public
+ * interface, so a producer other than `missionReport` — which happens to dedupe
+ * through a `Set` today — can hand either function any of these shapes.
+ *
+ *   - DEATH BEATS SURVIVAL when a man is named both ways. A contradiction has to
+ *     resolve somewhere, and resolving it towards survival would resurrect him.
+ *   - NEGATIVE AND NON-FINITE KILL COUNTS CONTRIBUTE ZERO. The negative case is
+ *     a round-trip contradiction rather than a nit: `persistence.ts` rejects any
+ *     record with a negative count, so a campaign that recorded one could never
+ *     be read back and the whole save would be discarded as damaged on the next
+ *     launch. A non-finite one renders as "NaN kills" over a mission that
+ *     recorded none.
+ *
+ * `known` decides whose entries count at all, because the two callers disagree
+ * about that and only that: the roster ignores anybody not currently living, the
+ * Debrief ignores anybody it cannot name. Insertion order is the order the man
+ * first appears in the report, which is what keeps the Debrief's lists stable.
+ */
+export function foldMissionEntries(
+  entries: readonly MissionEntry[],
+  known: (recruitId: string) => boolean,
+): Map<string, MissionTally> {
+  const tallies = new Map<string, MissionTally>()
+  for (const entry of entries) {
+    if (!known(entry.recruitId)) continue
+    const tally = tallies.get(entry.recruitId) ?? { kills: 0, died: false }
+    tallies.set(entry.recruitId, {
+      kills: tally.kills + (Number.isFinite(entry.kills) && entry.kills > 0 ? entry.kills : 0),
+      died: tally.died || !entry.survived,
+    })
+  }
+  return tallies
 }
 
 /**
@@ -168,20 +211,9 @@ export function applyMissionReport(state: CampaignState, report: MissionReport):
   const living = new Set(state.recruits.map((r) => r.id))
 
   // Fold the entries first: one man can appear twice in a single report, and
-  // every rule below has to see him once.
-  const tallies = new Map<string, Tally>()
-  for (const entry of report.entries) {
-    if (!living.has(entry.recruitId)) continue
-    const tally = tallies.get(entry.recruitId) ?? { kills: 0, died: false }
-    // NEGATIVE AND NON-FINITE COUNTS ARE DROPPED, and the negative case is a
-    // round-trip contradiction rather than a nit: `persistence.ts` rejects any
-    // record with a negative count, so a campaign that recorded one could never
-    // be read back and the player's whole save would be discarded as damaged on
-    // the next launch. A state this module produces must survive its own load.
-    tally.kills += Number.isFinite(entry.kills) && entry.kills > 0 ? entry.kills : 0
-    if (!entry.survived) tally.died = true
-    tallies.set(entry.recruitId, tally)
-  }
+  // every rule below has to see him once. Shared with `debriefModel` so the
+  // gravestone and the results screen cannot disagree — see `foldMissionEntries`.
+  const tallies = foldMissionEntries(report.entries, (id) => living.has(id))
 
   const survivors: RecruitRecord[] = []
   const fallen: DeadRecruit[] = []
