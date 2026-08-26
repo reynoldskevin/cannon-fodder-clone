@@ -129,6 +129,35 @@ export interface FireRejectedEvent extends EventStamp {
   readonly reason: string
 }
 
+/**
+ * A loot chest was taken (ticket 017). Carries everything FX, audio and a kill
+ * feed need to stage the pickup without looking anything up in the sim.
+ *
+ * `index` is the chest's position in `level.spawns.chests` — stable and unique
+ * for the whole mission, so a renderer can retire the chest it was drawing
+ * rather than diffing two snapshots to work out which one vanished. The position
+ * rides along because the chest is GONE by the time presentation sees this: it
+ * is removed in the same pass that awards it, so there is nothing left to ask.
+ *
+ * `reward` is what was actually handed to the armoury, keyed by the open-enum
+ * ordnance name — the same bargain `ShotFired` makes by carrying both its
+ * endpoints. WHAT LANDED, NOT WHAT THE LEVEL OFFERED: `Armoury.grant` refuses a
+ * negative, fractional or non-finite amount, and an entry it refused does not
+ * appear here at all, or a kill feed built on this line would render "+ -5
+ * grenades" beside a pouch that never moved. So it is emitted AFTER the grant —
+ * there is no other way to describe one — and BEFORE the objective is told, and
+ * a consumer that reads the pouch on this event sees the rounds it names.
+ */
+export interface ChestCollectedEvent extends EventStamp {
+  readonly type: 'ChestCollected'
+  readonly index: number
+  readonly x: number
+  readonly z: number
+  /** The unit who took it: the lowest-id living player unit in range. */
+  readonly collectorId: number
+  readonly reward: Readonly<Record<string, number>>
+}
+
 /** An objective was satisfied. `objective` is the open-enum `LevelObjective.type`. */
 export interface MissionCompleteEvent extends EventStamp {
   readonly type: 'MissionComplete'
@@ -149,6 +178,7 @@ export type SimEvent =
   | ShotFiredEvent
   | ExplosionEvent
   | FireRejectedEvent
+  | ChestCollectedEvent
   | MissionCompleteEvent
   | MissionFailedEvent
 

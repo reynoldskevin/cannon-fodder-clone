@@ -27,6 +27,7 @@ import { createCombatSystem } from '../combat'
 import { createObjectiveSystem } from '../objectives'
 import { createOrdnanceSystem } from '../ordnance'
 import { bakeNavGrid } from '../pathing'
+import { createPickupSystem } from '../pickups'
 import { createSquadSystem } from '../squad'
 import { createGameLoop, EMPTY_EVENTS, FIXED_TIMESTEP } from '../world'
 import { World } from '../world'
@@ -39,6 +40,7 @@ import type { CommandQueue } from '../command'
 import type { LevelData } from '../level'
 import type { MissionOutcome, ObjectiveSystem } from '../objectives'
 import type { NavGrid } from '../pathing'
+import type { PickupSystem } from '../pickups'
 import type { RenderEntity } from '../render-state/entity'
 import type { SquadOptions, SquadSystem } from '../squad'
 import type { TileCoord } from '../view/projection'
@@ -117,6 +119,15 @@ export interface Session {
    * hands the new mission a full pouch rather than the last run's losses.
    */
   readonly armoury: Armoury
+  /**
+   * Loot chests and their collection (ticket 017).
+   *
+   * Public for the reason `ordnance.inFlight()` is: chests are NOT entities —
+   * `World.spawnFromLevel` refuses to make them one, because everything in the
+   * live array goes through the AI's target scan every tick — so `remaining()`
+   * is the only way a renderer or the HUD can learn what is still out there.
+   */
+  readonly pickups: PickupSystem
   /** The baked passability grid both systems path and sight against. */
   readonly grid: NavGrid
   /**
@@ -382,6 +393,12 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
   // replaces the default rather than merging over it.
   const ordnance = createOrdnanceSystem(grid)
   const armoury = createArmoury({ starting: options.ammo ?? DEFAULT_LOADOUT })
+  // Loot chests (ticket 017), which is what makes finite ammo a decision rather
+  // than an annoyance. It is handed the two things it pays into — the pouch and
+  // the mission's judge — and reads the level for where the chests are; it never
+  // writes to the level, because `restart()` builds a second session from the
+  // same document and a chest spliced out of it would never come back.
+  const pickups = createPickupSystem(level, { objectives, armoury })
 
   /**
    * THE SIMULATION PASSES, IN THE ORDER THEY RUN — and the ONLY place that
@@ -426,6 +443,16 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
     // roster the other had not yet edited, and two weapons would spend
     // themselves killing one man.
     ['ordnance', ordnance],
+    // PICKUPS AFTER MOVEMENT AND BEFORE OBJECTIVES, and both halves of that are
+    // decisions. After squad, because a man is judged to be standing on a chest
+    // where this tick's step actually left him — ordered before movement, every
+    // chest would be collected from where the squad stood at the top of the
+    // tick and collection would lag the sprite by a step. Before objectives,
+    // because a `collect_chests` mission is judged on the world at the END of
+    // the tick: registered after the judge, the last chest of the mission would
+    // end it one tick late, which is invisible on screen and wrong — the same
+    // argument the objectives entry below makes for itself.
+    ['pickups', pickups],
     // OBJECTIVES LAST. A mission is judged on the world as it stands at the END
     // of the tick, so the last enemy killed by this tick's combat or blast ends
     // the mission in this tick rather than the next. Registered anywhere
@@ -877,6 +904,7 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
     ai,
     objectives,
     armoury,
+    pickups,
     grid,
     systemOrder,
     // A getter, not a snapshot: the object is built once and the count changes
