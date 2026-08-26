@@ -73,3 +73,64 @@ export const TERRAIN = {
 export function traversalForTerrain(tile: TileId): TraversalMask {
   return tile === TERRAIN.WATER ? INFANTRY : ALL_TRAVERSAL
 }
+
+/**
+ * How fast a man moves while STANDING on this terrain, as a fraction of his
+ * ground speed (ticket 007b).
+ *
+ * Half speed in the water, so crossing the river takes twice as long as
+ * crossing the bridge. That is the whole of what makes the bridge a decision
+ * rather than scenery: 003a made the river passable, and a crossing that costs
+ * nothing is a crossing nobody thinks about.
+ *
+ * IT IS NEVER ZERO, AND THAT IS A CORRECTNESS RULE RATHER THAN A TUNING ONE. A
+ * tile that stops a man dead is an obstacle, and impassability has exactly one
+ * spelling in this engine — `traversalForTerrain`, which `bakeNavGrid` folds
+ * into the nav grid the flow field is solved over. A speed of zero would be a
+ * second spelling that PATHING CANNOT SEE: the field would route a squad
+ * happily into the water and the man would stand in it for the rest of the
+ * mission, which reads as a hang rather than as terrain.
+ *
+ * AN UNKNOWN TILE ID MOVES AT FULL SPEED, for the reason `traversalForTerrain`
+ * returns `ALL_TRAVERSAL` for one: `TileId` is an open enum, so a level from a
+ * newer importer must not silently bog a squad down in terrain this build
+ * cannot name.
+ *
+ * WHAT THIS DOES NOT DO — and it is a real limitation, written down here rather
+ * than left to be discovered. PATHING IS NOT TAUGHT THE COST. The flow field
+ * treats a water tile as no more expensive than grass, so a squad ordered to
+ * the far bank takes the SHORTEST route and not the FASTEST: order a man across
+ * and he may wade straight over where a human would have run to the bridge.
+ * Fixing that means a weighted flow field rather than a breadth-first one,
+ * which is its own ticket with its own performance budget. What it must not
+ * become is water made impassable to pathing while passable to movement — that
+ * produces a man who cannot be ORDERED into the water but drifts into it.
+ */
+export function speedMultiplierForTerrain(tile: TileId): number {
+  return tile === TERRAIN.WATER ? WATER_SPEED_MULTIPLIER : 1
+}
+
+/**
+ * The opening value, and it is feel rather than structure: half speed reads as
+ * wading without making a crossing feel like a punishment.
+ */
+const WATER_SPEED_MULTIPLIER = 0.7
+
+/**
+ * Whether a man STANDING on this terrain may fire at all (ticket 007b).
+ *
+ * The other half of what makes the bridge a decision. A man in the water is
+ * swimming, not fighting, so crossing under fire is a commitment rather than a
+ * slower walk — and it applies to both sides, which is the point: an enemy who
+ * wades in to flank cannot shoot while he does it either.
+ *
+ * THE QUESTION IS ABOUT THE SHOOTER, NEVER THE TARGET. A swimmer is a target
+ * like any other; being unable to shoot back is the whole risk of crossing.
+ *
+ * AN UNKNOWN TILE ID CAN FIRE, matching the two lookups above: a level from a
+ * newer importer must not silently disarm a squad standing on terrain this
+ * build cannot name.
+ */
+export function canFireFromTerrain(tile: TileId): boolean {
+  return tile !== TERRAIN.WATER
+}

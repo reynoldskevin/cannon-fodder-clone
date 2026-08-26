@@ -180,8 +180,15 @@ describe('holding fire costs him nothing', () => {
     r.combat.orderFire([swimmer.id], { x: DRY_FAR, y: 3 })
     expect(by(r.run(120), swimmer.id)).toEqual([])
 
-    // Onto the near bank, still holding the same order.
-    const bank = tileToWorld(DRY_NEAR + 6, 3, r.world.level.size)
+    /**
+     * Onto the near bank, still holding the same order.
+     *
+     * `DRY_NEAR`, NOT `DRY_NEAR + 6`. The first draft used +6, which is tile 10
+     * — and the river in this fixture is columns 8 to 11, so it moved him from
+     * one water tile to another and then asserted he fired. The constants above
+     * name the dry tiles; use one of them.
+     */
+    const bank = tileToWorld(DRY_NEAR, 3, r.world.level.size)
     const man = r.world.get(swimmer.id)
     if (man === undefined) throw new Error('lost the swimmer')
     man.x = bank.x

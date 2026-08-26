@@ -36,6 +36,7 @@ import {
   readyToFire,
 } from './resolution'
 import { AIM_CORRIDOR_TILES, weaponForKind } from './weapons'
+import { canFireFromTerrain } from '../level/terrain'
 import { INFANTRY } from '../pathing/navgrid'
 import { TILE_WORLD_SIZE, tileToWorld } from '../view/projection'
 import type { NavGrid, TraversalMask } from '../pathing/navgrid'
@@ -542,6 +543,47 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
       // so an unarmed entity never enters the cooldown table at all.
       if (spec === null) return
       armedCount += 1
+      // A MAN IN THE WATER HOLDS HIS FIRE (ticket 007b), and this is the one
+      // place that decides it. Every route to a trigger arrives here — the
+      // player's standing order, the AI's `orderFire`, auto-engage — so the rule
+      // is enforced once instead of in three places that would drift; and it
+      // applies to both teams, which is the point: an enemy who wades in to
+      // flank cannot shoot while he does it either.
+      //
+      // The question is about the SHOOTER'S OWN TILE and nothing else. Shooting
+      // AT a swimmer is unaffected — being unable to shoot back is the whole
+      // risk of crossing.
+      //
+      // BEFORE THE COOLDOWN CHECK, AND THAT IS LOAD-BEARING. Nothing here calls
+      // `markFired`, so a man who holds fire for a four-second crossing spends
+      // nothing and comes out of the river ready on the tick he lands. A gate
+      // placed after `markFired` would make the rule a punishment rather than a
+      // restriction.
+      //
+      // He returns with NO `ShotFired` AT ALL, rather than one with `hit: false`.
+      // A miss is a round that was fired and went somewhere; this man never
+      // pulled the trigger. An emitted miss would still draw a tracer, still
+      // make a report and still be heard by every enemy in the alert radius — so
+      // a man wading across would broadcast his position while doing no harm,
+      // which is the opposite of what this rule is for.
+      //
+      // THE AI IS DELIBERATELY NOT TAUGHT THIS. A swimming enemy still enters
+      // `engage` and still issues a fire order, and combat simply declines to
+      // fire it: he is a man trying to shoot and failing, which is the honest
+      // reading. If you find `core/ai` cheerfully ordering fire from the middle
+      // of a river, that is this decision and not a bug — the alternative is a
+      // fourth module with an opinion about water.
+      //
+      // `core/ordnance` is untouched on purpose: a man can plausibly throw a
+      // grenade while wading, which is a different question with its own answer.
+      const shooterTile =
+        world.level.terrain[Math.floor(worldToTileAxis(shooter.z, grid.h))]?.[
+          Math.floor(worldToTileAxis(shooter.x, grid.w))
+        ]
+      // An off-map shooter reads as `undefined` and may fire — the neutral
+      // answer, matching `canFireFromTerrain`'s own answer for a tile id this
+      // build cannot name.
+      if (shooterTile !== undefined && !canFireFromTerrain(shooterTile)) return
       if (!readyToFire(cooldowns, shooter.id, tick)) return
 
       const order = orders.get(shooter.id)
