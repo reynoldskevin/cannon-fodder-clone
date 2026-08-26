@@ -45,7 +45,7 @@ describe('the objective system runs inside the session', () => {
     // the last enemy killed by this tick's combat pass ends the mission in this
     // tick rather than the next. Registered anywhere earlier and every mission
     // ends one tick late — invisible, and wrong.
-    expect(createSession(duel()).systemOrder).toEqual(['ai', 'squad', 'combat', 'objectives'])
+    expect(createSession(duel()).systemOrder).toEqual(['ai', 'squad', 'combat', 'ordnance', 'objectives'])
   })
 
   it('reports the level`s objectives, in the level`s order', () => {

@@ -21,9 +21,11 @@
  */
 
 import { createAiSystem } from '../ai'
+import { createArmoury, DEFAULT_LOADOUT } from '../armoury'
 import { applyCommand, createCommandQueue } from '../command'
 import { createCombatSystem } from '../combat'
 import { createObjectiveSystem } from '../objectives'
+import { createOrdnanceSystem } from '../ordnance'
 import { bakeNavGrid } from '../pathing'
 import { createSquadSystem } from '../squad'
 import { createGameLoop, EMPTY_EVENTS, FIXED_TIMESTEP } from '../world'
@@ -31,6 +33,7 @@ import { World } from '../world'
 import { worldToTile } from '../view/projection'
 import { propRenderEntities } from './props'
 import type { AiSystem } from '../ai'
+import type { Armoury } from '../armoury'
 import type { CombatOptions, CombatSystem } from '../combat'
 import type { CommandQueue } from '../command'
 import type { LevelData } from '../level'
@@ -39,7 +42,7 @@ import type { NavGrid } from '../pathing'
 import type { RenderEntity } from '../render-state/entity'
 import type { SquadOptions, SquadSystem } from '../squad'
 import type { TileCoord } from '../view/projection'
-import type { Entity, SimEvent, Team } from '../world'
+import type { Entity, SimEvent, SimSystem, Team } from '../world'
 
 /** How the ground height under a tile is sampled. Supplied by the terrain. */
 export type GroundHeightAt = (tileX: number, tileY: number) => number
@@ -57,6 +60,17 @@ export interface SessionOptions {
    * default a caller may replace. See where it is passed, in `createSession`.
    */
   readonly combat?: CombatOptions
+  /**
+   * Starting rounds per ordnance type, REPLACING `DEFAULT_LOADOUT` rather than
+   * merging over it (ticket 016).
+   *
+   * Replacing, because the thing a caller most wants to say is "this squad has
+   * NO rockets" and a merge makes that unsayable — the default would fill in
+   * every type the caller left out, which is precisely the types it meant to
+   * empty. Ammunition is level data where a level names it; this is where it
+   * arrives.
+   */
+  readonly ammo?: Readonly<Record<string, number>>
 }
 
 /** A running mission: the world, the loop driving it, and its render state. */
@@ -94,17 +108,30 @@ export interface Session {
    * draws `progress()` and the mission timer straight off it.
    */
   readonly objectives: ObjectiveSystem
+  /**
+   * The squad's ammunition and its selected weapon (ticket 016).
+   *
+   * Public because it is read from both ends: the HUD draws `slots()` and the
+   * input layer reads `selected` when it builds a `fire` command. It is per
+   * SESSION, so ticket 013's `restart()` — which builds a whole new session —
+   * hands the new mission a full pouch rather than the last run's losses.
+   */
+  readonly armoury: Armoury
   /** The baked passability grid both systems path and sight against. */
   readonly grid: NavGrid
   /**
-   * The registration order of the simulation systems, DECLARED.
+   * The registration order of the simulation systems, DERIVED.
    *
-   * A statement of the decision `createSession` made, readable without following
-   * the `addSystem` calls; it is not itself evidence that the world runs them in
-   * that order. The behaviour is pinned separately, by the test that puts a unit
-   * under a move order AND a fire order at once and reads `ShotFired.originX`
-   * off a round he fires WHILE WALKING: the origin is where this tick's step
-   * left him, which proves combat saw the position squad wrote the same step.
+   * The names of the ordered list `createSession` registers FROM, not a second
+   * list written out beside it — so it cannot be edited into a lie about what
+   * the world was actually handed. See that list for why it is built this way.
+   *
+   * It is still not evidence that the world RUNS them in that order, which is
+   * `World.tick`'s business. The behaviour is pinned separately, by the test
+   * that puts a unit under a move order AND a fire order at once and reads
+   * `ShotFired.originX` off a round he fires WHILE WALKING: the origin is where
+   * this tick's step left him, which proves combat saw the position squad wrote
+   * the same step.
    */
   readonly systemOrder: readonly string[]
   /**
@@ -344,25 +371,87 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
   // enemy round is therefore subject to exactly the range and sightline checks
   // a player's is.
   const ai = createAiSystem(grid, { squad, combat })
-  // AI FIRST. A pursue order given this tick must move the man this tick, and a
-  // halt must land before the movement it is cancelling; ordered after squad,
-  // every decision the machine makes would take a whole tick to have any effect
-  // and the man would overshoot his firing position by a step. Combat stays
-  // last, so a unit shoots from where it now stands.
   // The mission's judge (ticket 013). It is handed the level and reads the
   // world; it never drains the event bus, which is presentation's and
   // exactly-once — it peeks at it instead (`World.peekEvents`), for the same
   // reason the AI is handed its batch rather than taking one.
   const objectives = createObjectiveSystem(level)
-  world.addSystem(ai)
-  world.addSystem(squad)
-  world.addSystem(combat)
+  // Grenades and rockets (tickets 015, 016). The pouch is per-squad and per
+  // SESSION: `restart()` builds a new session, so a new mission cannot inherit
+  // the last one's empty pouch. See `SessionOptions.ammo` for why the option
+  // replaces the default rather than merging over it.
+  const ordnance = createOrdnanceSystem(grid)
+  const armoury = createArmoury({ starting: options.ammo ?? DEFAULT_LOADOUT })
+
+  /**
+   * THE SIMULATION PASSES, IN THE ORDER THEY RUN — and the ONLY place that
+   * order is stated.
+   *
+   * `systemOrder` is derived from this list rather than written out beside it,
+   * and that is the whole point of the list existing. It used to be a
+   * hand-written frozen literal sitting next to a column of `addSystem` calls:
+   * two statements of the same fact, free to disagree. They did not merely
+   * theoretically disagree — a reviewer moved the ordnance registration ABOVE
+   * combat and all 1315 tests stayed green, because every assertion on
+   * `systemOrder` reads the array of names and nothing reads the registration.
+   * At that moment the exported "documented contract" was documenting an order
+   * the world was not running, which is precisely the failure the wrong
+   * `attached` comment in `core/ordnance/system.ts` cost ticket 015 a review
+   * round over.
+   *
+   * So there is one list, `addSystem` walks it, and `systemOrder` is its names.
+   * Reordering an entry moves the pass AND the declaration together; there is no
+   * edit that can make one lie about the other.
+   *
+   * Still not a proof that the world RUNS them in this order — that is
+   * `World.tick`'s business, and it is pinned separately by the test that puts a
+   * unit under a move order and a fire order at once and reads `ShotFired.originX`
+   * off a round he fires WHILE WALKING. What this buys is that the name and the
+   * registration cannot come apart.
+   */
+  const systems: readonly (readonly [string, SimSystem])[] = [
+    // AI FIRST. A pursue order given this tick must move the man this tick, and
+    // a halt must land before the movement it is cancelling; ordered after
+    // squad, every decision the machine makes would take a whole tick to have
+    // any effect and the man would overshoot his firing position by a step.
+    ['ai', ai],
+    // Movement before the two things that shoot, so a unit fires from where it
+    // now stands rather than from where it stood at the top of the tick.
+    ['squad', squad],
+    ['combat', combat],
+    // ORDNANCE AFTER COMBAT. A man killed by a rifle this tick must not also be
+    // killed by a grenade in the same one: the blast measures the world combat
+    // left behind, which is the same reason combat itself runs after movement.
+    // Reversed, a squad's rifles and its grenades would each resolve against a
+    // roster the other had not yet edited, and two weapons would spend
+    // themselves killing one man.
+    ['ordnance', ordnance],
+    // OBJECTIVES LAST. A mission is judged on the world as it stands at the END
+    // of the tick, so the last enemy killed by this tick's combat or blast ends
+    // the mission in this tick rather than the next. Registered anywhere
+    // earlier and every mission ends one tick late — invisible on screen, and
+    // wrong.
+    ['objectives', objectives],
+  ]
+  for (const [, system] of systems) world.addSystem(system)
+  const systemOrder: readonly string[] = Object.freeze(systems.map(([name]) => name))
+
+  // PRIMED WITH THE WORLD BEFORE ANY COMMAND CAN REACH IT, AND NOT A NO-OP
+  // HOWEVER MUCH IT LOOKS LIKE ONE. `launch` reads the launcher's position out
+  // of the world this system was last TICKED with, and `advance` below drains
+  // the command queue at the TOP of every step — before `world.tick()` runs a
+  // single system. So the first throw of every mission would otherwise arrive
+  // while the system still holds no world, and be refused silently: no
+  // projectile, no event, no error, and the pouch not charged. The player's
+  // first right-click with grenades selected does nothing and his second one
+  // works. See `attached` in `core/ordnance/system.ts`, which explains the same
+  // thing from the other end. The pass itself is over an empty sky and does
+  // nothing else.
+  ordnance(world)
   // OBJECTIVES LAST. A mission is judged on the world as it stands at the END
   // of the tick, so the last enemy killed by this tick's combat pass ends the
   // mission in this tick rather than the next. Registered anywhere earlier and
   // every mission ends one tick late — invisible on screen, and wrong.
-  world.addSystem(objectives)
-  const systemOrder: readonly string[] = Object.freeze(['ai', 'squad', 'combat', 'objectives'])
 
   const queue = createCommandQueue()
   const loop = createGameLoop()
@@ -447,7 +536,7 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
     for (let i = 0; i < batch.length; i += 1) {
       const command = batch[i]
       if (command === undefined) continue
-      applyCommand(command, { world, squad, combat, grid })
+      applyCommand(command, { world, squad, combat, grid, ordnance, armoury })
     }
   }
 
@@ -787,6 +876,7 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
     combat,
     ai,
     objectives,
+    armoury,
     grid,
     systemOrder,
     // A getter, not a snapshot: the object is built once and the count changes

@@ -8,7 +8,7 @@
  * `src/app/main.ts`, which is the one place allowed to have it.
  */
 
-export { DEBUG_LAYERS, layerForHotkey } from './layers'
+export { DEBUG_LAYERS, layerForKeyCode } from './layers'
 export type { DebugLayer, DebugLayerId } from './layers'
 export { debugSnapshot, emptySnapshot } from './snapshot'
 export type {

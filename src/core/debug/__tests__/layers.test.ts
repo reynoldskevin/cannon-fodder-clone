@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { createSession } from '../../session'
 import { makeLevel } from '../../session/__tests__/fixture'
 import { tileToWorld } from '../../view/projection'
-import { DEBUG_LAYERS, debugSnapshot, emptySnapshot, layerForHotkey } from '../index'
+import { DEBUG_LAYERS, debugSnapshot, emptySnapshot, layerForKeyCode } from '../index'
 import type { DebugLayerId } from '../index'
 
 /**
@@ -310,7 +310,7 @@ describe('the snapshot allocates nothing it was not asked for', () => {
 
 describe('the hotkey lookup actually resolves', () => {
   /**
-   * `layerForHotkey`'s ENTIRE BODY could be replaced with `return undefined` —
+   * `layerForKeyCode`'s ENTIRE BODY could be replaced with `return undefined` —
    * no hotkey toggling anything at all — and the suite above stayed green. The
    * registry cases assert the table is internally consistent (distinct ids,
    * distinct keys, non-empty labels) and never that the lookup reads it.
@@ -321,8 +321,8 @@ describe('the hotkey lookup actually resolves', () => {
    */
   it('every layer is reachable by its own key', () => {
     for (const layer of DEBUG_LAYERS) {
-      expect({ key: layer.hotkey, resolved: layerForHotkey(layer.hotkey)?.id }).toEqual({
-        key: layer.hotkey,
+      expect({ code: layer.code, resolved: layerForKeyCode(layer.code, true)?.id }).toEqual({
+        code: layer.code,
         resolved: layer.id,
       })
     }
@@ -331,8 +331,55 @@ describe('the hotkey lookup actually resolves', () => {
   it('a key that toggles nothing resolves to nothing', () => {
     // The other direction: a lookup that returned the first layer for anything
     // would pass the case above and make every keystroke toggle the nav grid.
-    for (const key of ['9', '0', '', 'a', 'Escape']) {
-      expect({ key, resolved: layerForHotkey(key) }).toEqual({ key, resolved: undefined })
+    for (const code of ['Digit9', 'Digit0', '', 'KeyA', 'Escape']) {
+      expect({ code, resolved: layerForKeyCode(code, true) }).toEqual({ code, resolved: undefined })
+    }
+  })
+})
+
+describe('the layers moved off the bare digits, and why', () => {
+  /**
+   * Ticket 016 gives `1`/`2`/`3` to the ordnance selector. Those are the keys a
+   * PLAYER uses; these are the keys a DEVELOPER uses, and `?debug=1` is on for
+   * the developer while the game is still being played — so with the overlay
+   * open, `2` would both select grenades and toggle the flow field. The overlay
+   * is what moves.
+   *
+   * MATCHED ON `code`, NOT ON `key`, and that is the load-bearing part. On a US
+   * layout `Shift+1` delivers `event.key === '!'`; on a UK one `Shift+2` gives
+   * `'"'`. Keying off the character would make the overlay work or not work
+   * depending on whose keyboard it was. `code` is the physical key and is the
+   * same everywhere.
+   */
+  it('needs shift, so a bare digit is free for the ordnance selector', () => {
+    for (const layer of DEBUG_LAYERS) {
+      expect({ code: layer.code, bare: layerForKeyCode(layer.code, false) }).toEqual({
+        code: layer.code,
+        bare: undefined,
+      })
+    }
+  })
+
+  it('matches the physical key, never the character it produces', () => {
+    // `'!'` is what Shift+1 yields on a US keyboard. If it resolved, the lookup
+    // is reading `event.key` and is one keyboard layout away from breaking.
+    for (const character of ['!', '"', '£', '@', '#', '$', '%']) {
+      expect({ character, resolved: layerForKeyCode(character, true) }).toEqual({
+        character,
+        resolved: undefined,
+      })
+    }
+  })
+
+  it('says on the legend that shift is needed', () => {
+    // The legend renders `hotkey` verbatim, and a legend that still promised a
+    // bare digit would be documenting a control that no longer exists — which
+    // is the drift this table was built to prevent.
+    for (const layer of DEBUG_LAYERS) {
+      expect({ id: layer.id, shifted: layer.hotkey.toLowerCase().includes('shift') }).toEqual({
+        id: layer.id,
+        shifted: true,
+      })
     }
   })
 })

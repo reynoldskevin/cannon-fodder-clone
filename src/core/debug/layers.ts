@@ -27,8 +27,19 @@ export interface DebugLayer {
   /** What the on-screen legend calls it. */
   readonly label: string
   /**
-   * The `KeyboardEvent.key` that toggles it — the character, not a `KeyDigit`
-   * code, so the handler is a lookup in this table rather than a translation.
+   * The `KeyboardEvent.code` that toggles it, with shift held — the PHYSICAL
+   * key, never the character it produces.
+   *
+   * `Shift+1` delivers `event.key === '!'` on a US layout and `Shift+2` gives
+   * `'"'` on a UK one, so a table keyed on the character would make the overlay
+   * work or not work depending on whose keyboard it was opened on. `code` is the
+   * same everywhere.
+   */
+  readonly code: string
+  /**
+   * What the legend PRINTS — `Shift+1`, not `Digit1`. `ui/debug-panel.ts`
+   * renders it verbatim, which is what makes the legend and the working keys
+   * one table rather than two that can drift.
    */
   readonly hotkey: string
 }
@@ -38,7 +49,13 @@ export interface DebugLayer {
  *
  * Ordered cheapest-to-read first: the nav grid is the backdrop everything else
  * is judged against, and the per-entity labels are the noisiest. Hotkeys are
- * `1`..`5` in that same order, so the legend's row number IS its key.
+ * `Shift+1`..`Shift+5` in that same order, so the legend's row number IS its key.
+ *
+ * SHIFTED SINCE TICKET 016, AND THE OVERLAY IS WHAT MOVED. `1`/`2`/`3` now
+ * select the squad's ordnance, and `?debug=1` is on for a developer while the
+ * game is still being PLAYED — so on the bare digits, `2` would both select
+ * grenades and toggle the flow field. The selector is what a player uses and
+ * this is what a developer uses, so the developer's tool is the one that yields.
  *
  * THE FRAME-TIME GRAPH IS NOT HERE, and its absence is a decision. It measures
  * the RENDERER — a wall clock and a draw-call count — which `src/core` may not
@@ -46,23 +63,31 @@ export interface DebugLayer {
  * layer of a snapshot computed from the session.
  */
 export const DEBUG_LAYERS: readonly DebugLayer[] = Object.freeze([
-  { id: 'navGrid', label: 'Nav grid', hotkey: '1' },
-  { id: 'flowField', label: 'Flow field', hotkey: '2' },
-  { id: 'losRays', label: 'LOS rays', hotkey: '3' },
-  { id: 'ai', label: 'AI state', hotkey: '4' },
-  { id: 'entityIds', label: 'Entity ids', hotkey: '5' },
+  { id: 'navGrid', label: 'Nav grid', code: 'Digit1', hotkey: 'Shift+1' },
+  { id: 'flowField', label: 'Flow field', code: 'Digit2', hotkey: 'Shift+2' },
+  { id: 'losRays', label: 'LOS rays', code: 'Digit3', hotkey: 'Shift+3' },
+  { id: 'ai', label: 'AI state', code: 'Digit4', hotkey: 'Shift+4' },
+  { id: 'entityIds', label: 'Entity ids', code: 'Digit5', hotkey: 'Shift+5' },
 ] as const satisfies readonly DebugLayer[])
 
 /**
- * The layer a key toggles, or `undefined` for a key that toggles nothing.
+ * The layer a physical key toggles while shift is held, or `undefined` for a
+ * keystroke that toggles nothing.
+ *
+ * THE "REQUIRES SHIFT" RULE IS HERE AND NOT IN THE DOM HANDLER, which is the
+ * point of taking `shiftKey` as an argument rather than letting the caller
+ * decide. In `app/debug-mode.ts` it would be a line no test can see; here it is
+ * asserted, and the bare digits are provably left free for the ordnance
+ * selector.
  *
  * A linear scan over five entries, called once per keypress: a `Map` built at
  * module load would be faster and would also be a second copy of the table
  * above, which is the drift this file exists to prevent.
  */
-export function layerForHotkey(key: string): DebugLayer | undefined {
+export function layerForKeyCode(code: string, shiftKey: boolean): DebugLayer | undefined {
+  if (!shiftKey) return undefined
   for (const layer of DEBUG_LAYERS) {
-    if (layer.hotkey === key) return layer
+    if (layer.code === code) return layer
   }
   return undefined
 }

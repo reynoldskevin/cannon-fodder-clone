@@ -109,6 +109,26 @@ export interface ExplosionEvent extends EventStamp {
   readonly sourceId: number
 }
 
+/**
+ * An order to fire was refused before anything left a barrel (ticket 016).
+ *
+ * SILENCE IS THE BUG THIS EXISTS TO PREVENT. Ticket 011a's design note put it
+ * exactly: "a right-click that produces silence reads as a broken control". An
+ * empty grenade pouch has to be distinguishable from a dead button, and the bus
+ * is the only channel from sim to presentation — so a refusal that emitted
+ * nothing would leave the HUD and audio with no way to say why the throw never
+ * happened.
+ *
+ * `ordnance` is the open-enum name the refused command carried, and `reason` is
+ * a short phrase presentation may show verbatim rather than a code it would
+ * have to keep a second table for.
+ */
+export interface FireRejectedEvent extends EventStamp {
+  readonly type: 'FireRejected'
+  readonly ordnance: string
+  readonly reason: string
+}
+
 /** An objective was satisfied. `objective` is the open-enum `LevelObjective.type`. */
 export interface MissionCompleteEvent extends EventStamp {
   readonly type: 'MissionComplete'
@@ -128,6 +148,7 @@ export type SimEvent =
   | UnitDiedEvent
   | ShotFiredEvent
   | ExplosionEvent
+  | FireRejectedEvent
   | MissionCompleteEvent
   | MissionFailedEvent
 

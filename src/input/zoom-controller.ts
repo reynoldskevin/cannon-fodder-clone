@@ -46,6 +46,13 @@ const ZOOM_OUT_FACTOR = KEY_STEP
 
 export class ZoomController {
   private readonly onWheel = (event: WheelEvent): void => {
+    // SHIFT+WHEEL IS NOT THE CAMERA'S (ticket 016). It cycles the squad's
+    // ordnance, and the bare wheel keeps the zoom it has had since ticket 009b —
+    // one gesture, one meaning. Left unguarded, changing weapon would also
+    // change the camera every single time, which is the collision the modifier
+    // exists to avoid. No `preventDefault` here: the gesture is not ours, so the
+    // handler that owns it decides.
+    if (event.shiftKey) return
     // Without this the page itself scrolls, and ctrl+wheel triggers browser zoom.
     event.preventDefault()
 

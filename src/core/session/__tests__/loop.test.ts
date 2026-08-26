@@ -180,7 +180,7 @@ describe('system order', () => {
     // this tick must move the man this tick, and its halt must land before the
     // movement it cancels. `session/__tests__/ai-wiring.test.ts` is where that
     // order is asserted through `advance` rather than read off a constant.
-    expect(createSession(makeLevel()).systemOrder).toEqual(['ai', 'squad', 'combat', 'objectives'])
+    expect(createSession(makeLevel()).systemOrder).toEqual(['ai', 'squad', 'combat', 'ordnance', 'objectives'])
   })
 
   it('actually runs squad movement before combat', () => {
