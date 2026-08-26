@@ -191,6 +191,11 @@ export function rig(art = OPEN, options: Partial<AiOptions> = {}): Rig {
         originZ: p.z,
         targetX: p.x,
         targetZ: p.z,
+        // Ticket 011b made `hit` required on `ShotFired`. The rig fabricates the
+        // event to test what the AI does when it HEARS a shot, which is the same
+        // whether the round landed; `true` is simply the value that keeps this
+        // fixture describing the round it always described.
+        hit: true,
       }
     },
   }

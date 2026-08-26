@@ -78,6 +78,36 @@ export interface WeaponSpec {
    * knife range before anyone fires, which wastes the cover the levels contain.
    */
   readonly rangeTiles: number
+
+  /**
+   * How likely a round is to land, as a function of how far it has to travel
+   * (ticket 011b).
+   *
+   * WHY THIS EXISTS AT ALL. Before it, `resolution.ts` checked team, range and
+   * line of sight and the round landed — so with `INFANTRY_HEALTH` at 1 any
+   * sightline was an execution, and no cover, manoeuvre or reaction changed the
+   * outcome. The complaint was never that men die too easily; it is that they
+   * die INEVITABLY, which is why this is a probability and not a health raise.
+   *
+   * IT FALLS OFF WITH RANGE, and that is the decision worth making. A flat
+   * chance would make a shot at one tile as unreliable as one at eight, which
+   * reads as the soldiers being incompetent rather than the distance being long.
+   * Falling off makes closing worth doing, makes backing out of the envelope a
+   * real option, and answers the reported symptom directly: an enemy who has
+   * just reached the edge of his range mostly misses.
+   *
+   * Interpolated LINEARLY between the two ends and clamped outside them — see
+   * `hitChanceAt` in `resolution.ts`. Linear because nothing yet argues for a
+   * curve; if something ever does, `ordnance/table.ts`'s `falloff` is the
+   * pattern to copy — a string naming a curve, never a function in a spec,
+   * because a spec must survive the JSON round trip this file promises.
+   */
+  readonly accuracy: {
+    /** Hit chance at zero distance. */
+    readonly pointBlank: number
+    /** Hit chance at exactly `rangeTiles`. */
+    readonly maxRange: number
+  }
 }
 
 /** The standard rifle. Every soldier on both sides carries one. */
@@ -145,6 +175,21 @@ export const WEAPONS: Readonly<Record<Weapon, WeaponSpec>> = {
     // Eight tiles. The camera shows appreciably more than this, so a soldier
     // who kills you was on screen when he did it.
     rangeTiles: 8,
+    accuracy: {
+      // NINE IN TEN AT ARM'S LENGTH. An enemy who has walked into your squad's
+      // faces must still be lethal — the original's tension is that one careless
+      // step ends a man, and a rifle that missed half its shots at one tile
+      // would make firefights comic and `kill_all` missions interminable.
+      pointBlank: 0.9,
+      // ONE IN FOUR AT EIGHT TILES, which is the whole ticket in one number:
+      // roughly four rounds — measured 3.67, about 1.8 seconds at this
+      // cooldown — before the man at the far edge of the envelope falls, so
+      // the player reacts to being SHOT AT rather than to being dead. Raise
+      // it much past a third and
+      // reaching maximum range stops being a survivable answer to being engaged;
+      // drop it toward zero and enemies at range become scenery.
+      maxRange: 0.25,
+    },
   },
 }
 

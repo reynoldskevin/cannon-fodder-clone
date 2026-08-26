@@ -13,6 +13,7 @@
  */
 
 import type { World } from '../world/world'
+import type { WeaponSpec } from './weapons'
 
 // ---------------------------------------------------------------------------
 // Range
@@ -48,6 +49,58 @@ export function inRange(ax: number, az: number, bx: number, bz: number, range: n
   const dx = bx - ax
   const dz = bz - az
   return dx * dx + dz * dz <= range * range
+}
+
+// ---------------------------------------------------------------------------
+// Accuracy
+// ---------------------------------------------------------------------------
+
+/** `[0, 1]`, which is the only range a probability may be compared in. */
+const clamp01 = (value: number): number => (value < 0 ? 0 : value > 1 ? 1 : value)
+
+/**
+ * `spec`'s chance of hitting something `distanceTiles` away, in `[0, 1]`
+ * (ticket 011b).
+ *
+ * A PURE READ OF THE TABLE. It draws nothing and knows nothing about the world;
+ * whether the roll is taken at all is `CombatOptions.hitPolicy`'s decision, and
+ * whether the draw is spent is `system.ts`'s. Keeping the curve separable is
+ * what lets a test assert the interpolation without running a simulation.
+ *
+ * CLAMPED AT BOTH ENDS RATHER THAN EXTRAPOLATED. Past `rangeTiles` an unclamped
+ * line returns a NEGATIVE chance, and a negative chance compared against a
+ * `[0, 1)` draw is a weapon that silently stops working at the edge of its
+ * envelope; behind zero it returns more than one, which is merely wrong. Nothing
+ * should ask for either — `inRange` refuses a round beyond `rangeTiles` — but
+ * "nothing should" is not a guarantee, and the endpoint value is the answer that
+ * cannot surprise anybody.
+ *
+ * WRITTEN WITH POSITIVE COMPARISONS, for the reason `inRange` states at length:
+ * every comparison against NaN is false, so a corrupted position falls through
+ * `!(distanceTiles > 0)` to the point-blank end rather than producing a NaN
+ * chance. A NaN chance loses every `<` it is compared with, which would make the
+ * unit at the corrupted position unhittable from anywhere — a far quieter and
+ * worse failure than a round that was too likely to land.
+ */
+export function hitChanceAt(spec: WeaponSpec, distanceTiles: number): number {
+  const { pointBlank, maxRange } = spec.accuracy
+  // Zero, negative and non-finite distances all land here. Checked FIRST, and
+  // that order is the point: `pointBlank` is documented as the chance at zero
+  // distance, so it must be the answer at zero distance for every weapon —
+  // including a zero-range one, which `inRange` still admits a coincident
+  // target for.
+  if (!(distanceTiles > 0)) return clamp01(pointBlank)
+  // A zero- or negative-range weapon has no line to interpolate along, and any
+  // positive distance is past the whole of its envelope, so the far end is the
+  // answer. Nothing shipped has such a range; this only has to stay finite and
+  // in bounds.
+  if (!(spec.rangeTiles > 0)) return clamp01(maxRange)
+  const t = distanceTiles < spec.rangeTiles ? distanceTiles / spec.rangeTiles : 1
+  // `a + (b - a) * t` rather than `a * (1 - t) + b * t`: at `t < 1` with both
+  // ends equal the second form is two roundings and can return 0.9999999999,
+  // and an "always hits" weapon that hits 99.99999% of the time is exactly the
+  // difference between `hitPolicy: 'certain'` and a policy that looks like it.
+  return clamp01(pointBlank + (maxRange - pointBlank) * t)
 }
 
 // ---------------------------------------------------------------------------

@@ -27,6 +27,9 @@ const shot = (shooterId: number): Parameters<EventBus['emit']>[0] => ({
   originZ: 0,
   targetX: 1,
   targetZ: 1,
+  // Required since ticket 011b. These tests are about the bus's ordering and
+  // drain, not about the round, so any fixed value does.
+  hit: true,
 })
 
 describe('EventBus', () => {

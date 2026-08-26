@@ -42,8 +42,6 @@ function arena(seed = 1): { world: World; grid: ReturnType<typeof bakeNavGrid> }
   return { world: new World(doc, { seed }), grid: bakeNavGrid(doc) }
 }
 
-const world = (seed = 1): World => arena(seed).world
-
 const rifle = (): WeaponSpec => {
   const spec = WEAPONS[RIFLE]
   if (spec === undefined) throw new Error('no rifle')
@@ -89,9 +87,16 @@ describe('the accuracy curve', () => {
   it('clamps behind point-blank too, and survives a nonsense distance', () => {
     const spec = certain({ accuracy: { pointBlank: 0.9, maxRange: 0.25 } })
     expect(hitChanceAt(spec, -5)).toBeCloseTo(0.9, 10)
-    // A non-finite distance is a corrupted position, and the safe answer is the
-    // one that does not make a unit unhittable from anywhere.
-    expect(Number.isFinite(hitChanceAt(spec, NaN))).toBe(true)
+    /**
+     * A non-finite distance is a corrupted position, and the safe answer is the
+     * one that does not make a unit unhittable from anywhere.
+     *
+     * PINNED TO AN END, not merely to being finite. `maxRange` is finite too, so
+     * a finiteness check alone is satisfied by a guard that sends NaN to the FAR
+     * end — the opposite of what the comment on the production side claims, and
+     * a silently different weapon for anybody standing at a corrupted position.
+     */
+    expect(hitChanceAt(spec, NaN)).toBeCloseTo(spec.accuracy.pointBlank, 10)
   })
 
   it('reproduces today`s game exactly when both ends are 1', () => {
@@ -344,5 +349,137 @@ describe('the roll is deterministic, because a mission must replay', () => {
     }
     // Thirty tiles apart, so nothing is ever in range and no shot is resolved.
     expect(idle(true)).toBe(idle(false))
+  })
+})
+
+describe('the paths that must spend no draw at all', () => {
+  /**
+   * THE LOUDEST CLAIM THIS TICKET MAKES, AND IT WAS THE LEAST PINNED. An
+   * adversarial review inserted a draw on the `'certain'` path and the entire
+   * suite of 1771 tests still passed — because the one rng-ordering test above
+   * runs at `hitPolicy: 'weapon'` with nothing in range, so it never enters the
+   * certain branch at all.
+   *
+   * What that costs: a later refactor to `const roll = world.rng.next(); hit =
+   * hitPolicy === 'certain' || roll < chance` reads as a tidy-up, keeps all 419
+   * pre-existing tests green (the round still lands), and quietly consumes one
+   * draw per shot in every certain mission. Everything downstream of the stream
+   * shifts, and it surfaces as a saved seed replaying differently with the suite
+   * fully green.
+   */
+
+  /** The next value the rng would hand out after `ticks` of this arrangement. */
+  function streamAfter(build: (w: World, grid: ReturnType<typeof bakeNavGrid>) => void): number {
+    const { world: w, grid } = arena(11)
+    build(w, grid)
+    for (let t = 0; t < 400; t += 1) w.tick()
+    return w.rng.next()
+  }
+
+  const untouched = (): number =>
+    streamAfter((w) => {
+      w.spawn({ kind: 'rifleman', team: 'enemy', x: 0, z: 0 })
+      w.spawn({ kind: 'sandbag', team: 'player', x: 0.5, z: 0, health: 10_000 })
+    })
+
+  it('`certain` fires a great many rounds and draws nothing', () => {
+    // Half a tile apart, so this is a continuous firefight for four hundred
+    // ticks — not the quiet world the ordering test above uses. If `'certain'`
+    // draws even once per shot, the stream has moved.
+    const withCertainCombat = streamAfter((w, grid) => {
+      w.spawn({ kind: 'rifleman', team: 'enemy', x: 0, z: 0 })
+      w.spawn({ kind: 'sandbag', team: 'player', x: 0.5, z: 0, health: 10_000 })
+      w.addSystem(createCombatSystem(grid, { hitPolicy: 'certain' }))
+    })
+    expect(withCertainCombat).toBe(untouched())
+  })
+
+  it('and the default does the same, because the default IS certain', () => {
+    const withDefaultCombat = streamAfter((w, grid) => {
+      w.spawn({ kind: 'rifleman', team: 'enemy', x: 0, z: 0 })
+      w.spawn({ kind: 'sandbag', team: 'player', x: 0.5, z: 0, health: 10_000 })
+      w.addSystem(createCombatSystem(grid))
+    })
+    expect(withDefaultCombat).toBe(untouched())
+  })
+
+  it('a firefight under `weapon` DOES move the stream, so the test above means something', () => {
+    /**
+     * The control. Without it, a `streamAfter` that silently failed to produce a
+     * firefight at all would satisfy both assertions above perfectly — which is
+     * the same fixture-on-a-convenient-value trap that has hidden four defects
+     * in this project already.
+     */
+    const withRolling = streamAfter((w, grid) => {
+      w.spawn({ kind: 'rifleman', team: 'enemy', x: 0, z: 0 })
+      w.spawn({ kind: 'sandbag', team: 'player', x: 0.5, z: 0, health: 10_000 })
+      w.addSystem(createCombatSystem(grid, { hitPolicy: 'weapon' }))
+    })
+    expect(withRolling).not.toBe(untouched())
+  })
+})
+
+describe('suppressing fire hits nothing, and costs no draw', () => {
+  /**
+   * A ROUND AIMED AT GROUND. `orderFire` takes a TILE, not a unit, and ticket
+   * 011a's whole point is that a click on empty grass is suppressing fire rather
+   * than a free kill on whoever is nearest. `ShotFired.targetId` is `null` for
+   * those, and there is nothing for the round to hit.
+   *
+   * Neither new suite exercised this until a review pointed it out: `duel` leans
+   * on `autoEngageTeams` defaulting to both teams, so `targetId` was non-null on
+   * every shot in the entire acceptance suite. The mutant that survived —
+   * `hit = true` for a suppressing round — is wrong twice over: the event lies
+   * about a round that hit nothing, AND the round starts spending a draw, which
+   * is the desync the tests above guard arriving through a second door.
+   */
+
+  /** Order one man to fire at bare ground and collect what comes out. */
+  function suppress(hitPolicy: 'certain' | 'weapon'): {
+    readonly shots: readonly SimEvent[]
+    readonly nextRoll: number
+  } {
+    const { world: w, grid } = arena(11)
+    const shooter = w.spawn({ kind: 'rifleman', team: 'enemy', x: 0, z: 0 })
+    const combat = createCombatSystem(grid, { hitPolicy, autoEngageTeams: [] })
+    w.addSystem(combat)
+    // Two tiles away on empty ground, with nobody else in the world at all.
+    combat.orderFire([shooter.id], { x: 2, y: 0 })
+    const shots: SimEvent[] = []
+    for (let t = 0; t < 400; t += 1) {
+      w.tick()
+      for (const event of w.drainEvents()) if (event.type === 'ShotFired') shots.push(event)
+    }
+    return { shots, nextRoll: w.rng.next() }
+  }
+
+  it('fires at the ground it was pointed at', () => {
+    const { shots } = suppress('weapon')
+    expect(shots.length).toBeGreaterThan(5)
+    for (const shot of shots) {
+      if (shot.type !== 'ShotFired') continue
+      expect(shot.targetId).toBeNull()
+    }
+  })
+
+  it('and every one of those rounds reports `hit: false`', () => {
+    // Ticket 025 puts the impact where the round actually went; a suppressing
+    // round claiming a hit would put it in a man's chest instead.
+    for (const policy of ['certain', 'weapon'] as const) {
+      const { shots } = suppress(policy)
+      const claimed = shots.filter((s) => s.type === 'ShotFired' && s.hit).length
+      expect({ policy, claimed }).toEqual({ policy, claimed: 0 })
+    }
+  })
+
+  it('and spends no draw doing it, under either policy', () => {
+    const quiet = (): number => {
+      const { world: w } = arena(11)
+      w.spawn({ kind: 'rifleman', team: 'enemy', x: 0, z: 0 })
+      for (let t = 0; t < 400; t += 1) w.tick()
+      return w.rng.next()
+    }
+    expect(suppress('certain').nextRoll).toBe(quiet())
+    expect(suppress('weapon').nextRoll).toBe(quiet())
   })
 })

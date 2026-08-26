@@ -157,40 +157,67 @@ describe('a mission still replays exactly', () => {
 })
 
 describe('the level still reacts to gunfire that missed', () => {
-  it('a shot that hit nothing is still heard', () => {
+  it('a man who cannot see the fight still comes to look when a round goes wide', () => {
     /**
      * A MISSED SHOT IS STILL A SHOT. The AI reacts to `ShotFired`, not to a
-     * death, so this needs no code — which is exactly why it needs a test. "The
-     * garrison stopped investigating gunfire once rounds could miss" is the kind
-     * of regression that would arrive as a level feeling asleep, with nothing in
-     * any suite to say what broke.
+     * death, so this needs no production code — which is exactly why it needs a
+     * test. "The garrison stopped investigating gunfire once rounds could miss"
+     * is the kind of regression that arrives as a level feeling asleep, with
+     * nothing in any suite to say what broke.
      *
-     * A third man is placed within earshot but outside sight of the firefight,
-     * and must leave his spawn to look.
+     * TWO WAYS THE FIRST DRAFT WAS WRONG, both worth recording because both are
+     * traps this project keeps walking into:
+     *
+     *   - It never established that anything MISSED. A review set the session
+     *     back to `hitPolicy: 'certain'` and it still passed, so it was guarding
+     *     the criterion while blind to the only thing the criterion is about.
+     *   - The listener was placed at 11.4 tiles from the player — INSIDE his
+     *     twelve tiles of sight. He was walking because he could SEE the squad,
+     *     and hearing had nothing to do with it. A probe I ran to "confirm" the
+     *     fixture measured the same wrong thing and reported success.
+     *
+     * So he now stands nineteen tiles along the line: fifteen from the player,
+     * which is outside sight, and six from the shooter, which is inside the
+     * fourteen-tile alert radius. Gunfire is the only thing that can reach him.
      */
     const level = makeLevel({
       avatars: [{ x: 4, y: 7 }],
       enemies: [
         { x: 13, y: 7 },
-        // Well inside the fourteen-tile alert radius, and idle until he hears.
-        { x: 13, y: 14 },
+        { x: 19, y: 7 },
       ],
     })
-    const session = createSession(level, { seed: 5 })
-    const listener = session.world.entities.filter((e) => e.team === 'enemy')[1]
-    expect(listener).toBeDefined()
-    const startZ = listener?.z ?? 0
-    const startX = listener?.x ?? 0
-    let heardSomething = false
-    for (let frame = 0; frame < 900; frame += 1) {
-      session.advance(1 / 60)
-      const now = session.world.get(listener?.id ?? 0)
-      if (now === undefined) break
-      if (Math.abs(now.x - startX) + Math.abs(now.z - startZ) > 1) {
-        heardSomething = true
-        break
+
+    /** Play one seed and report what the listener did and why he could have. */
+    function watch(seed: number): { firstShotMissed: boolean; moved: boolean } {
+      const session = createSession(level, { seed })
+      const listener = session.world.entities.filter((e) => e.team === 'enemy')[1]
+      if (listener === undefined) throw new Error('no listener spawned')
+      const startX = listener.x
+      const startZ = listener.z
+      let firstShot: boolean | undefined
+      let moved = false
+      for (let frame = 0; frame < 900; frame += 1) {
+        session.advance(1 / 60)
+        for (const event of session.events()) {
+          if (event.type === 'ShotFired' && firstShot === undefined) firstShot = event.hit
+        }
+        const now = session.world.get(listener.id)
+        if (now === undefined) break
+        if (Math.abs(now.x - startX) + Math.abs(now.z - startZ) > 1) {
+          moved = true
+          break
+        }
       }
+      return { firstShotMissed: firstShot === false, moved }
     }
-    expect(heardSomething).toBe(true)
+
+    const runs = SEEDS.map(watch)
+    // The precondition, stated as a real one: there must BE a run whose opening
+    // round went wide, or this test has not looked at a miss at all.
+    const openedWithAMiss = runs.filter((r) => r.firstShotMissed)
+    expect(openedWithAMiss.length).toBeGreaterThan(0)
+    // And in every one of those, the man who could only have heard it came.
+    for (const run of openedWithAMiss) expect(run.moved).toBe(true)
   })
 })
