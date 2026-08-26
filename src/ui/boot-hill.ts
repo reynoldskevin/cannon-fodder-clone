@@ -9,8 +9,11 @@
  * would be verified by looking at the screen and nowhere else. What is left is
  * layout, and that is the whole reason the model exists.
  *
- * DOM APIs and inline styles, matching `hud.ts` and `mission-end.ts`, so the UI
- * layer ships no stylesheet.
+ * DOM APIs and inline styles, matching `hud.ts` and the campaign screens, so the
+ * UI layer ships no stylesheet. Ticket 022b factored this file's backdrop, panel
+ * and button into `screen-chrome.ts` for the four screens it added; this one
+ * keeps its own copy rather than being rewritten to use them, because it is
+ * shipped code the ticket had no reason to touch. The values are the same.
  *
  * ELEMENTS ARE REUSED AND TEXT IS WRITTEN ONLY ON CHANGE, the same bargain the
  * HUD makes. The hill is redrawn whenever the screen is shown and grows by a
@@ -44,7 +47,7 @@ export interface BootHillScreen {
   dispose(): void
 }
 
-/** Matched to the HUD and the mission-end panel, so the game has one palette. */
+/** Matched to the HUD and `screen-chrome.ts`, so the game has one palette. */
 const TEXT = '#f2efe6'
 const MUTED = '#9fb3bd'
 const PROMOTED = '#8fd694'
@@ -199,10 +202,16 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
     // handed a screen he never asked for. "Safe to call twice" has to cover the
     // callback too, or the docstring is claiming more than the code does.
     if (done) return
-    // The screen goes first, so a transition that throws leaves the error
-    // overlay visible rather than buried under a memorial the player has
-    // already dismissed. Same order as `mission-end.ts`.
-    dispose()
+    // THE SCREEN IS NOT TORN DOWN HERE (ticket 022b). It used to remove itself
+    // first, so that a transition that threw left the error overlay visible
+    // rather than buried — which the overlay's own `z-index:100` over this
+    // panel's 60 already guarantees. What it cost was a second owner of the
+    // removal: the router in `main.ts` mounts exactly one screen for
+    // `runner.screen()` and disposes it when that changes, so a memorial that
+    // had already removed itself when the command was REFUSED would leave the
+    // router agreeing that Boot Hill is still up and nothing at all on the page.
+    // No refusal is reachable from Boot Hill today; this is the ordering being
+    // made safe rather than a bug being fixed.
     options.onContinue()
   })
 

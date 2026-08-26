@@ -16,8 +16,8 @@ import { levelRelief } from '../core/view/relief'
 import { createSession } from '../core/session'
 import { ordnanceForHotkey } from '../core/armoury'
 import { createTracerBuffer } from '../core/render-state/tracers'
-import { createCampaignRunner } from '../core/flow'
-import type { AdvanceResult, MissionHost } from '../core/flow'
+import { createCampaignRunner, viewFor } from '../core/flow'
+import type { AdvanceResult, MissionHost, ViewId } from '../core/flow'
 import type { SquadMember } from '../core/campaign'
 import type { SimEvent } from '../core/world'
 import { CameraRig } from '../render/camera-rig'
@@ -35,11 +35,14 @@ import { isEditableTarget } from '../input/editable-target'
 import { PanController } from '../input/pan-controller'
 import { PointerController } from '../input/pointer-controller'
 import { ZoomController } from '../input/zoom-controller'
-import { showControlHint } from '../ui/control-hint'
+import { showControlHint, type ControlHint } from '../ui/control-hint'
 import { showFatalError, type FatalErrorReport } from '../ui/error-overlay'
 import { createHud, type RosterMember } from '../ui/hud'
-import { showMissionEnd, type MissionEndScreen } from '../ui/mission-end'
-import { createBootHill, type BootHillScreen } from '../ui/boot-hill'
+import { createBootHill } from '../ui/boot-hill'
+import { createMenu } from '../ui/menu'
+import { createRecruitment } from '../ui/recruitment'
+import { createBriefing } from '../ui/briefing'
+import { createDebrief } from '../ui/debrief'
 import { createLocalStoragePort } from './local-storage-port'
 import { CORE_VERSION } from '../core/version'
 
@@ -478,18 +481,46 @@ async function boot(): Promise<void> {
   }
 
   /**
-   * The end screen, while one is up. `undefined` means the mission is still on.
+   * The campaign screen that is on the page, and which one it is. `undefined`
+   * means nothing covers the canvas — see `reconcile`.
    *
-   * IT IS THE DEBRIEF NOW (ticket 022a), as a stand-in: its heading and its
-   * "Play again" button are `mission-end.ts`'s, unchanged, but the button walks
-   * the runner on to Boot Hill instead of restarting the level. Ticket 022b
-   * replaces it with a screen drawn from `runner.debrief()`.
+   * ONE SLOT, NOT ONE VARIABLE PER SCREEN (ticket 022b). Four independent
+   * handles is four things a transition can forget to dispose, and the symptom
+   * is two screens stacked on top of each other with the buttons of the lower
+   * one still live. A single slot makes "exactly one is mounted" a property of
+   * the type rather than of every handler being careful.
    */
-  let ending: MissionEndScreen | undefined
-  /** Boot Hill, while it is up. Ticket 022 wrote the screen; this is its caller. */
-  let hill: BootHillScreen | undefined
+  let mounted: { readonly view: ViewId; readonly screen: { dispose(): void } } | undefined
   /** `MissionFailed.reason`, kept because the event is a one-shot and the screen is not. */
   let failure: string | undefined
+
+  /**
+   * The control hint, once the game has actually reached the canvas.
+   *
+   * SHOWN BY THE ROUTER RATHER THAN AT BOOT (ticket 022b). It explains the pan,
+   * zoom and weapon keys, none of which do anything on the Menu — where it used
+   * to appear, because boot put it up before any screen was decided.
+   *
+   * ONCE PER PAGE. `control-hint.ts` fades it out after a few seconds and
+   * removes it on a click, so it is a one-shot by design; showing a fresh one on
+   * every return to the canvas would re-teach the controls to a player who has
+   * been using them for three missions.
+   */
+  let hint: ControlHint | undefined
+  let hintShown = false
+
+  function showHintOnce(): void {
+    if (hintShown) return
+    hintShown = true
+    // "F to zoom out", not "F to fit": since ticket 009b the zoom-out limit stops
+    // at the widest view that shows no background, which is deliberately short of
+    // the whole level. A hint that still promised a fit would be a lie.
+    hint = showControlHint(
+      mount,
+      'WASD / arrows or screen edge to pan  ·  wheel or +/− to zoom  ·  F to zoom out fully  ·  ' +
+        '1–3 or shift+wheel to change weapon',
+    )
+  }
 
   /** Timestamp of the last frame, for the frame delta. See the render loop. */
   let previous = performance.now()
@@ -583,10 +614,12 @@ async function boot(): Promise<void> {
    * see the note on `teardown`.
    */
   function startMission(next: LevelData, squad: readonly SquadMember[]): void {
-    ending?.dispose()
-    ending = undefined
-    hill?.dispose()
-    hill = undefined
+    // THE SCREENS ARE NOT TOUCHED HERE (ticket 022b). The Briefing is still on
+    // the page at this instant — `deploy()` starts the mission and only then
+    // moves the screen — and `reconcile` takes it down a moment later off the
+    // runner's own state. A mission that disposed screens itself would be a
+    // second owner of the one slot, disagreeing with the router the first time a
+    // command was refused.
     failure = undefined
     // EMPTIED FOR THE NEW MISSION, so the men who died in the last one are not
     // buried a second time in this one's report. Nothing subtle about the
@@ -637,8 +670,10 @@ async function boot(): Promise<void> {
     // while the live one never heard the key at all.
     window.removeEventListener('keydown', onSelectKey)
     renderer.domElement.removeEventListener('wheel', onSelectWheel)
-    ending?.dispose()
-    hill?.dispose()
+    // Whatever campaign screen is up goes with the page. One call, because there
+    // is one slot — see `mounted`.
+    mounted?.screen.dispose()
+    mounted = undefined
     // Its own group, its own listener, its own GPU buffers — none of which the
     // scene's `dispose` knows about, because the overlay was added to the scene
     // from outside it.
@@ -647,6 +682,9 @@ async function boot(): Promise<void> {
     // `built.dispose()` does not know about them.
     tracerFx.dispose()
     hud.dispose()
+    // Cancels its pending timers as well as removing it, so a torn-down page has
+    // nothing left to fire.
+    hint?.dismiss()
     pointer.dispose()
     zoom.dispose()
     pan.dispose()
@@ -675,14 +713,6 @@ async function boot(): Promise<void> {
     host,
   })
 
-  const openingNotice = runner.notice()
-  if (openingNotice !== null) {
-    // The console, because there is no Menu to print it on until ticket 022b.
-    // Not silence: a discarded save the player is never told about is the one
-    // failure `loadCampaign` exists to prevent.
-    console.warn(`game-week: ${openingNotice}`)
-  }
-
   /**
    * Take a command's answer, or say why it was refused.
    *
@@ -696,7 +726,16 @@ async function boot(): Promise<void> {
     return false
   }
 
-  /** The mission is over: record it against the campaign and show the Debrief. */
+  /**
+   * The mission is over: record it against the campaign, and let the router put
+   * the Debrief up.
+   *
+   * IT MOUNTS NOTHING ITSELF, for the reason `reconcile` gives. `finishMission`
+   * moves the screen to `Debrief` on both outcomes, so asking the runner
+   * afterwards is the same answer with none of the risk of guessing it — and a
+   * refused `finishMission` leaves the mission on screen rather than putting a
+   * Debrief over a campaign that recorded nothing.
+   */
   function endMission(): void {
     // `session.assignment` is read BEFORE the runner tears the mission down: it
     // is the map that says which recruit each entity was, and it is the only
@@ -704,77 +743,164 @@ async function boot(): Promise<void> {
     if (!announce(runner.finishMission(missionLog, session.assignment), 'the mission result')) {
       return
     }
-    const debrief = runner.debrief()
-    ending = showMissionEnd(mount, {
-      // FROM THE MODEL, so the screen and the roster cannot disagree about
-      // whether that was a win — `missionReport` decided it from the stream.
-      kind: debrief?.outcome ?? 'failed',
-      ...(failure === undefined ? {} : { reason: failure }),
-      elapsedTicks: session.objectives.elapsedTicks,
-      onRestart: showBootHill,
-    })
-  }
-
-  /** Off the Debrief and onto the hill. */
-  function showBootHill(): void {
-    // THE CHART IS ASKED BEFORE THE SCREEN IS TORN DOWN, for the reason the
-    // runner's header gives about the host: a refusal must change nothing. The
-    // dispose-first order left a refused move with the Debrief already gone and
-    // no Boot Hill to replace it — no screen and no way forward. No refusal is
-    // reachable from `Debrief` today, so this is the ordering being made safe
-    // rather than a bug being fixed.
-    if (!announce(runner.recordCasualties(), 'recording the casualties')) return
-    ending?.dispose()
-    ending = undefined
-    hill = createBootHill(mount, { onContinue: leaveBootHill, continueLabel: 'Carry on' })
-    hill.update(runner.bootHill())
-  }
-
-  /** Off the hill and into whatever the chart says comes next. */
-  function leaveBootHill(): void {
-    // Asked before the hill is disposed, for the reason `showBootHill` gives.
-    if (!announce(runner.advanceFromBootHill(), 'leaving Boot Hill')) return
-    hill?.dispose()
-    hill = undefined
-    enterMission()
+    // A WRITE THAT FAILED MID-CAMPAIGN, LOGGED. The Menu renders `notice()` and
+    // is where the player is told, but that is the end of the campaign away; a
+    // save the store refused here is worth having in the console on the mission
+    // it happened on. `saveCampaign` never blocks the transition, so there is
+    // nothing else to do about it.
+    const noticed = runner.notice()
+    if (noticed !== null) console.warn(`game-week: ${noticed}`)
+    reconcile()
   }
 
   /**
-   * Get from wherever the chart just landed back into a mission.
+   * Build the panel a view names, wired to the commands its buttons issue.
    *
-   * A TEMPORARY BRIDGE, AND TICKET 022b DELETES IT. There is no Menu,
-   * Recruitment or Briefing screen yet, so there is nothing for the player to
-   * press on any of the three — and a shell that stopped on them would be a game
-   * that ends after one mission. Standing in for them here is what makes every
-   * runner command exercised by a human playing the game in THIS ticket, rather
-   * than first being exercised in the ticket that also introduces four new
-   * screens.
+   * EVERY HANDLER CALLS A COMMAND AND THEN ASKS `reconcile`; not one of them
+   * mounts a screen itself. That is the rule the whole router is built on: a
+   * handler that mounted its own guess would disagree with the runner the first
+   * time a command was refused, and the player would be looking at a screen the
+   * game is not on. Refusals are printed rather than swallowed — by `announce`
+   * into the console, and by Recruitment onto the screen, since `selectSquad`'s
+   * reason is the one a player can actually act on.
    *
-   * The two branches are the two places `advanceFromBootHill` can land. From the
-   * Menu it takes the chart's own `Menu -> Mission` shortcut; from Recruitment
-   * there is no row back to the Menu, so it makes the choice the player would
-   * have made — the first full squad the roster offers — and deploys.
+   * A `switch` over `ViewId` and not a lookup object, so the compiler is the
+   * thing that notices when `core/flow` gains a view: the return type makes a
+   * missing arm an error here rather than a blank page in a browser.
    */
-  function enterMission(): void {
-    if (runner.screen() === 'Menu') {
-      announce(runner.demoShortcut(runner.levelIndex()), 'the demo shortcut')
-      return
+  function mountView(view: ViewId): { dispose(): void } | undefined {
+    switch (view) {
+      case 'menu':
+        return createMenu(mount, {
+          // THE NOTICE, SHOWN AT LAST. `runner.notice()` has existed since
+          // ticket 019 and until now went nowhere a player would ever look; a
+          // save that was damaged or could not be written is the one thing this
+          // screen must not keep to itself.
+          notice: runner.notice(),
+          onStart: () => {
+            announce(runner.startCampaign(), 'starting the campaign')
+            reconcile()
+          },
+        })
+      case 'recruitment':
+        return createRecruitment(mount, {
+          // ASKED AGAIN ON EVERY TOGGLE, which is what keeps `autoFilled` — and
+          // so the Deploy button's promise — true of the selection in front of
+          // the player rather than of the empty one he started with.
+          modelFor: (chosen) => runner.recruitment(chosen),
+          onDeploy: (chosen) => {
+            const result = runner.assignSquad(chosen)
+            if (!result.ok) {
+              // BACK TO THE SCREEN, not just to the console. "This level needs 3
+              // men; only 1 was selected" is a sentence the player can act on,
+              // and a Deploy button that refuses in silence is precisely what
+              // `selectSquad` returning a reason exists to prevent.
+              announce(result, 'assigning the squad')
+              return result.reason
+            }
+            reconcile()
+            return null
+          },
+        })
+      case 'briefing':
+        return createBriefing(mount, {
+          model: runner.briefing(),
+          onDeploy: () => {
+            announce(runner.deploy(), 'deploying')
+            reconcile()
+          },
+        })
+      case 'debrief': {
+        const model = runner.debrief()
+        if (model === null) {
+          // Unreachable: `Debrief` is only ever entered through `finishMission`,
+          // which writes the report before it moves the screen. Written out
+          // rather than asserted away, and reported as fatal rather than mounted
+          // empty — a Debrief with no report means the mission's record was
+          // lost, and a screen that made one up would tell the player nobody
+          // died.
+          fail(mount, {
+            title: 'The mission result was lost',
+            detail: 'The debrief has no report to show, so the mission could not be recorded.',
+            technical: 'runner.debrief() was null on the Debrief screen.',
+            action: { label: 'Reload the game', onClick: () => location.reload() },
+          })
+          return undefined
+        }
+        return createDebrief(mount, {
+          model,
+          // The sim's own sentence for the loss, kept because the event is a
+          // one-shot and the screen outlives it by minutes.
+          ...(failure === undefined ? {} : { reason: failure }),
+          onContinue: () => {
+            announce(runner.recordCasualties(), 'recording the casualties')
+            reconcile()
+          },
+        })
+      }
+      case 'boot-hill': {
+        const hill = createBootHill(mount, {
+          continueLabel: 'Carry on',
+          onContinue: () => {
+            announce(runner.advanceFromBootHill(), 'leaving Boot Hill')
+            reconcile()
+          },
+        })
+        // Drawn once, here: the hill is built for the screen and the model
+        // cannot change while it is up.
+        hill.update(runner.bootHill())
+        return hill
+      }
     }
-    if (runner.screen() !== 'Recruitment') return
-    const model = runner.recruitment()
-    const chosen = model.available.slice(0, model.maxSquad).map((man) => man.id)
-    if (!announce(runner.assignSquad(chosen), 'assigning the squad')) return
-    announce(runner.deploy(), 'deploying')
   }
 
-  // "F to zoom out", not "F to fit": since ticket 009b the zoom-out limit stops
-  // at the widest view that shows no background, which is deliberately short of
-  // the whole level. A hint that still promised a fit would be a lie.
-  showControlHint(
-    mount,
-    'WASD / arrows or screen edge to pan  ·  wheel or +/− to zoom  ·  F to zoom out fully  ·  ' +
-      '1–3 or shift+wheel to change weapon',
-  )
+  /**
+   * THE ROUTER (ticket 022b): make the page agree with `runner.screen()`.
+   *
+   * ONE SCREEN MOUNTED, EXACTLY ONE, ALWAYS. Every transition comes through
+   * here, so there is one place that can leak a screen and one place to look
+   * when two are visible at once.
+   *
+   * IT IS DRIVEN BY THE RUNNER'S STATE AND NEVER BY THE CALLBACK THAT CAUSED IT.
+   * Handlers issue a command and call this; a refused command therefore reports
+   * the same screen as before and this function does nothing at all — the player
+   * keeps the panel he is looking at, with his selection and his refusal still
+   * on it.
+   *
+   * `Mission` MOUNTS THE CANVAS, which is to say it mounts nothing: `viewFor`
+   * answers `null` and the job here is only to make sure no campaign screen is
+   * covering the game. The mission itself is built and released by `host`, which
+   * the runner drives.
+   */
+  function reconcile(): void {
+    const view = viewFor(runner.screen())
+    // THE MISSION CHROME BELONGS TO THE SAME `null` (ticket 022b). `viewFor`
+    // answering `null` is what "the canvas is the screen" means, so the HUD and
+    // the control hint are shown on exactly that answer and hidden on every
+    // other. Asked of `viewFor` and not of `runner.screen() === 'Mission'`: one
+    // table, one answer, and no second spelling to fall out of step with the
+    // screens. Without this the HUD sits behind every campaign panel, reporting
+    // a squad and a mission clock for a mission the player is not in.
+    //
+    // ABOVE THE EARLY RETURN, so it runs on every call — including the ones
+    // where the mounted screen is already right.
+    hud.setVisible(view === null)
+    if (view === null) showHintOnce()
+    // The hint is a one-shot and its own file removes it on a timer or a click;
+    // dismissing it here only covers the case where the mission ends before
+    // either has happened, so it does not linger over the Debrief.
+    else hint?.dismiss()
+    // Already right. The early return is what makes a refused command free —
+    // without it a redraw would tear down the Recruitment screen the player is
+    // mid-selection on and put an empty one back.
+    if (mounted?.view === view) return
+    mounted?.screen.dispose()
+    mounted = undefined
+    if (view === null) return
+    const screen = mountView(view)
+    if (screen === undefined) return
+    mounted = { view, screen }
+  }
 
   window.addEventListener('resize', onResize)
   window.addEventListener('blur', onBlur)
@@ -798,13 +924,15 @@ async function boot(): Promise<void> {
     })
   })
 
-  // INTO THE FIRST MISSION BEFORE THE LOOP STARTS, so the squad the player sees
-  // on frame one is the campaign's and not the anonymous one the scene was built
-  // from. On a fresh page this is `demoShortcut(0)` — the chart's `Menu ->
-  // Mission` row — and the game boots straight into level 1 exactly as it did
-  // before this ticket, with the difference that the men now have names, records
-  // and gravestones.
-  enterMission()
+  // THE FIRST SCREEN, BEFORE THE LOOP STARTS (ticket 022b). On a fresh page the
+  // runner is on `Menu`, so this is what puts the Menu up; there is no bridge
+  // into a mission any more and no screen is mounted by name. `demoShortcut`
+  // survives as a runner command for the `?demo=1&level=N` deep link, which is
+  // ticket 029's to read off the address bar and hand in as `entry`.
+  //
+  // The scene behind it was built from the level's own anonymous spawns and is
+  // rebuilt with the player's men by `host.start` on the first deploy.
+  reconcile()
 
   renderer.setAnimationLoop((now) => {
     // A throw here repeats every frame and is invisible behind a frozen canvas.
@@ -856,12 +984,19 @@ async function boot(): Promise<void> {
         // without a line of geometry code asking whether it should.
         else if (event.type === 'ShotFired') tracers.add(event, elapsed)
       }
-      hud.update({
-        squad: rosterNow(),
-        objectives: session.objectives.progress(),
-        elapsedTicks: session.objectives.elapsedTicks,
-        selector: session.armoury.slots(),
-      })
+      // NOT UPDATED WHILE HIDDEN. The session keeps stepping behind the Debrief
+      // and Boot Hill, so this would go on writing a clock and a roster nobody
+      // can see. Nothing is lost by skipping: the router shows the panel from
+      // inside the callback that starts the mission, and the next frame's update
+      // runs before that frame is painted, so it is never seen stale.
+      if (hud.isVisible()) {
+        hud.update({
+          squad: rosterNow(),
+          objectives: session.objectives.progress(),
+          elapsedTicks: session.objectives.elapsedTicks,
+          selector: session.armoury.slots(),
+        })
+      }
       // FROM THE STATE, NOT FROM THE EVENT. A frame that ran eight steps drains
       // them all at once and a frame that ran none drains nothing, so an end
       // screen driven by catching the event on the right frame is an end screen

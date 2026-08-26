@@ -26,6 +26,11 @@ export {
 } from './transitions'
 export type { Screen, FlowEvent, Transition, AdvanceResult } from './transitions'
 export { briefingModel, debriefModel } from './screens'
+// Ticket 022b. The router's one decision — which screens cover the game — as a
+// table, for the same reason the transitions are one: the shell that reads it is
+// DOM and cannot be tested, so the deciding half is kept where it can be.
+export { SCREEN_VIEWS, VIEWS, viewFor } from './views'
+export type { ViewId } from './views'
 export type { BriefingModel, DebriefModel, FlowSoldier } from './screens'
 // Ticket 022a. The one thing in here that DOES hold state, and it is the reason
 // the four tickets before it are reachable at all: the screen, the campaign, the

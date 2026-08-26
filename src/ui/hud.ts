@@ -54,6 +54,21 @@ export interface HudModel {
 export interface Hud {
   /** Redraw from `model`. Cheap to call every frame; see the note above. */
   update(model: HudModel): void
+  /**
+   * Show or hide the panel, WITHOUT tearing it down (ticket 022b).
+   *
+   * HOW TO HIDE, NOT WHEN. The HUD has no idea which screen the game is on and
+   * is not given one; the router in `app/main.ts` owns that question and answers
+   * it from `viewFor`. This is the mechanism it drives.
+   *
+   * A TOGGLE RATHER THAN A DISPOSE-AND-REBUILD, because the pips, objective
+   * lines and selector rows above are pooled precisely so a mission does not
+   * reallocate them — see the note on `pips`. Rebuilding the HUD on every screen
+   * transition would throw that pool away for nothing.
+   */
+  setVisible(visible: boolean): void
+  /** Whether the panel is currently shown. See `setVisible`. */
+  isVisible(): boolean
   /** Remove the HUD. Safe to call twice. */
   dispose(): void
 }
@@ -65,12 +80,21 @@ const MUTED = '#9fb3bd'
 const DONE = '#8fd694'
 const LOST = '#ff8f6b'
 
+/**
+ * The panel's `display` when it is shown.
+ *
+ * A constant because `setVisible` has to put this exact value back after
+ * `display:none`; a literal in both places would silently break the layout the
+ * day the panel stopped being a column.
+ */
+const PANEL_DISPLAY = 'flex'
+
 const PANEL_STYLE = [
   'position:fixed',
   'top:0.75rem',
   'left:0.75rem',
   'z-index:40',
-  'display:flex',
+  `display:${PANEL_DISPLAY}`,
   'flex-direction:column',
   'gap:0.5rem',
   'min-width:13rem',
@@ -107,9 +131,22 @@ export function formatMissionTime(ticks: number): string {
   return `${String(minutes)}:${String(seconds % 60).padStart(2, '0')}`
 }
 
+/**
+ * What one objective type is called on screen.
+ *
+ * EXPORTED SO THE BRIEFING SAYS THE SAME WORDS (ticket 022b). The player reads
+ * the objective list on the Briefing and then again in the HUD a few seconds
+ * later; two tables would let "Eliminate all enemies" and something else name
+ * the same `kill_all`, and he would be comparing two lists against each other
+ * instead of playing the level.
+ */
+export function objectiveLabel(type: string): string {
+  return OBJECTIVE_LABELS[type] ?? type
+}
+
 /** One objective as a line of text: what it is, and how far through it the squad is. */
 export function objectiveLine(progress: ObjectiveProgress): string {
-  const label = OBJECTIVE_LABELS[progress.type] ?? progress.type
+  const label = objectiveLabel(progress.type)
   if (!progress.supported) return `${label} — not available in this build`
   // A count only where counting means something. `reach_area` is 0/1 and 1/1
   // internally, which is the right shape for the model and reads as noise here.
@@ -126,6 +163,10 @@ export function createHud(mount: HTMLElement): Hud {
   const panel = document.createElement('section')
   panel.setAttribute('aria-label', 'Mission status')
   panel.style.cssText = PANEL_STYLE
+  // HIDDEN UNTIL THE ROUTER SAYS OTHERWISE. The HUD is built once, at boot,
+  // before the first screen is decided; visible-by-default would put a squad
+  // count and a mission clock on the page for whatever screen the game opens on.
+  panel.style.display = 'none'
 
   const header = document.createElement('div')
   header.style.cssText = 'display:flex;justify-content:space-between;gap:1rem;align-items:baseline'
@@ -254,6 +295,12 @@ export function createHud(mount: HTMLElement): Hud {
 
   return {
     update,
+    setVisible(visible: boolean): void {
+      panel.style.display = visible ? PANEL_DISPLAY : 'none'
+    },
+    isVisible(): boolean {
+      return panel.style.display !== 'none'
+    },
     dispose(): void {
       panel.remove()
     },
