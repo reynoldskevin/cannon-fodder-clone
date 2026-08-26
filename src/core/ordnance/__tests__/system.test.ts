@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { World } from '../../world/world'
 import { asciiLevel } from '../../pathing/__tests__/ascii'
-import { bakeNavGrid } from '../../pathing/navgrid'
-import { tileToWorld, worldToTileX } from '../../view/projection'
+import { bakeNavGrid, INFANTRY } from '../../pathing/navgrid'
+import { tileToWorld, worldToTileX, worldToTileY } from '../../view/projection'
 import { createOrdnanceSystem } from '../system'
 import { planTrajectory } from '../ballistics'
 import type { OrdnanceSpec } from '../table'
@@ -33,6 +33,20 @@ const OPEN = `
   ....................
   ....................
   ....................
+`
+
+/** A tall wall down column 10, for shots that run LENGTHWISE along it. */
+const TALL_WALL = `
+  ..........#.........
+  ..........#.........
+  ..........#.........
+  ..........#.........
+  ..........#.........
+  ..........#.........
+  ..........#.........
+  ..........#.........
+  ..........#.........
+  ..........#.........
 `
 
 /** A wall down column 10. */
@@ -411,6 +425,131 @@ describe('flight and detonation', () => {
       { off: -0.4, hp: 1000 },
       { off: -0.49, hp: 1000 },
     ])
+  })
+
+  it('never detonates inside solid ground, on ANY line including along a wall', () => {
+    /**
+     * THE INVARIANT, SWEPT — and the case that a horizontal firing line cannot
+     * reach.
+     *
+     * The first fix for the off-centre clamp pulled the impact back one tile
+     * face per pass, with a budget of four, on the reasoning that a guess under
+     * a tile out names at most the blocking tile or the one behind it. That
+     * reasoning is false for an OBLIQUE ray: a shot that runs nearly parallel to
+     * a wall enters the wall column and then crosses many ROW faces inside it,
+     * so it is a long way out measured in faces while being barely out measured
+     * in space. Four passes are spent without ever escaping in x, and the round
+     * detonates inside the wall — which is finding 1 all over again, at 2% of
+     * shots instead of 50%.
+     *
+     * Swept rather than sampled because the failure is a thin sliver of the
+     * input space: every fixture above fires along a row, and along a row this
+     * never happens. It also pins the whole clamp at once — the pass budget, the
+     * face nudge, both axes of the slab intersection, and the world-to-tile
+     * spelling at THIS call site, which the blast test's fixture does not cover.
+     */
+    const level = asciiLevel(TALL_WALL)
+    const grid = bakeNavGrid(level)
+    const inSolid: string[] = []
+    let fired = 0
+    for (const column of [9, 11]) {
+      for (const row of [0, 3, 6, 9]) {
+        for (const ox of [-0.3, 0, 0.3]) {
+          for (const oz of [-0.3, 0, 0.3]) {
+            for (const target of [
+              { x: 10, y: 9 },
+              { x: 10, y: 0 },
+            ]) {
+              const world = new World(level, { seed: 1 })
+              const ordnance = createOrdnanceSystem(grid, { table: TABLE })
+              world.addSystem(ordnance)
+              const from = tileToWorld(column, row, level.size)
+              const man = world.spawn({
+                kind: 'rifleman',
+                team: 'player',
+                x: from.x + ox,
+                z: from.z + oz,
+                health: 1000,
+              })
+              world.tick()
+              world.drainEvents()
+              if (!ordnance.launch(man.id, 'dart', target)) continue
+              let bx = Number.NaN
+              let bz = Number.NaN
+              for (let i = 0; i < 60; i += 1) {
+                world.tick()
+                for (const e of world.drainEvents()) {
+                  if (e.type === 'Explosion') {
+                    bx = e.x
+                    bz = e.z
+                  }
+                }
+              }
+              if (Number.isNaN(bx)) continue
+              fired += 1
+              const tx = worldToTileX(bx, level.size)
+              const tz = worldToTileY(bz, level.size)
+              if (!grid.passable(tx, tz, INFANTRY)) {
+                inSolid.push(
+                  `from (${String(column)}${ox >= 0 ? '+' : ''}${String(ox)}, ${String(row)}${oz >= 0 ? '+' : ''}${String(oz)}) at (${String(target.x)},${String(target.y)}) -> tile ${String(tx)},${String(tz)}`,
+                )
+              }
+            }
+          }
+        }
+      }
+    }
+    // Non-vacuity: a sweep that fired nothing would pass this silently.
+    expect(fired).toBeGreaterThan(100)
+    expect(inSolid).toEqual([])
+  })
+
+  it('and an oblique shot along a wall does not kill the man on the far side', () => {
+    /**
+     * The consequence, in the terms a player would report it, and the geometry
+     * matters: the shooter is EAST of the wall and the victim is WEST of it, so
+     * a hit here is a round that went through two tiles of solid rock.
+     *
+     * The mechanism is worth stating because it is not obvious from the impact
+     * point alone. The round detonates INSIDE the wall column; `resolveBlast`
+     * finds its centre tile impassable and `sightOrigin` snaps the sightline to
+     * the nearest passable neighbour, whose ring scan resolves ties toward −x —
+     * the far side. So the blast is measured from a tile the shooter cannot see,
+     * and cover stops meaning anything.
+     *
+     * Full health asserted rather than "less damage": at `INFANTRY_HEALTH = 1`
+     * every one of these is a death, and 1000 HP is only here so the failure
+     * reads as a number instead of a corpse.
+     */
+    const level = asciiLevel(TALL_WALL)
+    const grid = bakeNavGrid(level)
+    const world = new World(level, { seed: 1 })
+    const ordnance = createOrdnanceSystem(grid, { table: TABLE })
+    world.addSystem(ordnance)
+    const from = tileToWorld(11, 0, level.size)
+    const man = world.spawn({
+      kind: 'rifleman',
+      team: 'player',
+      x: from.x - 0.3,
+      z: from.z - 0.3,
+      health: 1000,
+    })
+    const behind = tileToWorld(9, 2, level.size)
+    const victim = world.spawn({
+      kind: 'rifleman',
+      team: 'enemy',
+      x: behind.x,
+      z: behind.z,
+      health: 1000,
+    })
+    world.tick()
+    world.drainEvents()
+    ordnance.launch(man.id, 'dart', { x: 10, y: 9 })
+    for (let i = 0; i < 120; i += 1) {
+      world.tick()
+      world.drainEvents()
+    }
+    expect(world.get(victim.id)?.health).toBe(1000)
   })
 
   it('a ballistic projectile clears the same wall and lands beyond it', () => {
