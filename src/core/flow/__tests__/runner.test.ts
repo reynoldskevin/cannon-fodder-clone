@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createCampaignRunner, EVENTS, SCREENS } from '../index'
+import { createCampaignRunner, EVENTS, SCREENS, SCREEN_VIEWS, viewFor } from '../index'
 import type { CampaignRunner, MissionHost, RunnerOptions } from '../index'
 import {
   CAMPAIGN_SCHEMA_VERSION,
@@ -1156,5 +1156,78 @@ describe('the runner is a value the shell can trust', () => {
     const { runner } = runnerFor(ONE_LEVEL, { port: fakePort(port.last()) })
     expect(runner.notice()).toBeNull()
     expect(runner.campaign()).toEqual(state)
+  })
+})
+
+describe('the router can always draw what the runner reports (ticket 022b)', () => {
+  /**
+   * THE CONTRACT BETWEEN THE TWO HALVES, from the side that can be tested. The
+   * router itself is `main.ts` and four `div`s and no test will ever see it; what
+   * IS checkable is that the runner never reports a state the router has no
+   * answer for. A screen with no view is a black page over a running mission with
+   * no button to press, and the only way out is a reload.
+   */
+
+  it('every screen a full campaign passes through has a view', () => {
+    const { runner } = runnerFor(THREE_LEVELS)
+    const seen = new Set<string>()
+    const note = (): void => {
+      seen.add(runner.screen())
+      // `undefined` would pass a truthiness check as "no overlay" and strip the
+      // panel off a screen the game is not on. `null` is the only legal absence.
+      const view = viewFor(runner.screen())
+      expect({ screen: runner.screen(), ok: view === null || typeof view === 'string' }).toEqual({
+        screen: runner.screen(),
+        ok: true,
+      })
+    }
+    note()
+    for (let i = 0; i < 3; i += 1) {
+      if (runner.screen() === 'Menu') runner.startCampaign()
+      note()
+      runner.assignSquad(offered(runner, 3))
+      note()
+      runner.deploy()
+      note()
+      runner.finishMission(missionEvents([1], 'complete'), assignmentFor(runner.squad()))
+      note()
+      runner.recordCasualties()
+      note()
+      runner.advanceFromBootHill()
+      note()
+    }
+    // Not merely "nothing broke": the walk must actually have covered the chart,
+    // or every assertion above was made about three screens.
+    expect([...seen].sort()).toEqual([...SCREENS].sort())
+  })
+
+  it('a refused command leaves the reported screen, and so the mounted view, alone', () => {
+    /**
+     * The router reconciles from `runner.screen()` AFTER each command rather than
+     * mounting what the handler expected. This is the property that makes that
+     * safe: a refusal is a no-op to the router, so a double-clicked button
+     * redraws nothing instead of tearing down the screen it is on.
+     */
+    const { runner } = runnerFor(THREE_LEVELS)
+    runner.startCampaign()
+    const before = runner.screen()
+    const view = viewFor(before)
+    runner.deploy()
+    runner.finishMission([], new Map())
+    runner.recordCasualties()
+    runner.advanceFromBootHill()
+    expect(runner.screen()).toBe(before)
+    expect(viewFor(runner.screen())).toBe(view)
+  })
+
+  it('the mission is the only state that shows the game', () => {
+    // The runner's side of "exactly one screen mounts no overlay": the only way
+    // to reach a state with no panel is to be in a mission.
+    const { runner } = runnerFor(THREE_LEVELS)
+    deploy(runner)
+    expect(viewFor(runner.screen())).toBeNull()
+    runner.finishMission(missionEvents([], 'complete'), assignmentFor(runner.squad()))
+    expect(viewFor(runner.screen())).toBe(SCREEN_VIEWS.Debrief)
+    expect(viewFor(runner.screen())).not.toBeNull()
   })
 })
