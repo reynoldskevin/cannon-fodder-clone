@@ -46,10 +46,22 @@ export type {
 // from what 019 already stores, which is the test of the three tickets before it.
 export { bootHillModel, promotionsBetween } from './boothill'
 export type { BootHillModel, Grave, Promotion } from './boothill'
+// Ticket 024. Beside `bootHillModel` and for the same reason: the screen that
+// shows the campaign's totals has no tests, so the arithmetic lives here.
+export { campaignSummary } from './boothill'
+export type { CampaignSummary } from './boothill'
 export { RANKS, rankFor } from './ranks'
 export type { Rank } from './ranks'
 export { NAME_POOL } from './names'
-export { saveCampaign, loadCampaign, CAMPAIGN_SCHEMA_VERSION } from './persistence'
+export {
+  saveCampaign,
+  loadCampaign,
+  CAMPAIGN_SCHEMA_VERSION,
+  // Ticket 024. `restartCampaign` seeds a fresh campaign with the same constant
+  // a first run gets, so a restart with no seed is the same campaign a new
+  // player would have started — `core` has no clock to make a varied one from.
+  FRESH_CAMPAIGN_SEED,
+} from './persistence'
 export type {
   CampaignState,
   DeadRecruit,

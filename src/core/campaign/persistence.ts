@@ -45,7 +45,7 @@ export const CAMPAIGN_SCHEMA_VERSION = 1
  * make a fresh one from. `app/` supplies its own seed for a campaign the player
  * deliberately starts; this value only has to be valid, not varied.
  */
-const FRESH_CAMPAIGN_SEED = 1
+export const FRESH_CAMPAIGN_SEED = 1
 
 const NOTICE_UNREADABLE = 'The saved campaign could not be read, so a new one was started.'
 const NOTICE_DAMAGED = 'The saved campaign was damaged, so a new one was started.'

@@ -42,6 +42,10 @@ import {
 
 export { MapgenError } from './errors'
 export type { Legend, LegendLabel, SpawnCategory } from './legend'
+// Ticket 024. Re-exported here because `import-levels.mjs` imports this module
+// and nothing else from `tools/mapgen`, and the manifest is written by the same
+// run that writes the documents it names.
+export { writeLevelsManifest, LEVELS_MANIFEST_FILE } from './manifest'
 
 export interface ImportOptions {
   /** Directory holding `map.png`, `legend.json` and optionally `walkable.png`. */

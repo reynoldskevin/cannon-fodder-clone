@@ -31,6 +31,9 @@
 import {
   applyMissionReport,
   bootHillModel,
+  campaignSummary,
+  createCampaign,
+  FRESH_CAMPAIGN_SEED,
   loadCampaign,
   maxSquadFor,
   missionReport,
@@ -40,11 +43,12 @@ import {
   saveCampaign,
   selectSquad,
 } from '../campaign'
-import { advance, campaignComplete, isMissionExit, resolveEntry } from './transitions'
+import { advance, campaignComplete, INITIAL_SCREEN, isMissionExit, resolveEntry } from './transitions'
 import { briefingModel, debriefModel } from './screens'
 import type {
   BootHillModel,
   CampaignState,
+  CampaignSummary,
   MissionReport,
   PersistencePort,
   Recruit,
@@ -110,8 +114,37 @@ export interface CampaignRunner {
   /** `null` until a mission has been played. */
   debrief(): DebriefModel | null
   bootHill(): BootHillModel
+  /**
+   * What the campaign added up to, for the Menu to show when it is over.
+   *
+   * Answerable at any time, because it is a selector over the campaign and not a
+   * screen: a campaign in progress has a perfectly good number of casualties.
+   */
+  summary(): CampaignSummary
+  /**
+   * Is the campaign over — every level the shell handed over beaten?
+   *
+   * ASKED OF `campaignComplete`, THE SAME FUNCTION `advanceFromBootHill` ROUTES
+   * ON. The Menu has to know whether to draw the summary, and a second spelling
+   * of "the campaign is finished" in a `div` would disagree with the chart the
+   * first time the comparison was retuned — and `>` versus `>=` here is exactly
+   * the thing ticket 020 measured.
+   */
+  isCampaignOver(): boolean
 
   startCampaign(): AdvanceResult
+  /**
+   * Throw the campaign away and begin a new one. NOT `startCampaign`.
+   *
+   * TWO VERBS, BECAUSE ONE OF THEM IS DESTRUCTIVE. A player who meant "play
+   * again" must not be able to reach "delete twelve gravestones" by pressing the
+   * same button — `startCampaign` is a replay that keeps every stone, and the
+   * confirmation in front of THIS one is the screen's.
+   *
+   * `seed` is the caller's: `core` has no clock and no unseeded random, so a
+   * restart without one produces the same roster a first run would.
+   */
+  restartCampaign(seed?: number): AdvanceResult
   demoShortcut(levelIndex: number): AdvanceResult
   assignSquad(chosenIds: readonly string[]): AdvanceResult
   deploy(): AdvanceResult
@@ -275,6 +308,10 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
         ? bootHillModel(state, [])
         : bootHillModel(state, promotionsBetween(before, state), before),
 
+    summary: () => campaignSummary(state),
+
+    isCampaignOver: () => campaignComplete(state.unlockedLevels, levels.length),
+
     /**
      * `startCampaign` IS A REPLAY, NOT A WIPE. It moves a screen and touches no
      * campaign state at all — clearing the save is ticket 024's, gated on an
@@ -282,6 +319,42 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
      * Boot Hill, which is the one screen the campaign exists to fill.
      */
     startCampaign: () => settle(advance(screen, 'startCampaign')),
+
+    /**
+     * THE ONLY THING IN THIS FILE THAT EVER CLEARS THE SAVE (ticket 024).
+     *
+     * IT WRITES THE WIPE THERE AND THEN, NOT AT THE NEXT MISSION END. A wipe
+     * that only reached the disk later would come back from the dead on a
+     * reload — the worst possible moment to discover it, because the player has
+     * already been told his campaign was cleared and has started making new men.
+     *
+     * IT IS NOT A ROW IN THE CHART, AND MUST NOT BECOME ONE. A restart is a
+     * RE-CONSTRUCTION rather than a transition: it puts the runner back into the
+     * state `createCampaignRunner` produces — a fresh campaign on
+     * `INITIAL_SCREEN` — which is the one screen from which a campaign can be
+     * begun. Spelling it as an edge (`Recruitment -> Menu` on some new event)
+     * would add a row `ARCHITECTURE_DIAGRAM.md` does not have, for a command
+     * that is not a player walking the flow but the flow being started over.
+     *
+     * IT STILL GOES THROUGH `settle`, so a restart from inside a mission
+     * releases that mission's GPU resources. Skipping it would leak an entire
+     * scene on the one command whose whole point is to throw things away.
+     *
+     * THE MISSION'S RECORD GOES WITH THE CAMPAIGN. `before` and `report` are the
+     * last mission's, and a Debrief or a Boot Hill built from them after a wipe
+     * would show the dead of a campaign that no longer exists.
+     */
+    restartCampaign: (seed: number = FRESH_CAMPAIGN_SEED) => {
+      state = createCampaign({ seed })
+      squad = []
+      before = null
+      report = null
+      // BEFORE the screen moves, and its notice kept: a store that refused the
+      // write is the one thing the Menu must say out loud, and the player is
+      // about to be looking at that very screen.
+      notice = saveCampaign(port, state).notice
+      return settle({ ok: true, state: INITIAL_SCREEN })
+    },
 
     /**
      * Straight from the Menu into a mission, bypassing Recruitment and Briefing.

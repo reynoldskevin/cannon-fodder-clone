@@ -130,14 +130,81 @@ export function bootHillModel(
   // Sorting by `diedOnLevel` instead would look equivalent and would reorder
   // the two men who fell on the same level, and shuffle a hill the moment a
   // player replays an earlier level.
-  const graves: Grave[] = state.dead.map((fallen) => ({
+  const graves = gravesOf(state)
+
+  return { graves, promotions: [...promotions], fallenThisMission: fallenSince(graves, previous) }
+}
+
+/**
+ * The hill's stones, oldest first — `state.dead`'s own order.
+ *
+ * ONE COPY OF THE MAPPING, shared by `bootHillModel` and `campaignSummary`. Two
+ * spellings of "a `DeadRecruit` read as a `Grave`" would let the memorial and
+ * the campaign summary disagree about the same man, on two screens the player
+ * sees minutes apart.
+ *
+ * A FRESH ARRAY OF FRESH ROWS, never `state.dead` handed out: a model a screen
+ * could mutate reaches into the campaign through the memorial, and would leak
+ * whatever the roster happens to store today into `src/ui` forever.
+ *
+ * NOT SORTED. `state.dead` is append-only and never re-sorted, so insertion
+ * order IS chronological order; sorting by `diedOnLevel` would look equivalent
+ * and would reorder the two men who fell on the same level, and shuffle the hill
+ * the moment a player replays an earlier one.
+ */
+function gravesOf(state: CampaignState): Grave[] {
+  return state.dead.map((fallen) => ({
     name: fallen.name,
     rankAtDeath: fallen.rankAtDeath,
     diedOnLevel: fallen.diedOnLevel,
     kills: fallen.kills,
   }))
+}
 
-  return { graves, promotions: [...promotions], fallenThisMission: fallenSince(graves, previous) }
+/**
+ * What the campaign added up to, for the Menu to show when it is over
+ * (ticket 024).
+ *
+ * A PURE SELECTOR AND NO NEW STATE, for the same reason `bootHillModel` is one:
+ * the screen is a `div` with no tests, so a rule inside it is a rule nothing
+ * checks. Everything here is already in `CampaignState`; nothing is recorded.
+ */
+export interface CampaignSummary {
+  /**
+   * How many levels have been BEATEN — one less than `unlockedLevels`.
+   *
+   * NOT `unlockedLevels`, which is a count that starts at ONE: a fresh campaign
+   * has one level open and none beaten. Reporting it raw would tell a player who
+   * has finished nothing that he has finished one.
+   */
+  readonly levelsCompleted: number
+  readonly casualties: number
+  /** Every kill the campaign ever scored — the living AND the dead. */
+  readonly kills: number
+  /** Everyone who fell, oldest first — the same order Boot Hill uses. */
+  readonly fallen: readonly Grave[]
+}
+
+export function campaignSummary(state: CampaignState): CampaignSummary {
+  /**
+   * THE LIVING AND THE DEAD, ADDED TOGETHER. The obvious implementation sums
+   * over the roster, and a dead man is not on it — he killed three and then
+   * fell, and a total that forgot him would tell the player he did less than he
+   * did while Boot Hill carries the number on his stone.
+   */
+  const kills =
+    state.recruits.reduce((total, man) => total + man.kills, 0) +
+    state.dead.reduce((total, man) => total + man.kills, 0)
+
+  return {
+    // FLOORED AND FLOORED AT ZERO, because `parseState` checks `unlockedLevels`
+    // for a lower bound only: `{"unlockedLevels": 1.5}` loads clean with no
+    // notice, and "0.5 levels completed" is a sentence no screen should print.
+    levelsCompleted: Math.max(0, Math.floor(state.unlockedLevels) - 1),
+    casualties: state.dead.length,
+    kills,
+    fallen: gravesOf(state),
+  }
 }
 
 /**

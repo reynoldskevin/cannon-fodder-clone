@@ -1245,9 +1245,20 @@ describe('starting again WIPES, and only when asked in so many words (ticket 024
    * is that nothing else in the runner ever clears the save.
    */
 
-  /** A campaign that has been played: two levels beaten, one man buried. */
+  /**
+   * A campaign that has been PLAYED TO THE END: its one level beaten, one man
+   * buried, and the runner back on the Menu with a finished campaign behind it.
+   *
+   * `ONE_LEVEL`, NOT `THREE_LEVELS`, and the first draft got this wrong in a way
+   * worth recording. It used three levels, played ONE mission, and called the
+   * result "two levels beaten" in its own docstring. So `campaignComplete(2, 3)`
+   * was false, `advanceFromBootHill` fired `nextLevel`, and the runner ended on
+   * RECRUITMENT — where the chart correctly refuses `startCampaign`, there being
+   * exactly one `startCampaign` row and it starting at the Menu. A test about
+   * "a finished campaign" was asserting against an unfinished one.
+   */
   function played(): { runner: CampaignRunner; port: FakePort; deadName: string } {
-    const { runner, port } = runnerFor(THREE_LEVELS)
+    const { runner, port } = runnerFor(ONE_LEVEL)
     runner.startCampaign()
     runner.assignSquad(offered(runner, 3))
     runner.deploy()
@@ -1255,6 +1266,9 @@ describe('starting again WIPES, and only when asked in so many words (ticket 024
     runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
     runner.recordCasualties()
     runner.advanceFromBootHill()
+    // The precondition every case in this block rests on: the campaign really is
+    // over, and the runner really is where a player would be looking at it.
+    expect(runner.screen()).toBe('Menu')
     const deadName = runner.campaign().dead[0]?.name ?? ''
     expect(deadName).not.toBe('')
     return { runner, port, deadName }

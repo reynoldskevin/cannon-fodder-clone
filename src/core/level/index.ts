@@ -27,6 +27,19 @@ import type {
 export { LevelValidationError } from './errors'
 export type { LevelValidationCode } from './errors'
 export { CURRENT_SCHEMA_VERSION } from './types'
+
+/**
+ * The file the importer writes beside the level documents, naming every
+ * published level in campaign order (ticket 024).
+ *
+ * IT LIVES HERE BECAUSE BOTH ENDS OF THE WIRE READ IT. `tools/mapgen/manifest.ts`
+ * writes the file and `src/app/main.ts` fetches it, and the app cannot import
+ * anything under `tools/` — that module reaches for `node:fs`. Spelling the name
+ * out twice would mean a rename of the written file leaves the fetch pointing at
+ * a URL that 404s at boot, with every test still green. A bare string constant
+ * is engine-free, DOM-free and clock-free, so it costs `core` nothing to hold.
+ */
+export const LEVELS_MANIFEST_FILE = 'levels.manifest.json'
 export {
   canFireFromTerrain,
   speedMultiplierForTerrain,

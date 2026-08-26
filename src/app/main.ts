@@ -8,7 +8,12 @@
  */
 
 import * as THREE from 'three'
-import { LevelValidationError, loadLevel, type LevelData } from '../core/level'
+import {
+  LevelValidationError,
+  LEVELS_MANIFEST_FILE,
+  loadLevel,
+  type LevelData,
+} from '../core/level'
 import { centroid, type GroundPoint } from '../core/view/camera'
 import { parseElevation } from '../core/view/orientation'
 import { tileToWorld } from '../core/view/projection'
@@ -22,7 +27,7 @@ import type { SquadMember } from '../core/campaign'
 import type { SimEvent } from '../core/world'
 import { CameraRig } from '../render/camera-rig'
 import { TracerRenderer } from '../render/tracer-renderer'
-import { SceneBuilder } from '../render/scene-builder'
+import { SceneBuilder, type BuiltScene } from '../render/scene-builder'
 import {
   buildSpriteAtlas,
   fetchSpriteManifest,
@@ -51,7 +56,16 @@ import { CORE_VERSION } from '../core/version'
  * be served from any path (Vercel root, a preview subdirectory, `file://`). A
  * leading slash would break every one of those but the root.
  */
-const LEVEL_URL = './generated/levels/level1.json'
+const LEVELS_DIR = './generated/levels'
+/**
+ * The list of published levels, in campaign order (ticket 024).
+ *
+ * THE APP CANNOT LIST A DIRECTORY OVER HTTP, so the set of levels is a file the
+ * importer writes. The name comes from `core/level` because `tools/mapgen`
+ * writes it under the same constant — a second spelling here would 404 at boot
+ * the first time the file was renamed, with every test still green.
+ */
+const MANIFEST_URL = `${LEVELS_DIR}/${LEVELS_MANIFEST_FILE}`
 const SPRITES_URL = './generated/sprites/sprites.manifest.json'
 
 /** Longest a frame may claim to be, so a backgrounded tab doesn't teleport the camera. */
@@ -66,13 +80,21 @@ function mountPoint(): HTMLElement {
   return created
 }
 
-async function fetchLevel(url: string): Promise<LevelData> {
+/**
+ * Fetch a JSON document, restating every failure as a named `BootError`.
+ *
+ * SHARED BY THE MANIFEST AND THE LEVELS, because they fail the same four ways —
+ * unreachable, missing, unparseable, wrong — and the manifest is the one file
+ * whose absence must not read as anything vaguer than "this build is broken".
+ * `what` names the document so the title on screen says which one.
+ */
+async function fetchJson(url: string, what: string, expected: string): Promise<unknown> {
   let response: Response
   try {
     response = await fetch(url)
   } catch (cause) {
     throw new BootError(
-      'Could not reach the level file',
+      `Could not reach the ${what}`,
       `The browser failed to fetch ${url}. If you opened the built files directly, serve them over HTTP instead.`,
       cause instanceof Error ? cause.message : String(cause),
     )
@@ -80,22 +102,67 @@ async function fetchLevel(url: string): Promise<LevelData> {
 
   if (!response.ok) {
     throw new BootError(
-      'The level file is missing',
+      `The ${what} is missing`,
       `The server answered ${String(response.status)} ${response.statusText} for ${url}.`,
-      'Expected public/generated/levels/level1.json to be published with the build.',
+      expected,
     )
   }
 
-  let json: unknown
   try {
-    json = await response.json()
+    return await response.json()
   } catch (cause) {
     throw new BootError(
-      'The level file is not valid JSON',
+      `The ${what} is not valid JSON`,
       `${url} was served, but could not be parsed.`,
       cause instanceof Error ? cause.message : String(cause),
     )
   }
+}
+
+/**
+ * The published levels, in campaign order.
+ *
+ * A MISSING OR MALFORMED MANIFEST IS FATAL AND NAMED, never a silent fallback to
+ * level 1. A campaign that quietly shrank to one level is precisely the failure
+ * ticket 024 exists to remove: `campaignComplete(2, 1)` is true the moment the
+ * first level is beaten, so the whole campaign would end after one mission with
+ * nothing anywhere saying why.
+ *
+ * AN EMPTY LIST IS FATAL TOO, and says something different: the manifest was
+ * found and names nothing, so the build published no levels. The runner refuses
+ * to be constructed without one, and that throw is a caller's mistake with no
+ * sentence a player can read — this is the sentence.
+ */
+async function fetchLevelNames(url: string): Promise<readonly string[]> {
+  const json = await fetchJson(
+    url,
+    'level manifest',
+    `Expected public/generated/levels/${LEVELS_MANIFEST_FILE} to be published with the build — run \`npm run import:levels\`.`,
+  )
+  const levels: unknown = (json as { levels?: unknown } | null)?.levels
+  if (!Array.isArray(levels) || levels.some((name) => typeof name !== 'string' || name === '')) {
+    throw new BootError(
+      'The level manifest is not a list of levels',
+      `${url} was served and parsed, but it does not hold a "levels" array of names.`,
+      `Expected {"levels": ["level1", ...]}, got ${JSON.stringify(json)?.slice(0, 200) ?? 'undefined'}`,
+    )
+  }
+  if (levels.length === 0) {
+    throw new BootError(
+      'This build has no levels',
+      `${url} names no levels at all, so there is no campaign to play.`,
+      'The manifest holds an empty "levels" array — run `npm run import:levels` over the level sources.',
+    )
+  }
+  return levels as readonly string[]
+}
+
+async function fetchLevel(url: string): Promise<LevelData> {
+  const json = await fetchJson(
+    url,
+    'level file',
+    `Expected ${url} to be published with the build; the level manifest names it.`,
+  )
 
   try {
     return loadLevel(json)
@@ -240,15 +307,49 @@ async function boot(): Promise<void> {
   // this exact angle.
   const elevation = parseElevation(new URLSearchParams(window.location.search).get('elev'))
 
-  // Both fetches at once: they are independent, and serialising them would put
-  // a whole extra round trip in front of the first frame. The manifest is
-  // fetched once and feeds two independent images — the packed atlas and the
-  // tiling floor — which are then loaded in parallel too.
-  const [level, manifest] = await Promise.all([fetchLevel(LEVEL_URL), fetchManifest(SPRITES_URL)])
+  // The level manifest and the sprite manifest at once: they are independent,
+  // and serialising them would put a whole extra round trip in front of the
+  // first frame. The level DOCUMENTS cannot join them — the manifest is what
+  // names them — so they are the next hop, and the two images the sprite
+  // manifest feeds are loaded in parallel after that.
+  const [levelNames, manifest] = await Promise.all([
+    fetchLevelNames(MANIFEST_URL),
+    fetchManifest(SPRITES_URL),
+  ])
+  /**
+   * EVERY PUBLISHED LEVEL, IN THE MANIFEST'S ORDER (ticket 024).
+   *
+   * ALL OF THEM AND NOT JUST THE FIRST. `campaignComplete(unlockedLevels,
+   * levels.length)` is what ends the campaign, so a page that fetched one level
+   * ended the whole campaign after one mission — the failure this ticket
+   * removes. NO COUNT IS WRITTEN DOWN HERE: however many the manifest lists is
+   * how many there are, today and when ticket 023 publishes more.
+   *
+   * IN PARALLEL, AND ONE FAILURE IS FATAL. `Promise.all` rejects on the first
+   * bad document, which is right: a campaign missing its third level is a
+   * campaign that dies three missions in, and the boot overlay can say so now
+   * rather than the player finding out then.
+   */
+  const levels = await Promise.all(
+    levelNames.map((name) => fetchLevel(`${LEVELS_DIR}/${name}.json`)),
+  )
   const [visual, floor] = await Promise.all([
     fetchVisual(manifest, SPRITES_URL),
     fetchFloor(manifest, SPRITES_URL, renderer.capabilities.getMaxAnisotropy()),
   ])
+
+  const firstLevel = levels[0]
+  // Unreachable: `fetchLevelNames` refuses an empty manifest with its own named
+  // error. Written out rather than asserted away because
+  // `noUncheckedIndexedAccess` is right that an index is not a proof.
+  if (firstLevel === undefined) {
+    throw new BootError(
+      'This build has no levels',
+      'The level manifest was read but produced no levels to load.',
+      'levels[] was empty after fetching every name in the manifest.',
+    )
+  }
+
   // The simulation. Everything that decides what happens in the world lives on
   // the far side of this call — see `core/session` — so what is left here is the
   // browser's half: a frame delta in, a list of drawables and an alpha out.
@@ -258,13 +359,7 @@ async function boot(): Promise<void> {
   // up by the render loop, the scene builder and the HUD without any of them
   // being rebuilt — and without the page reload that would cost the player the
   // level fetch, the atlas decode and his camera position.
-  let session = createSession(level)
-  const built = SceneBuilder.build(level, visual, floor, elevation, (heightAt) =>
-    session.renderEntities(heightAt),
-  )
-  /** Feet sit on the top face of the tile they stand on, not on the ground plane. */
-  const groundHeightAt = (tileX: number, tileY: number): number =>
-    built.terrain.heightAt(tileX, tileY)
+  let session = createSession(firstLevel)
 
   /**
    * The live tracers (ticket 025a): every `ShotFired` this frame drained, stamped
@@ -284,35 +379,92 @@ async function boot(): Promise<void> {
    * unaged and therefore unfading, for the length of the next mission.
    */
   let tracers = createTracerBuffer()
-  // Sized from the buffer's own capacity, which is what lets the geometry be
-  // allocated once and never grown. See `TracerRenderer`.
-  const tracerFx = new TracerRenderer({
-    size: level.size,
-    heightAt: groundHeightAt,
-    capacity: tracers.capacity,
-  })
-  built.scene.add(tracerFx.object)
 
-  // The rig reasons about the level's SILHOUETTE, not its footprint: the terrain
-  // is extruded, so the zoom cap has to know how far this particular level's
-  // tiles rise and fall — raised terrain at the far edge is what would otherwise
-  // leave background above it. Measured from the level's own data — heights are
-  // data, and a constant here would quietly stop covering the map the day mapgen
-  // emits something taller.
-  const rig = new CameraRig(
-    built.bounds,
-    { width: window.innerWidth, height: window.innerHeight },
-    elevation,
-    levelRelief(level),
-  )
-  rig.snapTo(initialFocus(level))
+  /**
+   * EVERYTHING ON SCREEN THAT BELONGS TO ONE LEVEL (ticket 024).
+   *
+   * A `let`, and rebuilt by `startMission` when the campaign moves to a level
+   * this page is not currently showing. Until this ticket the page fetched one
+   * document and the scene was built for it once, which was true right up to the
+   * moment there was a second level to reach: the session would simulate level 2
+   * while the canvas still showed level 1's terrain, the camera clamped to level
+   * 1's bounds, and a click would be mapped through level 1's tile grid — and if
+   * the two levels are different sizes the height sampler is asked for tiles
+   * that do not exist.
+   *
+   * WHY IT IS A BUNDLE AND NOT SIX VARIABLES: every field here is a function of
+   * the level and none of them can be updated in place — `CameraRig` takes its
+   * bounds and relief at construction, and the controllers hold the rig by
+   * reference. One value means "swap the level" is one assignment and one
+   * disposal, rather than six that a later edit can forget one of.
+   *
+   * WHAT IS NOT IN IT: the atlas, the floor texture and the HUD, which are
+   * loaded once for the page and outlive any level.
+   */
+  let stage = buildStage(firstLevel)
 
-  // Both controllers register window-level listeners and hold a hard reference
-  // to the rig, so both must be kept and disposed with the scene: ticket 020
-  // loads a second level into the same page, and a leaked controller would keep
-  // driving the dead rig — doubling every pan and zoom step.
-  const pan = new PanController(rig)
-  const zoom = new ZoomController(rig, window, renderer.domElement)
+  interface Stage {
+    readonly level: LevelData
+    readonly built: BuiltScene
+    readonly tracerFx: TracerRenderer
+    readonly rig: CameraRig
+    readonly pan: PanController
+    readonly zoom: ZoomController
+  }
+
+  function buildStage(level: LevelData): Stage {
+    const built = SceneBuilder.build(level, visual, floor, elevation, (heightAt) =>
+      session.renderEntities(heightAt),
+    )
+    // Sized from the buffer's own capacity, which is what lets the geometry be
+    // allocated once and never grown. See `TracerRenderer`. `built` is read
+    // directly rather than through `stage`, which is still the OLD stage while
+    // this runs.
+    const tracerFx = new TracerRenderer({
+      size: level.size,
+      heightAt: (tileX, tileY) => built.terrain.heightAt(tileX, tileY),
+      capacity: tracers.capacity,
+    })
+    built.scene.add(tracerFx.object)
+
+    // The rig reasons about the level's SILHOUETTE, not its footprint: the
+    // terrain is extruded, so the zoom cap has to know how far this particular
+    // level's tiles rise and fall — raised terrain at the far edge is what would
+    // otherwise leave background above it. Measured from the level's own data —
+    // heights are data, and a constant here would quietly stop covering the map
+    // the day mapgen emits something taller.
+    const rig = new CameraRig(
+      built.bounds,
+      { width: window.innerWidth, height: window.innerHeight },
+      elevation,
+      levelRelief(level),
+    )
+    rig.snapTo(initialFocus(level))
+
+    // Both controllers register window-level listeners and hold a hard reference
+    // to the rig, so both must be kept and disposed with the stage: a leaked
+    // controller would keep driving the dead rig — doubling every pan and zoom
+    // step for the rest of the page's life.
+    const pan = new PanController(rig)
+    const zoom = new ZoomController(rig, window, renderer.domElement)
+    return { level, built, tracerFx, rig, pan, zoom }
+  }
+
+  /** Release a stage's GPU resources and window listeners. */
+  function disposeStage(old: Stage): void {
+    old.zoom.dispose()
+    old.pan.dispose()
+    // Its own geometry and material, added to the scene from out here — so
+    // `built.dispose()` does not know about them.
+    old.tracerFx.dispose()
+    old.built.dispose()
+  }
+
+  /** Feet sit on the top face of the tile they stand on, not on the ground plane. */
+  function groundHeightAt(tileX: number, tileY: number): number {
+    return stage.built.terrain.heightAt(tileX, tileY)
+  }
+
   // The only input path into the simulation: a click on the canvas becomes a
   // `Command` on the session's queue, which the tick drains. The selection is
   // handed in as a function and asked afresh at every click, so an order always
@@ -320,15 +472,16 @@ async function boot(): Promise<void> {
   //
   // REBUILT ON RESTART, not reused: it holds the OLD session's command queue by
   // reference, and orders pushed onto a queue nothing drains are orders the new
-  // squad never hears.
+  // squad never hears. It also holds the stage's camera and the level's tile
+  // grid, so a stage swap has to rebuild it for a second reason.
   let pointer = newPointer()
 
   function newPointer(): PointerController {
     return new PointerController(
       renderer.domElement,
-      rig.camera,
+      stage.rig.camera,
       session.queue,
-      level.size,
+      stage.level.size,
       () => session.selection(),
       // WHAT THE SQUAD IS HOLDING, ASKED AT THE CLICK. The command carries the
       // name and `applyCommand` routes on it, so the simulation never has to
@@ -395,7 +548,7 @@ async function boot(): Promise<void> {
 
   const onResize = (): void => {
     renderer.setSize(window.innerWidth, window.innerHeight)
-    rig.resize(window.innerWidth, window.innerHeight)
+    stage.rig.resize(window.innerWidth, window.innerHeight)
   }
 
   // Alt-tabbing away mid-burst delivers no pointer event at all to the canvas,
@@ -453,17 +606,34 @@ async function boot(): Promise<void> {
    * the timing of the thing it is meant to measure.
    */
   let debug: { update(): void; dispose(): void } | undefined
-  if (new URLSearchParams(window.location.search).get('debug') === '1') {
+  const debugRequested = new URLSearchParams(window.location.search).get('debug') === '1'
+
+  /**
+   * Attach the overlay to the CURRENT stage, replacing any earlier one.
+   *
+   * CALLED AGAIN AFTER A STAGE SWAP (ticket 024), because the overlay takes the
+   * scene, the tile size and the height sampler at attach time and adds its
+   * group to that scene. Left alone across a level change it would be drawing
+   * into a disposed scene with the previous level's dimensions — an overlay that
+   * is invisible and wrong at the same time. The dynamic import is cached after
+   * the first call, so re-attaching costs a microtask and no download.
+   */
+  function attachDebugOverlay(): void {
+    if (!debugRequested) return
     void import('./debug-mode')
       .then((module) => {
         // The teardown may have run while the chunk was in flight; attaching
         // then would add a key listener to a page that is already dead.
         if (stopped) return
+        // The previous overlay goes first: two attached at once means two key
+        // listeners, and a layer toggle that switches a layer on and straight
+        // back off again.
+        debug?.dispose()
         debug = module.attachDebugMode({
           mount,
-          scene: built.scene,
+          scene: stage.built.scene,
           renderer,
-          size: level.size,
+          size: stage.level.size,
           heightAt: groundHeightAt,
           elevationRad: elevation,
           // The CURRENT session, not the one that exists now: `startMission()`
@@ -479,6 +649,8 @@ async function boot(): Promise<void> {
         console.error('debug overlay failed to load', error)
       })
   }
+
+  attachDebugOverlay()
 
   /**
    * The campaign screen that is on the page, and which one it is. `undefined`
@@ -577,12 +749,11 @@ async function boot(): Promise<void> {
      * Release the mission that is ending.
      *
      * WHAT A MISSION OWNS HERE IS THE SESSION, THE TRACERS AND THE POINTER — NOT
-     * THE SCENE. The terrain, the atlas and the floor are built once, for the
-     * level this page fetched, and `start` re-enters that same scene; disposing
-     * them here would leave nothing to come back to and a black canvas behind the
-     * Debrief. They are freed by `teardown()` below, which ends the page rather
-     * than the mission. Ticket 023 brings more than one level and is where a
-     * scene rebuild belongs.
+     * THE STAGE. The terrain, the atlas and the floor stay up behind the Debrief
+     * and Boot Hill; disposing them here would leave nothing to come back to and
+     * a black canvas behind both. The stage is swapped by `startMission` when the
+     * campaign moves to a DIFFERENT level, and freed for good by `teardown()`
+     * below, which ends the page rather than the mission.
      *
      * THE POINTER IS DISPOSED HERE AND AGAIN IN `startMission`, AND BOTH CALLS
      * ARE DELIBERATE. `dispose` is idempotent, so the pair is safe. This one
@@ -605,13 +776,15 @@ async function boot(): Promise<void> {
    * REBUILT, NOT RELOADED. `location.reload()` would be one line and would cost
    * the level fetch, the sprite decode, the terrain build and the player's
    * camera position — for a mission whose entire state lives in the object
-   * below. The scene, the rig and the controllers outlive the session by
-   * design; only the simulation and the things holding a reference into it are
-   * replaced.
+   * below. The stage outlives the session by design; only the simulation and the
+   * things holding a reference into it are replaced.
    *
-   * `next` IS HONOURED RATHER THAN IGNORED, but the scene above was built for
-   * the one level this page fetched, so today it is always that same document —
-   * see the note on `teardown`.
+   * `next` IS HONOURED, AND SINCE TICKET 024 IT CAN ACTUALLY DIFFER. The page
+   * loads every published level, so beating level 1 deploys level 2 into this
+   * same page — and the stage is rebuilt for it. Rebuilt only when the document
+   * CHANGES: replaying the level already on screen would otherwise throw away a
+   * terrain mesh and an atlas binding to build an identical one, and reset the
+   * camera the player just placed.
    */
   function startMission(next: LevelData, squad: readonly SquadMember[]): void {
     // THE SCREENS ARE NOT TOUCHED HERE (ticket 022b). The Briefing is still on
@@ -642,7 +815,22 @@ async function boot(): Promise<void> {
     // "brand new". The new mission would open under the last one's fire, and it
     // would never fade.
     tracers = createTracerBuffer()
-    tracerFx.update(tracers.visible(elapsed))
+    // THE STAGE, IF THE LEVEL CHANGED (ticket 024). Compared by identity, which
+    // is exact here: `levels` holds one object per published level and the
+    // runner hands back an element of it, so "the same level" is the same
+    // object. AFTER the session is replaced, because the new scene seeds its
+    // first frame of entities from it, and after the tracer buffer, because the
+    // new tracer geometry is sized from that buffer's capacity.
+    if (next !== stage.level) {
+      // The overlay holds the outgoing scene; it is dropped before that scene is
+      // disposed and re-attached to the new one below.
+      debug?.dispose()
+      debug = undefined
+      disposeStage(stage)
+      stage = buildStage(next)
+      attachDebugOverlay()
+    }
+    stage.tracerFx.update(tracers.visible(elapsed))
     previous = performance.now()
     roster = playerIds()
     pointer.dispose()
@@ -654,8 +842,8 @@ async function boot(): Promise<void> {
     // and current the same state: no blend, which is right for a mission that
     // did not move, it began.
     const fresh = session.renderEntities(groundHeightAt)
-    built.entities.setEntities(fresh)
-    built.entities.setEntities(fresh)
+    stage.built.entities.setEntities(fresh)
+    stage.built.entities.setEntities(fresh)
   }
 
   /** Tear the whole session down: loop, listeners, controllers, GPU resources. */
@@ -678,17 +866,15 @@ async function boot(): Promise<void> {
     // scene's `dispose` knows about, because the overlay was added to the scene
     // from outside it.
     debug?.dispose()
-    // Its own geometry and material, added to the scene from out here — so
-    // `built.dispose()` does not know about them.
-    tracerFx.dispose()
     hud.dispose()
     // Cancels its pending timers as well as removing it, so a torn-down page has
     // nothing left to fire.
     hint?.dismiss()
     pointer.dispose()
-    zoom.dispose()
-    pan.dispose()
-    built.dispose()
+    // The scene, the tracer geometry, the rig's two controllers — one call,
+    // because a stage is one thing. Whichever level is on screen is the one
+    // freed; the stages before it were freed as they were swapped out.
+    disposeStage(stage)
     // Owned here, not by the terrain: it is loaded once for the session and
     // outlives any single level (ticket 020), so it is freed with the session.
     floor.dispose()
@@ -703,12 +889,13 @@ async function boot(): Promise<void> {
    * are all answered in `core/flow` and `core/campaign`, where Vitest can see
    * them; what is left here is showing a `div` and calling the next command.
    *
-   * ONE LEVEL TODAY. Ticket 023 loads the other four, and the array is the whole
-   * change that takes: `levelIndex` is derived from the campaign's own
-   * `unlockedLevels` against this list's length.
+   * EVERY PUBLISHED LEVEL (ticket 024), in the manifest's order. `levelIndex` is
+   * derived from the campaign's own `unlockedLevels` against this list's length
+   * and `campaignComplete` compares against the same length, so the campaign is
+   * exactly as long as the manifest says — no count is written down anywhere.
    */
   const runner = createCampaignRunner({
-    levels: [level],
+    levels,
     port: createLocalStoragePort(),
     host,
   })
@@ -770,18 +957,44 @@ async function boot(): Promise<void> {
    */
   function mountView(view: ViewId): { dispose(): void } | undefined {
     switch (view) {
-      case 'menu':
-        return createMenu(mount, {
+      case 'menu': {
+        const menu = createMenu(mount, {
           // THE NOTICE, SHOWN AT LAST. `runner.notice()` has existed since
           // ticket 019 and until now went nowhere a player would ever look; a
           // save that was damaged or could not be written is the one thing this
           // screen must not keep to itself.
           notice: runner.notice(),
+          // THE END OF THE CAMPAIGN (ticket 024). `BootHill -> Menu` on
+          // `campaignComplete` already lands the player here; both of these are
+          // computed in `core` so the screen only draws them.
+          summary: runner.summary(),
+          campaignOver: runner.isCampaignOver(),
           onStart: () => {
             announce(runner.startCampaign(), 'starting the campaign')
             reconcile()
           },
+          onRestart: () => {
+            /**
+             * THE CLOCK IS READ HERE AND NOWHERE ELSE. `core` has no clock, so a
+             * restart with no seed produces the same twelve names a first run
+             * did — deterministic and a little sad. `app/` is allowed to be the
+             * one that makes a new campaign feel new.
+             */
+            announce(runner.restartCampaign(Date.now()), 'restarting the campaign')
+            // REDRAWN BY HAND, because a restart does not change the SCREEN: the
+            // player was on the Menu and is still on the Menu, so `reconcile`
+            // takes its early return and the panel would go on showing the
+            // totals and the graves of the campaign that was just erased.
+            menu.update({
+              notice: runner.notice(),
+              summary: runner.summary(),
+              campaignOver: runner.isCampaignOver(),
+            })
+            reconcile()
+          },
         })
+        return menu
+      }
       case 'recruitment':
         return createRecruitment(mount, {
           // ASKED AGAIN ON EVERY TOGGLE, which is what keeps `autoFilled` — and
@@ -941,8 +1154,8 @@ async function boot(): Promise<void> {
       const dt = Math.min((now - previous) / 1000, MAX_FRAME_DT)
       previous = now
       elapsed += dt
-      pan.update(dt)
-      rig.update(dt)
+      stage.pan.update(dt)
+      stage.rig.update(dt)
       // The simulation runs at its own fixed 60 Hz whatever this display does.
       // `advance` returns how far into the step after the last one the frame
       // ended, which is what the renderer blends the two states it holds by —
@@ -958,7 +1171,7 @@ async function boot(): Promise<void> {
       // one it saw, so its blend spans more than one tick; that is inherent to
       // catching up after a hitch and is not smoothed away here.
       if (session.stepsLastAdvance > 0) {
-        built.entities.setEntities(session.renderEntities(groundHeightAt))
+        stage.built.entities.setEntities(session.renderEntities(groundHeightAt))
       }
       // Drained every frame whether or not anything is listening yet: the batch
       // is the only channel out of the sim, and left undrained it would grow
@@ -1010,16 +1223,16 @@ async function boot(): Promise<void> {
       // again over a mission that had already been recorded — and the campaign
       // would bury the same men twice.
       if (outcome !== 'playing' && runner.screen() === 'Mission') endMission()
-      built.entities.update(elapsed, alpha)
+      stage.built.entities.update(elapsed, alpha)
       // EVERY FRAME, not only on a stepping one: a tracer fades on the display's
       // clock, so a frame that ran no simulation step still has to redraw the
       // streaks a little dimmer than it found them.
-      tracerFx.update(tracers.visible(elapsed))
+      stage.tracerFx.update(tracers.visible(elapsed))
       // BEFORE the render, so this frame draws what this frame decided. Absent
       // `?debug=1` this is one optional-call check per frame and no debug module
       // was ever fetched, let alone evaluated.
       debug?.update()
-      renderer.render(built.scene, rig.camera)
+      renderer.render(stage.built.scene, stage.rig.camera)
     } catch (error: unknown) {
       teardown()
       console.error(error)
@@ -1033,8 +1246,12 @@ async function boot(): Promise<void> {
   })
 
   console.info(
-    `game-week: ${level.name} ${String(level.size.w)}x${String(level.size.h)} ` +
-      `(${String(built.terrain.triangleCount)} tris, ${String(built.entities.drawCalls)} sprite draws, ` +
+    `game-week: ${stage.level.name} ${String(stage.level.size.w)}x${String(stage.level.size.h)} ` +
+      `(${String(stage.built.terrain.triangleCount)} tris, ` +
+      `${String(stage.built.entities.drawCalls)} sprite draws, ` +
+      // The campaign's length, so a manifest that shrank is visible in the
+      // console of a build that otherwise looks fine.
+      `${String(levels.length)} level(s), ` +
       `camera ${((elevation * 180) / Math.PI).toFixed(1)}°, core ${CORE_VERSION})`,
   )
 }
