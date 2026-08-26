@@ -16,17 +16,20 @@ import type { TileId } from './types'
  * reason about them.
  *
  * THIS DUPLICATES `tools/mapgen/terrain.ts`'s `TILE`, DELIBERATELY. `tools/` is
- * offline Node tooling and the eslint boundary forbids `src/core/**` from
- * importing it — the importer runs once at build time and must never be linked
- * into the game. So the ids are restated here, exactly as
- * `core/render-state/scenery.ts` already restates `CANOPY_TILE_ID = 2` with the
- * same pointer comment, and exactly as `core/world`'s `DEFAULT_HEALTH`
- * restates `core/combat`'s `INFANTRY_HEALTH` rather than depending upward.
+ * offline Node tooling that runs once at build time and must never be linked
+ * into the game, so `src/core/**` does not depend on it. The ids are restated
+ * here instead — the same shape as `core/world`'s `DEFAULT_HEALTH` restating
+ * `core/combat`'s `INFANTRY_HEALTH` rather than depending upward, and as
+ * `core/render-state/scenery.ts` restating `CANOPY_TILE_ID = 2`.
  *
- * NO TEST ASSERTS THE TWO AGREE, and one would be a lie: nothing in this repo
- * can import both tables, so any such test would have to hardcode the numbers a
- * third time and would only ever prove itself. `tools/mapgen/terrain.ts` is the
- * source of truth; a change there is a change here, by hand.
+ * THE TWO ARE KEPT HONEST BY A TEST: `tools/mapgen/__tests__/tile-ids-agree.test.ts`.
+ * The no-dependency rule runs one way only — a file under `tools/` may import
+ * from `src/`, which the importer already does (`tools/mapgen/index.ts` imports
+ * `LevelData` from `src/core/level`) — so that test can see both tables at once
+ * and asserts they match. It is not decoration: before it existed, changing
+ * `TILE.WATER` from 4 to 5 left the whole suite green while making this ticket a
+ * silent no-op. `tools/mapgen/terrain.ts` is the source of truth; a change there
+ * is a change here, by hand, and that test is what says so.
  *
  * Folding `scenery.ts`'s `CANOPY_TILE_ID` into this table is left alone on
  * purpose — it is a rename that touches the renderer, and ticket 003a is about

@@ -135,9 +135,14 @@ describe('a river is a crossing for men and a wall for vehicles', () => {
 
   it('a vehicle is stopped at the water and the far bank is cut off', () => {
     /**
-     * Stated as the WHOLE row rather than just the water tile: the point is not
-     * that one cell is closed, it is that the far bank has become unreachable —
-     * which is what makes a bridge somewhere else on the map the only way over.
+     * Stated as the WHOLE row rather than just the water tile, so a rule that
+     * closed the banks as well as the river would be caught too.
+     *
+     * It asserts PASSABILITY, cell by cell — not reachability. Nothing here runs
+     * a search, and saying "the far bank is unreachable" would be describing a
+     * flow field this test never builds. On a one-tile-wide fixture the two
+     * coincide; on a real map they would not, and the honest claim is the one
+     * the assertions actually make.
      */
     const grid = bakeNavGrid(ford())
     expect([0, 1, 2, 3, 4].map((x) => grid.passable(x, 0, VEHICLE))).toEqual([
@@ -149,11 +154,37 @@ describe('a river is a crossing for men and a wall for vehicles', () => {
     ])
   })
 
-  it('and a bridge tile in the river opens it again for both', () => {
-    // The bridge is dry ground drawn across the water, so it needs no rule of
-    // its own — it is simply not water. Asserted because "the bridge works" is
-    // the whole reason the water rule is safe to ship.
-    const grid = bakeNavGrid(row(TERRAIN.GRASS, TERRAIN.GRASS, TERRAIN.ROCK, TERRAIN.GRASS))
-    expect([0, 1, 2, 3].map((x) => grid.passable(x, 0, VEHICLE))).toEqual([true, true, true, true])
+  it('and a bridge across the river opens it again for both', () => {
+    /**
+     * The bridge is dry ground drawn across the water, so it needs no rule of
+     * its own — it is simply not `WATER`. Asserted because "the bridge works" is
+     * the whole reason the water rule is safe to ship.
+     *
+     * THE FIXTURE MUST CONTAIN WATER, which the first draft's did not: it was
+     * four dry tiles, so it asserted nothing this ticket changed and passed
+     * against `traversalForTerrain` returning `ALL_TRAVERSAL` for everything —
+     * the entire ticket removed. A bridge with no river either side of it is not
+     * a bridge.
+     *
+     * Two rows: the bridge column is dry where the river column is wet, so the
+     * same x is crossable on one and not the other.
+     */
+    const bridged = level(
+      [
+        [TERRAIN.GRASS, TERRAIN.WATER, TERRAIN.GRASS],
+        [TERRAIN.GRASS, TERRAIN.ROCK, TERRAIN.GRASS],
+      ],
+      [
+        [true, true, true],
+        [true, true, true],
+      ],
+    )
+    const grid = bakeNavGrid(bridged)
+    // The ford: men only.
+    expect({ infantry: grid.passable(1, 0, INFANTRY), vehicle: grid.passable(1, 0, VEHICLE) })
+      .toEqual({ infantry: true, vehicle: false })
+    // The bridge, one row down at the same x: everybody.
+    expect({ infantry: grid.passable(1, 1, INFANTRY), vehicle: grid.passable(1, 1, VEHICLE) })
+      .toEqual({ infantry: true, vehicle: true })
   })
 })

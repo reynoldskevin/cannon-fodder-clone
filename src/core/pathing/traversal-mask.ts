@@ -13,14 +13,20 @@
  *     level/terrain.ts  ->  pathing/navgrid.ts  ->  level/terrain.ts
  *
  * — a real runtime cycle (not the type-only `import type { LevelData }` edge,
- * which `verbatimModuleSyntax` erases). Under a cycle the module evaluated
- * second sees the first's `const` bindings uninitialised, so `ALL_TRAVERSAL`
- * could read `undefined` at module scope and a table row would bake to `NaN`
- * traversal bits — a cell passable to nobody, on a level that looked fine when
- * the loader happened to pull the modules in the other order.
+ * which `verbatimModuleSyntax` erases).
  *
- * Hoisting the masks into a module that imports NOTHING makes both sides depend
- * downward on a leaf, and the cycle is gone rather than merely tolerated.
+ * THAT CYCLE WAS HARMLESS, AND ONLY BY LUCK OF SHAPE. `traversalForTerrain` is
+ * a function, so its reads of these masks happen at call time, long after both
+ * modules have finished evaluating; there is no module-scope read of a binding
+ * from the other side, and no table baked at import. Reinstating the cycle
+ * leaves the pathing and level suites green. So this split fixed no live bug and
+ * does not claim to.
+ *
+ * What it buys is that nobody has to re-derive that argument. Hoisting the masks
+ * into a module that imports NOTHING makes both sides depend downward on a leaf,
+ * so the cycle is gone rather than tolerated-for-now, and a later module-scope
+ * use of a mask — a lookup table, a frozen record — cannot turn a benign cycle
+ * into a load-order bug.
  */
 
 /**
