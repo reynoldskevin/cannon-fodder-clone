@@ -5,6 +5,7 @@ import {
   createCampaign,
   loadCampaign,
   promotionsBetween,
+  recruit,
   recruitmentModel,
   recruitsAvailable,
   saveCampaign,
@@ -197,6 +198,25 @@ describe('the hill', () => {
     expect(model.graves).not.toBe(after.dead)
     expect(JSON.parse(JSON.stringify(model))).toEqual(model)
   })
+
+  it('a stone carries the four things it promised and nothing else', () => {
+    /**
+     * `not.toBe` and a JSON round-trip both accept a WIDER object, and TypeScript
+     * accepts one structurally — so spreading the campaign's own `DeadRecruit`
+     * into a grave passed every check here while leaking `id`, `status`,
+     * `missionsSurvived` and the live `rank` into a `src/ui` contract for good.
+     * What a screen is handed is what a screen will end up depending on.
+     */
+    const before = createCampaign({ seed: 11, recruits: 3 })
+    const after = fight(before, 2, [recruitsAvailable(before)[0]!.id])
+    const stone = bootHillModel(after, []).graves[0]
+    expect(Object.keys(stone ?? {}).sort()).toEqual([
+      'diedOnLevel',
+      'kills',
+      'name',
+      'rankAtDeath',
+    ])
+  })
 })
 
 describe('promotions', () => {
@@ -280,12 +300,31 @@ describe('promotions', () => {
   })
 
   it('a new recruit who was not there before is not a promotion', () => {
-    // Auto-fill issues men between missions. Somebody appearing on the roster is
-    // not somebody who was promoted, and a naive diff would report him as one.
+    /**
+     * THE FIRST DRAFT OF THIS COULD NOT FAIL. It built `grown` as
+     * `{ ...after, recruits: after.recruits }` — which is just `after` — so no
+     * recruit was ever introduced and the answer was `[]` whatever the
+     * implementation did. A mutant reporting every unknown man as promoted to
+     * the bottom rank stayed green.
+     *
+     * Auto-fill genuinely issues men between missions, so this is a real path: a
+     * naive diff sees somebody on the `after` roster who was not on the `before`
+     * one and calls it a promotion. He was not promoted, he was recruited.
+     */
     const before = createCampaign({ seed: 28, recruits: 2 })
-    const after = applyMissionReport(before, { levelId: 1, outcome: 'complete', entries: [] })
-    const grown = { ...after, recruits: after.recruits }
-    expect(promotionsBetween(before, grown).length).toBe(0)
+    const grown = recruit(before, 6)
+    expect(recruitsAvailable(grown).length).toBeGreaterThan(recruitsAvailable(before).length)
+    expect(promotionsBetween(before, grown)).toEqual([])
+  })
+
+  it('and a man who left the roster is not a promotion either', () => {
+    // The other direction: somebody on `before` and absent from `after` has
+    // died, and a diff that reported a missing man as a change would put a
+    // promotion beside his gravestone.
+    const before = createCampaign({ seed: 30, recruits: 3 })
+    const doomed = recruitsAvailable(before)[0]!
+    const after = fight(before, 1, [doomed.id])
+    expect(promotionsBetween(before, after).map((p) => p.name)).not.toContain(doomed.name)
   })
 
   it('is data, and survives a JSON round-trip', () => {
@@ -373,6 +412,38 @@ describe('the Recruitment screen says how many men it will assign for you', () =
     const s = createCampaign({ seed: 44, recruits: 8 })
     const chosen = recruitsAvailable(s).slice(0, 1).map((r) => r.id)
     expect(recruitmentModel(s, levelWith(3), chosen).autoFilled).toBe(0)
+  })
+
+  it('promises nothing when the selection would be REFUSED for any reason', () => {
+    /**
+     * `autoFilled` printed over a button that refuses is worse than no notice at
+     * all — it tells the player men will be assigned and then nothing happens.
+     * The first draft only covered ONE refusal (a roster bigger than the squad),
+     * so an implementation that ignored the player's picks entirely and asked
+     * "how many would a blank selection need" answered 2 for a duplicate-id
+     * click that `selectSquad` rejects outright.
+     */
+    const s = createCampaign({ seed: 46, recruits: 3 })
+    const men = recruitsAvailable(s).map((r) => r.id)
+    const one = men[0] ?? ''
+    for (const [label, chosen] of [
+      ['a duplicate id', [one, one]],
+      ['an unknown id', [one, 'ghost']],
+      ['more men than slots', men.slice(0, 3)],
+    ] as const) {
+      expect({ label, autoFilled: recruitmentModel(s, levelWith(2), chosen).autoFilled }).toEqual({
+        label,
+        autoFilled: 0,
+      })
+    }
+  })
+
+  it('promises nothing when a dead man is among the picks', () => {
+    let s = createCampaign({ seed: 47, recruits: 4 })
+    const doomed = recruitsAvailable(s)[0]!
+    s = fight(s, 1, [doomed.id])
+    const living = recruitsAvailable(s)[0]!
+    expect(recruitmentModel(s, levelWith(4), [living.id, doomed.id]).autoFilled).toBe(0)
   })
 
   it('still works when the screen has not asked about a selection yet', () => {
