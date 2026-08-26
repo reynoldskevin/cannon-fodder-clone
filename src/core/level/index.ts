@@ -27,7 +27,12 @@ import type {
 export { LevelValidationError } from './errors'
 export type { LevelValidationCode } from './errors'
 export { CURRENT_SCHEMA_VERSION } from './types'
-export { TERRAIN, traversalForTerrain } from './terrain'
+export {
+  canFireFromTerrain,
+  speedMultiplierForTerrain,
+  TERRAIN,
+  traversalForTerrain,
+} from './terrain'
 export type {
   Facing,
   LevelData,

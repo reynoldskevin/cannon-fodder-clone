@@ -54,6 +54,7 @@
  */
 
 import { createFlowFieldCache } from '../pathing/cache'
+import { speedMultiplierForTerrain } from '../level/terrain'
 import { INFANTRY } from '../pathing/navgrid'
 import { TILE_WORLD_SIZE } from '../view/projection'
 import { FIXED_TIMESTEP } from '../world/gameloop'
@@ -230,6 +231,18 @@ interface UnitStep {
   /** Displacement decided by separation, accumulated over every crowding pair. */
   pushX: number
   pushY: number
+  /**
+   * How far this unit may travel this tick, in tiles: the squad's step scaled by
+   * the terrain he is STANDING ON (ticket 007b).
+   *
+   * Read from the snapshot position at the top of the tick, so a man wading out
+   * of the river accelerates on the tick he LEAVES it — not a tile early, which
+   * is what reading the tile he is heading FOR would do.
+   *
+   * Per unit rather than per detachment: two men in one squad can be standing in
+   * different terrain, which is exactly what a squad half-way across a river is.
+   */
+  step: number
 }
 
 /**
@@ -338,11 +351,41 @@ export function createSquadSystem(grid: NavGrid, options: SquadOptions = {}): Sq
    */
   const lookup = { x: 0, y: 0 }
 
+  /**
+   * How far a man standing at this CORNER-INDEXED tile position travels in one
+   * tick (ticket 007b).
+   *
+   * The level comes off the WORLD rather than being captured at construction:
+   * `createSquadSystem` is handed a nav grid and nothing else, and the grid has
+   * already thrown the tile ids away — it keeps only what is passable to whom.
+   * The tick contract hands us the world anyway, and `World.level` is the same
+   * `LevelData` the grid was baked from, so the two cannot disagree.
+   *
+   * A position off the map, or a row this level does not have, reads as
+   * `undefined` and moves at full speed. That is the neutral answer rather than
+   * a guess: `slideX`/`slideY` are what keep a unit on the grid, and a man who
+   * has somehow left it must not also be frozen there.
+   */
+  function stepFor(world: World, tileX: number, tileY: number): number {
+    const tile = world.level.terrain[Math.floor(tileY)]?.[Math.floor(tileX)]
+    if (tile === undefined) return stepPerTick
+    return stepPerTick * speedMultiplierForTerrain(tile)
+  }
+
   /** The step buffer slot at `index`, creating it the first time it is needed. */
   function stepAt(index: number): UnitStep {
     const existing = steps[index]
     if (existing !== undefined) return existing
-    const created: UnitStep = { id: 0, x: 0, y: 0, moveX: 0, moveY: 0, pushX: 0, pushY: 0 }
+    const created: UnitStep = {
+      id: 0,
+      x: 0,
+      y: 0,
+      moveX: 0,
+      moveY: 0,
+      pushX: 0,
+      pushY: 0,
+      step: stepPerTick,
+    }
     steps.push(created)
     return created
   }
@@ -364,6 +407,11 @@ export function createSquadSystem(grid: NavGrid, options: SquadOptions = {}): Sq
    * then stops rather than overshooting and coming back — which is the whole
    * difference between a squad that settles and one that orbits its target
    * forever. Returns whether a step was written.
+   *
+   * `unit.step` rather than `stepPerTick`: it is the same step scaled by the
+   * terrain the man is standing in (ticket 007b), and this is its ONE use site,
+   * so every way a unit can be steered — down a field, onto a formation slot,
+   * onto the final tile centre — is slowed by the water alike.
    */
   function seekPoint(unit: UnitStep, goalX: number, goalY: number): boolean {
     const dx = goalX - unit.x
@@ -372,7 +420,7 @@ export function createSquadSystem(grid: NavGrid, options: SquadOptions = {}): Sq
     // Negated so a NaN goal — which nothing should produce, and which would be
     // permanent if it reached a position — leaves the unit standing still.
     if (!(distance > ARRIVED_EPSILON)) return false
-    const travel = distance < stepPerTick ? distance : stepPerTick
+    const travel = distance < unit.step ? distance : unit.step
     unit.moveX = (dx / distance) * travel
     unit.moveY = (dy / distance) * travel
     return true
@@ -664,6 +712,10 @@ export function createSquadSystem(grid: NavGrid, options: SquadOptions = {}): Sq
         unit.moveY = 0
         unit.pushX = 0
         unit.pushY = 0
+        // Terrain read from the SNAPSHOT position, with the rest of the
+        // snapshot, so every man's pace this tick is decided against the same
+        // picture of the world his direction is.
+        unit.step = stepFor(world, unit.x, unit.y)
         stepCount += 1
       }
       roster.length = kept
