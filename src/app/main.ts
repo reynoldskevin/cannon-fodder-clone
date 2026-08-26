@@ -450,7 +450,12 @@ async function boot(): Promise<void> {
     return { level, built, tracerFx, rig, pan, zoom }
   }
 
-  /** Release a stage's GPU resources and window listeners. */
+  /**
+   * Release the GPU resources and window listeners a stage OWNS.
+   *
+   * Not the atlas visual and not the floor texture: they are passed in to every
+   * stage and outlive all of them, so they are freed by `teardown` instead.
+   */
   function disposeStage(old: Stage): void {
     old.zoom.dispose()
     old.pan.dispose()
@@ -875,9 +880,11 @@ async function boot(): Promise<void> {
     // because a stage is one thing. Whichever level is on screen is the one
     // freed; the stages before it were freed as they were swapped out.
     disposeStage(stage)
-    // Owned here, not by the terrain: it is loaded once for the session and
-    // outlives any single level (ticket 020), so it is freed with the session.
+    // Owned here, not by the terrain or the entity renderer: both are loaded
+    // once for the session and outlive any single level (ticket 020), so they
+    // are freed with the session and not with the stage that happens to be up.
     floor.dispose()
+    visual.dispose()
   }
 
   /**

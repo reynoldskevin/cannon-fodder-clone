@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, readdirSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { writeLevelsManifest, LEVELS_MANIFEST_FILE } from '../manifest'
@@ -85,23 +85,51 @@ describe('the levels manifest', () => {
   })
 })
 
-describe('and the real pipeline writes one', () => {
-  it('after an import, the manifest sits beside the documents it names', () => {
+describe('and the real pipeline actually writes one', () => {
+  it('the committed manifest names exactly the level documents beside it', () => {
     /**
-     * The contract test between the two halves. `import-levels.mjs` writes the
-     * level documents and this manifest into the SAME directory, and `main.ts`
-     * fetches both from one base path — so a manifest written somewhere else
-     * would be a 404 at boot with every unit test green.
+     * THE CONTRACT BETWEEN THE TWO HALVES, and the first draft of this was a
+     * fake. It created a source directory it never used, wrote `level1.json` by
+     * hand, and then asserted that hand-written file existed — so it never
+     * invoked the importer at all. Proven: pointing `writeLevelsManifest` at a
+     * different directory entirely left this file's tests green and the whole
+     * suite green, which is the exact failure its own docstring claimed to
+     * guard ("a manifest written somewhere else would be a 404 at boot").
+     *
+     * This reads what `npm run import:levels` ACTUALLY produced and committed.
+     * `main.ts` fetches the manifest and then each document by name from one
+     * base path, so the two must agree about which files exist and where they
+     * are — and a manifest written anywhere but beside the documents cannot
+     * satisfy it.
      */
-    const src = mkdtempSync(join(tmpdir(), 'levels-src-'))
-    try {
-      mkdirSync(join(src, 'level1'), { recursive: true })
-      writeFileSync(join(outDir, 'level1.json'), '{}')
-      writeLevelsManifest(outDir, ['level1'])
-      expect(existsSync(join(outDir, 'level1.json'))).toBe(true)
-      expect(existsSync(join(outDir, LEVELS_MANIFEST_FILE))).toBe(true)
-    } finally {
-      rmSync(src, { recursive: true, force: true })
+    const dir = new URL('../../../public/generated/levels/', import.meta.url).pathname
+    const manifest = JSON.parse(readFileSync(join(dir, LEVELS_MANIFEST_FILE), 'utf8')) as {
+      levels: string[]
+    }
+    const documents = readdirSync(dir)
+      .filter((f) => f.endsWith('.json') && f !== LEVELS_MANIFEST_FILE)
+      .map((f) => f.replace(/\.json$/, ''))
+      .sort()
+
+    // Not merely "every name resolves": the two lists must be the SAME list. A
+    // level document nobody lists is a level nobody can reach, and a name with
+    // no document is a 404 mid-campaign.
+    expect([...manifest.levels].sort()).toEqual(documents)
+    expect(manifest.levels.length).toBeGreaterThan(0)
+  })
+
+  it('and every name it lists is a document the loader accepts', () => {
+    // The other half: a manifest naming a file that exists but is not a level
+    // would fail at boot, one mission in.
+    const dir = new URL('../../../public/generated/levels/', import.meta.url).pathname
+    const manifest = JSON.parse(readFileSync(join(dir, LEVELS_MANIFEST_FILE), 'utf8')) as {
+      levels: string[]
+    }
+    for (const name of manifest.levels) {
+      const raw = JSON.parse(readFileSync(join(dir, `${name}.json`), 'utf8')) as {
+        size?: { w?: number; h?: number }
+      }
+      expect({ name, w: typeof raw.size?.w }).toEqual({ name, w: 'number' })
     }
   })
 })

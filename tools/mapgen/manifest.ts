@@ -31,11 +31,15 @@ export { LEVELS_MANIFEST_FILE }
  * IDEMPOTENT, like everything else the pipeline emits (ticket 003): the same
  * names produce a byte-identical file, so a rebuild is never a diff.
  *
- * AN EMPTY LIST IS STILL A FILE. An ABSENT manifest and an EMPTY one mean
+ * AN EMPTY LIST IS STILL A FILE. An ABSENT manifest and an EMPTY one would mean
  * different things to the app — absent is "this build is broken", empty is
- * "there is nothing to play" — and collapsing them would make a missing manifest
- * indistinguishable from a game with no content, which is the fatal error ticket
- * 024 puts on screen.
+ * "there is nothing to play" — so this function writes the file either way
+ * rather than collapsing the two. In practice the pipeline never reaches the
+ * empty case: `import-levels.mjs` exits 0 on both a missing source directory and
+ * a source directory with no levels in it, before it ever calls this. The
+ * distinction is kept because it is the right contract for a future caller that
+ * does get here with nothing, not because `{ "levels": [] }` is a state any
+ * current build produces.
  *
  * IT CREATES `outDir` ITSELF. The importer creates that directory for the level
  * documents, and the manifest must not be the one thing that assumes somebody
