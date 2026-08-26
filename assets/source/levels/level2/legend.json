@@ -1,0 +1,10 @@
+{
+  "tileSize": 16,
+  "colourTolerance": 40,
+  "markerColours": {
+    "60,160,255": "avatars",
+    "255,60,60": "enemies",
+    "255,220,0": "props"
+  },
+  "labels": []
+}

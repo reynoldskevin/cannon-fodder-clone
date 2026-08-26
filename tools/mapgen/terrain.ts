@@ -403,12 +403,44 @@ export function buildTerrain(
   )
 }
 
-/** Heuristic passability: bright enough to be open ground. */
+/**
+ * Heuristic passability: bright enough to be open ground, OR water.
+ *
+ * WHY WATER IS AN EXCEPTION AND NOT A LOWER THRESHOLD (ticket 003a). Luminance
+ * asks "is this bright enough to be open ground", which is a fair guess about
+ * grass and a wrong one about a river: water is dark, so level 2's 685 water
+ * tiles all came out solid, the map came out cut in two, and the squad could
+ * reach 7 of its 15 enemies.
+ *
+ * The fix is NOT a second, lower cut for blue pixels. Canopy is darker than
+ * level 2's river colour, so any threshold moved down far enough to admit the
+ * water admits every jungle tile in the game with it. It keys off what
+ * `classifyTile` has already decided the tile IS — which it has decided
+ * correctly since ticket 003 — so every non-water tile keeps today's luminance
+ * rule byte for byte.
+ *
+ * `classifyTile` is called again rather than reading `buildTerrain`'s output
+ * on purpose: that output is DESPECKLED, and the despeckle is documented and
+ * tested as cosmetic — it rewrites tile ids and can never move the walkability
+ * mask. Feeding it in here would quietly make that false, so a five-tile speck
+ * dissolving could open or close ground.
+ *
+ * AN AUTHORED `walkable.png` STILL OUTRANKS ALL OF THIS. It does not call this
+ * function at all — see `walkableFromMask`, and the branch in `importLevel`
+ * that picks between them. "Water is walkable" and "the mask decides" only look
+ * like they conflict until you know which one runs.
+ */
 export function buildWalkable(
   averages: readonly (readonly RGB[])[],
   walkableMinLuminance: number,
 ): boolean[][] {
-  return averages.map((row) => row.map((c) => luminance(c) >= walkableMinLuminance))
+  return averages.map((row) =>
+    row.map(
+      (c) =>
+        classifyTile(c, walkableMinLuminance) === TILE.WATER ||
+        luminance(c) >= walkableMinLuminance,
+    ),
+  )
 }
 
 /** Mask override: black = blocked, white = walkable, decided per tile average. */

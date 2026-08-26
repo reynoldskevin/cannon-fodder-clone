@@ -25,30 +25,19 @@
  * version key's back.
  */
 
+import { TERRAIN, traversalForTerrain } from '../level/terrain'
 import type { LevelData } from '../level/types'
+import type { TraversalMask } from './traversal-mask'
 
 /**
- * A set of traversal classes, one bit each.
- *
- * A cell stores the classes that may enter it; a query supplies the classes the
- * unit belongs to; the cell is passable when the two intersect. That makes the
- * empty mask (`0`) mean "nothing may pass", which is what an obstacle is — so a
- * blocked cell and a unit with no traversal class fall out of the same test
- * rather than needing a special case.
+ * The traversal classes, re-exported unchanged so `./navgrid` remains where the
+ * pathing layer names them. They are DECLARED in `./traversal-mask`, a module
+ * that imports nothing, because `bakeNavGrid` now imports `core/level`'s
+ * terrain table and that table names these masks — see the header of
+ * `traversal-mask.ts` for the cycle this avoids.
  */
-export type TraversalMask = number
-
-/** Foot units. The only class the game spawns today. */
-export const INFANTRY: TraversalMask = 1 << 0
-
-/**
- * Wheeled/tracked units. Nothing spawns one yet; the bit exists so the terrain
- * rules for them are a data change later rather than a grid rewrite.
- */
-export const VEHICLE: TraversalMask = 1 << 1
-
-/** Every class this build knows about — what a plainly walkable tile bakes to. */
-export const ALL_TRAVERSAL: TraversalMask = INFANTRY | VEHICLE
+export { ALL_TRAVERSAL, INFANTRY, VEHICLE } from './traversal-mask'
+export type { TraversalMask } from './traversal-mask'
 
 /**
  * Cell storage is `Uint8Array`, so eight traversal classes fit before the
@@ -156,11 +145,22 @@ export class NavGrid {
 /**
  * Bake a navigation grid from a loaded level.
  *
- * Every walkable tile is opened to ALL traversal classes. Level 1's walkable set
- * is the importer's brightness heuristic (`walkableSource: 'heuristic'`) rather
- * than authored data, so it carries no opinion about *who* can walk there —
- * inventing one here would be a fabricated restriction dressed up as level
- * design. Class-specific rules belong to whatever later writes them in.
+ * WALKABILITY DECIDES *WHETHER*, TERRAIN DECIDES *WHO*, AND THE ORDER IS NOT
+ * NEGOTIABLE. `level.walkable` is the author's answer to "may anything be here
+ * at all" — a hand-painted mask where there is one, the importer's brightness
+ * guess where there is not. An unwalkable tile bakes to `0`, nobody, whatever
+ * terrain it is made of; `traversalForTerrain` is then allowed only to NARROW
+ * that. Inverted, a stretch of river an author painted black — a torrent, a
+ * waterfall — would be widened back to passable by a table, overruling the one
+ * piece of authored truth the importer has.
+ *
+ * The grid still holds no opinion of its own about what water is: this used to
+ * open every walkable tile to `ALL_TRAVERSAL` because the walkability it is
+ * handed "carries no opinion about *who* can walk there", and that was right —
+ * inventing one here would have been a fabricated restriction dressed up as
+ * level design. So it asks `core/level`'s table instead of testing a tile id,
+ * and the next terrain with a traversal rule is a row there rather than an edit
+ * to the pathfinder.
  */
 export function bakeNavGrid(level: LevelData): NavGrid {
   const { w, h } = level.size
@@ -168,11 +168,17 @@ export function bakeNavGrid(level: LevelData): NavGrid {
   for (let y = 0; y < h; y += 1) {
     const row = level.walkable[y]
     if (row === undefined) continue
+    const terrainRow = level.terrain[y]
     for (let x = 0; x < w; x += 1) {
       // Copied cell by cell, never aliased: the grid is a snapshot of the level,
       // so a later mutation of `level.walkable` must not change passability
       // without going through `setPassable` and bumping the version.
-      if (row[x] === true) cells[y * w + x] = ALL_TRAVERSAL
+      if (row[x] !== true) continue
+      // The loader guarantees `terrain` and `walkable` share the level's
+      // dimensions, so a missing cell here means a hand-built `LevelData`. Read
+      // as an unnamed tile id rather than as a wall — `traversalForTerrain`'s
+      // open-enum fallback is the answer that cannot lose half a map.
+      cells[y * w + x] = traversalForTerrain(terrainRow?.[x] ?? TERRAIN.UNKNOWN)
     }
   }
   return new NavGrid(w, h, cells)
