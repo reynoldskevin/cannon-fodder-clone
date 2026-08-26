@@ -291,6 +291,74 @@ describe('the reward is level data', () => {
     expect(taken.reward).toEqual({ grenade: 2 })
   })
 
+  it('reports on the event what was actually granted, not what was offered', () => {
+    /**
+     * A KILL FEED READS THIS AND NOTHING ELSE. `Armoury.grant` refuses negative,
+     * fractional and non-finite amounts (ticket 016), so a chest whose table
+     * says `{ grenade: -5 }` hands over nothing — and an event that echoed the
+     * table verbatim would have the feed announce "+ -5 grenades" while the
+     * pouch did not move. The event is the only channel presentation has; it has
+     * to describe what happened, not what was asked for.
+     */
+    const r = rig([{ x: 5, y: 5, reward: { grenade: -5, rocket: 2 } }])
+    r.spawn(5, 5)
+    r.run(2)
+    const taken = r.collections()[0]
+    if (taken?.type !== 'ChestCollected') throw new Error('nothing collected')
+    expect(taken.reward).toEqual({ rocket: 2 })
+    expect(r.armoury.count('grenade')).toBe(0)
+    expect(r.armoury.count('rocket')).toBe(2)
+  })
+
+  it('names the chest and where it stood, because it is gone by the time anyone looks', () => {
+    // The whole reason position rides on the event: a consumer that tried to
+    // look the chest up to draw a sparkle would find it already collected.
+    const r = rig([
+      { x: 2, y: 2 },
+      { x: 7, y: 4 },
+    ])
+    r.spawn(7, 4)
+    r.run(2)
+    const taken = r.collections()[0]
+    if (taken?.type !== 'ChestCollected') throw new Error('nothing collected')
+    const where = r.at(7, 4)
+    expect({ index: taken.index, x: taken.x, z: taken.z }).toEqual({
+      index: 1,
+      x: where.x,
+      z: where.z,
+    })
+  })
+
+  it('a chest keeps its index after an earlier one is taken', () => {
+    // `index` is how a renderer pools chest meshes. Renumbering the survivors on
+    // every collection would make the models jump between positions.
+    const r = rig([
+      { x: 2, y: 2 },
+      { x: 7, y: 4 },
+      { x: 9, y: 9 },
+    ])
+    r.spawn(2, 2)
+    r.run(2)
+    expect(r.pickups.remaining().map((c) => c.index)).toEqual([1, 2])
+  })
+
+  it('remaining carries each chest`s reward', () => {
+    const r = rig([{ x: 5, y: 5, reward: { grenade: 2 } }])
+    expect(r.pickups.remaining()[0]?.reward).toEqual({ grenade: 2 })
+  })
+
+  it('a caller cannot edit the reward out from under the system', () => {
+    // The aliasing rule one level down, and the one the fresh-array check misses:
+    // handing back the system's own reward object lets a renderer that pokes at
+    // it change what the next man to walk over the chest receives.
+    const r = rig([{ x: 5, y: 5, reward: { grenade: 2 } }])
+    const held = r.pickups.remaining()[0]?.reward as Record<string, number>
+    held.grenade = 999
+    r.spawn(5, 5)
+    r.run(2)
+    expect(r.armoury.count('grenade')).toBe(2)
+  })
+
   it('a chest naming no reward still gives something', () => {
     // An unannotated chest is an authoring omission, not an empty box: a chest
     // that gave nothing would read as broken rather than as empty.
@@ -342,12 +410,43 @@ describe('hostile reward data, because a level document is hand-authored', () =>
     }
   })
 
-  it('a reward that is not an object at all is survived', () => {
+  it('a reward that is not an object at all reads as an omission, not as nothing', () => {
+    /**
+     * THE JUDGEMENT CALL, PINNED — because the suite would otherwise accept the
+     * opposite decision just as happily.
+     *
+     * `reward: 'grenade'` and no `reward` field carry identical information:
+     * "no legible reward here". Making the malformed one MORE punishing than the
+     * missing one is backwards. And the failure modes are not symmetric — a
+     * chest that despawns and gives nothing is indistinguishable at runtime from
+     * a broken pickup system, and `src/core` has no logger to say otherwise,
+     * whereas a default grant is visible and self-reporting.
+     *
+     * The honest cost: a `tools/mapgen` bug emitting `reward: "grenade"` across
+     * forty chests ships silently as forty identical default ones. That argues
+     * for validation in the importer, which is where a level document can still
+     * be rejected loudly — not for a harsher rule here.
+     */
     for (const reward of [null, 'grenade', 7, [1, 2]]) {
       const r = rig([{ x: 5, y: 5, reward }])
       r.spawn(5, 5)
-      expect(() => r.run(2)).not.toThrow()
+      r.run(2)
+      const granted = r.armoury.count('grenade') + r.armoury.count('rocket')
+      expect({ reward: JSON.stringify(reward), granted: granted > 0 }).toEqual({
+        reward: JSON.stringify(reward),
+        granted: true,
+      })
     }
+  })
+
+  it('an amount that is not a number grants nothing for that entry', () => {
+    // Coercing `'2'` with `Number()` would be a quiet kindness that makes the
+    // document's type mean nothing, and it is one `Number(undefined)` away from
+    // handing `NaN` to the armoury.
+    const r = rig([{ x: 5, y: 5, reward: { grenade: '2', rocket: 1 } }])
+    r.spawn(5, 5)
+    r.run(2)
+    expect({ g: r.armoury.count('grenade'), k: r.armoury.count('rocket') }).toEqual({ g: 0, k: 1 })
   })
 
   it('a chest off the map is still a chest, not a crash', () => {
