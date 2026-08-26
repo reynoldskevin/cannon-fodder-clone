@@ -127,7 +127,11 @@ describe('death is cleaned up, not leaked', () => {
     const r = rig()
     const enemy = r.spawn(10, 5, 'enemy')
     r.spawn(6, 5, 'player', 1000)
-    r.run(10)
+    // PAST THE REACTION BEAT (ticket 012a), which is what makes `before` a real
+    // baseline: he now holds fire for `reactionTicks` after entering `engage`,
+    // so ten ticks caught him mid-beat with no order issued and the assertion
+    // below would have measured nothing against nothing.
+    r.run(60)
     const before = r.spy.fires.length + r.spy.orders.length
     expect(before).toBeGreaterThan(0)
 
@@ -140,7 +144,10 @@ describe('death is cleaned up, not leaked', () => {
     const r = rig()
     const enemy = r.spawn(10, 5, 'enemy')
     r.spawn(6, 5, 'player', 1000)
-    r.run(10)
+    // Past the beat, for the reason the case above gives: killed mid-beat he
+    // would never have had a standing order to keep, and "fires no further
+    // rounds" would pass on a man who had fired none.
+    r.run(60)
     r.world.despawn(enemy.id)
     const events = r.run(300)
     expect(shotsBy(events, enemy.id)).toHaveLength(0)

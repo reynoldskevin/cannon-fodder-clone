@@ -221,7 +221,10 @@ describe('enemies turn too, by the same path', () => {
     const enemy = s.world.entities.find((e) => e.team === 'enemy')!.id
     const tough = tileToWorld(10, 7, level.size)
     s.world.spawn({ kind: 'rifleman', team: 'player', x: tough.x, z: tough.z, health: 10_000 })
-    for (let f = 0; f < 30; f += 1) s.advance(1 / 60)
+    // Sixty frames rather than thirty, for the reason `ai-wiring.test.ts` gives
+    // at the same edit: the 45-tick reaction beat (ticket 012a) means he has no
+    // standing order at thirty, and aim facing is derived from that order.
+    for (let f = 0; f < 60; f += 1) s.advance(1 / 60)
 
     expect(s.combat.isFiring(enemy)).toBe(true)
     // The enemy is east of its target, so it must look WEST.

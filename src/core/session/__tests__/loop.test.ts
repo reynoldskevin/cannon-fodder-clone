@@ -412,7 +412,11 @@ describe('events', () => {
     const level = makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [{ x: 10, y: 7 }] })
     const s = createSession(level)
     let sawShot = false
-    for (let f = 0; f < 30 && !sawShot; f++) {
+    // Ninety frames rather than thirty: this loop only exists to reach the first
+    // shot, and the enemy now holds fire for a 45-tick beat after engaging
+    // (ticket 012a). Nothing about what is asserted has moved — the events of
+    // the frame that fired are still handed back once and then drained.
+    for (let f = 0; f < 90 && !sawShot; f++) {
       s.advance(1 / 60)
       sawShot = s.events().some((e) => e.type === 'ShotFired')
     }

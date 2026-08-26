@@ -66,6 +66,7 @@ import {
   DEFAULT_ALERT_TIMEOUT_TICKS,
   DEFAULT_ARRIVAL_TILES,
   DEFAULT_PURSUE_TIMEOUT_TICKS,
+  DEFAULT_REACTION_TICKS,
   DEFAULT_SIGHT_RANGE_TILES,
 } from './tuning'
 import type { ArchetypeSpec } from './archetypes'
@@ -148,6 +149,14 @@ export interface AiOptions {
   readonly alertRadiusTiles?: number
   readonly pursueTimeoutTicks?: number
   readonly alertTimeoutTicks?: number
+  /**
+   * How long a unit holds fire after raising his rifle at a man he was not
+   * already engaging (ticket 012a) — once per unbroken contact, not once per
+   * entry into `engage`; see `Memory.armedTargetId`. Same three-deep precedence
+   * as the rest: this option, then the archetype row, then
+   * `DEFAULT_REACTION_TICKS`.
+   */
+  readonly reactionTicks?: number
   readonly arrivalTiles?: number
   /**
    * The traversal class sightlines are tested against. Infantry by default,
@@ -193,6 +202,23 @@ export interface AiSystem extends SimSystem {
    * reference into the machine's memory.
    */
   targetOf(unitId: number): number | undefined
+  /**
+   * Whether this unit is inside the beat between engaging and firing (ticket
+   * 012a) — he has raised his rifle and has not yet fired.
+   *
+   * EXPOSED THIS WAY RATHER THAN ON `Entity.state`, and that is a decision
+   * rather than a preference. That field has exactly one writer,
+   * `squad/system.ts`, and the squad system runs AFTER this one in `systemOrder`
+   * — so anything the AI wrote there would be overwritten on the same tick,
+   * every tick, and a cue hung off it would simply never appear. It is the
+   * accessor shape `stateOf` and `targetOf` already use, for the same reason:
+   * ask the system that owns the fact instead of deriving a second answer.
+   *
+   * FALSE, NEVER `undefined` AND NEVER A THROW, for a man in any other state,
+   * for the whole player team and for an id that never existed. A boolean cannot
+   * say "unknown", so the safe answer is the one that draws nothing.
+   */
+  isReacting(unitId: number): boolean
   /**
    * Hand the machine a batch of events to react to. Called by the owner with
    * what it drained, never by draining the bus here; see the note at the top.
@@ -249,6 +275,65 @@ interface Memory {
   alertRadiusWorld: number
   pursueTimeoutTicks: number
   alertTimeoutTicks: number
+  /** This unit's beat before it opens fire, in ticks. See `reactionTicks`. */
+  reactionTicks: number
+  /**
+   * Ticks of that beat still to run, counted down while this unit is in
+   * `engage` and reloaded from `reactionTicks` when the beat is ARMED — see
+   * `armedTargetId` for when that is (ticket 012a).
+   *
+   * A COUNTDOWN IN THE UNIT'S OWN MEMORY, not a deadline in a module-level map
+   * keyed by id. The memory is already the answer to "what does this man know",
+   * and it is already buried when he dies — a second store would be a second
+   * thing to remember to clean up, one casualty at a time, for the length of the
+   * mission.
+   *
+   * IT SURVIVES LEAVING `engage`. Nothing drains it on the way out, so a man who
+   * breaks off five ticks into a forty-five tick beat still carries forty. That
+   * is deliberate rather than an oversight: a target that crosses the weapon's
+   * range boundary while staying in sight drops him to `pursue` and back, and a
+   * remainder zeroed on the way out would restart that beat every few ticks. The
+   * arming rule below decides when it is reloaded, and `isReacting`'s state gate
+   * is what stops the survivor being reported over a man who is not engaging.
+   */
+  reactionRemaining: number
+  /**
+   * The man this unit is currently engaging, as far as the beat is concerned —
+   * `hasArmedTarget` false when it is engaging nobody.
+   *
+   * ARMED PER TARGET ACQUISITION, NOT PER STATE ENTRY, and that is the whole of
+   * the rule (ticket 012a). Entering `engage` reloads the beat only when the
+   * target is not the one recorded here. Inside `engage` the record follows the
+   * aim without ever reloading, and going IDLE clears it.
+   *
+   * WHY NOT ON STATE ENTRY. `engage` is left whenever the target crosses out of
+   * WEAPON range while staying in sight — the machine drops to `pursue` to close
+   * the gap — so a man holding that boundary re-enters `engage` every few ticks,
+   * and a beat reloaded on every entry never completes. Against a player
+   * withdrawing at the enemy's own speed nothing closes the gap, so that is an
+   * enemy permanently unable to fire: the same "switches and waits forever
+   * without firing" failure the entering-engage rule was written to prevent,
+   * arriving through range flicker instead of target switching.
+   *
+   * WHY NOT A BARE FLAG cleared on IDLE. A man who loses his quarry to cover,
+   * pursues, and finds a DIFFERENT man in range along the way never touched
+   * IDLE, and a flag would let him shoot that second man with no beat at all.
+   * The id is what tells "the man I was already engaging" apart from "somebody
+   * new", which is the distinction the beat is about.
+   *
+   * SWITCHING TARGET MID-ENGAGEMENT AND THEN FLICKERING COSTS NOTHING, because
+   * this follows the aim. A nearer attacker taking over never re-arms (he is
+   * already in the firefight, and a beat restarted on every re-aim is the
+   * two-opponent deadlock), and re-entering `engage` on that same nearer man
+   * must not re-arm either — otherwise two men alternating as nearest while the
+   * range flickers would rebuild the deadlock exactly. The behaviour that falls
+   * out is one beat per UNBROKEN CONTACT: he pays once when he first raises his
+   * rifle at somebody, and pays again only after the machine has put him back to
+   * IDLE — either because his target went down, or because he lost him and gave
+   * up looking.
+   */
+  hasArmedTarget: boolean
+  armedTargetId: number
   /** How far this unit may be drawn off its beat, in world units. See `aggression`. */
   leashWorld: number
   /**
@@ -492,6 +577,15 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
         options.pursueTimeoutTicks ?? spec?.pursueTimeoutTicks ?? DEFAULT_PURSUE_TIMEOUT_TICKS,
       alertTimeoutTicks:
         options.alertTimeoutTicks ?? spec?.alertTimeoutTicks ?? DEFAULT_ALERT_TIMEOUT_TICKS,
+      reactionTicks: options.reactionTicks ?? spec?.reactionTicks ?? DEFAULT_REACTION_TICKS,
+      // Zero because no beat has been armed yet, which is the honest starting
+      // value — NOT because it is what keeps a cue off an idle man. That is
+      // `isReacting`'s state gate and nothing else: a mutation putting the full
+      // count here survived the entire suite, precisely because a man who has
+      // never engaged anybody is never in `engage` for the gate to let through.
+      reactionRemaining: 0,
+      hasArmedTarget: false,
+      armedTargetId: 0,
       // A multiple of this unit's OWN sight, so a retune of the eyes moves the
       // leash with them; a kind with no row has no post to be leashed to either,
       // and `Infinity` is how "the timeout alone decides" is spelled without a
@@ -935,6 +1029,39 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
       // already halted would take him out of a detachment he is not in, 60 times
       // a second, for as long as the firefight lasts.
       if (previous !== ENGAGE) stop(memory, unit.id)
+      // THE BEAT IS ARMED PER TARGET ACQUISITION (ticket 012a) — see
+      // `Memory.armedTargetId` for the rule and for the two failures that shape
+      // it. Both halves of the condition carry weight. `previous !== ENGAGE` is
+      // what keeps a NEARER attacker taking over the aim mid-firefight from
+      // buying the first one a second beat; the id comparison is what keeps a
+      // target flickering across the weapon's range boundary — out of `engage`
+      // to `pursue` and straight back, on the same man — from restarting a beat
+      // that would then never complete. The record is then written on every
+      // engage tick, so it follows the aim and a switch followed by a flicker
+      // costs nothing either. Going IDLE clears it, so a man who lost his quarry
+      // found him again pays afresh.
+      if (
+        previous !== ENGAGE &&
+        (!memory.hasArmedTarget || memory.armedTargetId !== memory.targetId)
+      ) {
+        memory.reactionRemaining = memory.reactionTicks
+      }
+      memory.hasArmedTarget = true
+      memory.armedTargetId = memory.targetId
+      if (memory.reactionRemaining > 0) {
+        // Raising the rifle. FIRING IS THE ONLY THING HELD: he has already been
+        // halted above, he keeps his target and his last-known position, and his
+        // leash and post are untouched — a delay that also moved him would be a
+        // retune of engagement distance wearing a reaction delay's name. No
+        // `holdFire` either: a positive remainder and a standing fire order
+        // cannot coexist. `aiming` starts false and only `shootAt` sets it,
+        // `shootAt` is reached only once the remainder has run out, and every
+        // tick that leaves `engage` passes through the cease below — so the only
+        // way back to a positive remainder is through a tick that cleared the
+        // order.
+        memory.reactionRemaining -= 1
+        return
+      }
       if (target !== null) shootAt(memory, unit.id, target)
       return
     }
@@ -942,7 +1069,18 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
     // Everything below is a state that does not shoot. Ceasing fire is idempotent — `holdFire` returns immediately unless an
     // order stands — so it can be stated once here rather than per branch.
     holdFire(memory, unit.id)
+    // NOTHING CLEARS THE REACTION REMAINDER HERE, and clearing it would be a
+    // bug rather than a redundancy now: `pursue` is the state a man passes
+    // through when his target steps outside the weapon's range, and zeroing the
+    // remainder on the way would hand him a free round the moment it stepped
+    // back in. What re-arming costs is decided above, off `armedTargetId`, and
+    // the surviving remainder is kept out of `isReacting` by its state gate.
     if (next === IDLE) {
+      // He is engaging nobody, so the next man he raises his rifle at is a
+      // fresh contact and pays the beat — whether that is the one he just lost
+      // or somebody else entirely. This is the ONE place the record is cleared;
+      // see `Memory.armedTargetId`.
+      memory.hasArmedTarget = false
       // A man retired mid-march has to be stopped, or he finishes walking to a
       // destination the machine has already given up on.
       if (previous === PURSUE || previous === ALERT) stop(memory, unit.id)
@@ -1088,5 +1226,23 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
     return memory.targetId
   }
 
-  return Object.assign(aiSystem, { stateOf, targetOf, hear, assignPatrol })
+  /**
+   * See `AiSystem.isReacting`.
+   *
+   * GATED ON `engage` AS WELL AS ON THE COUNT, like `targetOf` is — and the gate
+   * is the SOLE guarantee here, not a restatement of the count. The remainder
+   * SURVIVES leaving the state: nothing drains it, deliberately (see
+   * `Memory.reactionRemaining`), so a man who breaks off five ticks into a
+   * forty-five tick beat walks away carrying forty. Drop the state check and
+   * ticket 025's alerted cue burns over him for the rest of the mission,
+   * wherever he goes. A mutation removing it survived all 1803 tests before
+   * `reaction.test.ts` pinned it.
+   */
+  function isReacting(unitId: number): boolean {
+    const memory = memories.get(unitId)
+    if (memory === undefined) return false
+    return memory.state === ENGAGE && memory.reactionRemaining > 0
+  }
+
+  return Object.assign(aiSystem, { stateOf, targetOf, isReacting, hear, assignPatrol })
 }

@@ -68,6 +68,28 @@ export interface ArchetypeSpec {
    * `pursueTimeoutTicks` alone, exactly as it was before this ticket.
    */
   readonly aggression: number
+  /**
+   * How long this kind takes to open fire after ACQUIRING a target, in ticks.
+   * See `DEFAULT_REACTION_TICKS`.
+   *
+   * The knob that says how ready a kind was for the fight. A man walking a beat
+   * has to bring the rifle up; a man already lying behind it does not. LOWER IT
+   * and the kind kills a squad that walks into the open before the player can
+   * order it back out; RAISE IT and he stands there long enough to read as
+   * broken rather than as deliberate.
+   *
+   * Gates the fire order only — never the halt, the leash or the post — and it
+   * is paid ONCE PER UNBROKEN CONTACT: the clock starts when he raises his rifle
+   * at a man he was not already engaging, and runs again only after the machine
+   * has put him back to `idle`. A man who re-aims at a nearer attacker
+   * mid-firefight is not surprised by his second opponent, and a target
+   * flickering across the edge of his weapon's range — which drops him to
+   * `pursue` and straight back — is not a fresh contact either. A count that
+   * restarted on either would leave a soldier switching and waiting forever
+   * without ever firing. `system.ts`'s `Memory.armedTargetId` is where the rule
+   * lives.
+   */
+  readonly reactionTicks: number
 }
 
 /**
@@ -109,6 +131,21 @@ export const ARCHETYPES: Readonly<Record<string, ArchetypeSpec>> = {
     // a corner, short enough that he goes back to his beat rather than crossing
     // the level. The neutral value, and the one every later row is read against.
     aggression: 1,
+    // Three quarters of a second, and equal to `DEFAULT_REACTION_TICKS` like
+    // every other number in this row — see the note above it.
+    //
+    // CHOSEN ON REASONING AND MEASUREMENT, NOT ON PLAY. Measured end to end over
+    // forty seeds with ticket 011b's accuracy in place: an enemy who starts two
+    // tiles away now takes 0.75s to fire his first round and 0.95s to land a
+    // killing one, where before both were frame zero; at nine tiles it is 1.08s
+    // and 2.51s against a third of a second. That is a beat a player can act
+    // inside, which is what this number is for.
+    //
+    // What has NOT happened is somebody sitting down and playing it. The band
+    // the tests hold this to is [20, 75], and 30 and 60 are the neighbours worth
+    // trying first — 30 for a game that feels too slow, 60 if enemies read as
+    // standing about. Say which was played, in this comment, when one is.
+    reactionTicks: 45,
   },
   /**
    * The marksman. Sees half again as far as the line infantryman and is happy
@@ -148,6 +185,12 @@ export const ARCHETYPES: Readonly<Record<string, ArchetypeSpec>> = {
     pursueTimeoutTicks: 150,
     alertTimeoutTicks: 300,
     aggression: 0.5,
+    // A third of a second against the rifleman's three quarters, and it is the
+    // second thing that says what he is for: he is already in position looking
+    // down the sightline, so there is no rifle to bring up. A marksman SLOWER
+    // off the mark than a conscript would be a row stating the opposite of what
+    // ticket 018 placed him for.
+    reactionTicks: 20,
   },
 }
 
