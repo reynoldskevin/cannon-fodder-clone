@@ -196,17 +196,34 @@ describe('contact interrupts the beat', () => {
     const enemy = r.spawn(2, 5, 'enemy')
     r.ai.assignPatrol(enemy.id, [
       { x: 2, y: 5 },
-      { x: 16, y: 5 },
+      { x: 18, y: 5 },
     ])
     r.place(enemy.id, 13, 5)
     const man = r.spawn(13, 9, 'player', 10_000)
     r.run(20)
     expect(r.ai.stateOf(enemy.id)).toBe('engage')
-    const held = r.tileOf(enemy.id).x
 
+    /**
+     * SAMPLED AT THE MOMENT HE RESUMES, not at a fixed distance later. The first
+     * draft ran 400 ticks and asserted on where he ended up — but at 0.05 tiles
+     * a tick that is twenty tiles of travel on a fourteen-tile loop, so he had
+     * gone east, reached the far waypoint, turned, and come most of the way back
+     * before the assertion looked. It read as "resumed backwards" when the
+     * resumption was correct and only the clock was wrong.
+     *
+     * The claim is about DIRECTION at the point of resumption, so that is what
+     * is measured: wait for `idle`, note where he is, and give him a short walk.
+     */
     r.world.despawn(man.id)
-    r.run(400)
-    expect(r.tileOf(enemy.id).x).toBeGreaterThan(held)
+    let resumed = false
+    for (let i = 0; i < 60 && !resumed; i += 1) {
+      r.run(10)
+      resumed = r.ai.stateOf(enemy.id) === 'idle'
+    }
+    expect(resumed).toBe(true)
+    const from = r.tileOf(enemy.id).x
+    r.run(40) // two tiles' worth, well short of the five to the east waypoint
+    expect({ from, movedEast: r.tileOf(enemy.id).x > from }).toEqual({ from, movedEast: true })
   })
 })
 

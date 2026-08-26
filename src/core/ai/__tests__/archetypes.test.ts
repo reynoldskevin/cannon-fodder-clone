@@ -80,6 +80,21 @@ describe('the table is a table', () => {
   it('includes the archetype every level spawns today', () => {
     expect(Object.keys(ARCHETYPES)).toContain(DEFAULT_ARCHETYPE_NAME)
   })
+
+  it('ships more than one row, or "enemy variety" is theoretical', () => {
+    // A table with a single row is a constant with extra steps. The criterion is
+    // that the five levels can FEEL different without five sets of code, and
+    // that is only demonstrated once a second archetype exists to differ from
+    // the first.
+    expect(Object.keys(ARCHETYPES).length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('at least one shipped row differs from the plain defaults', () => {
+    // Two rows that both restate `tuning.ts` are still one archetype wearing two
+    // names. Something has to actually vary.
+    const rows = Object.values(ARCHETYPES)
+    expect(rows.some((r) => r.sightRangeTiles !== DEFAULT_SIGHT_RANGE_TILES)).toBe(true)
+  })
 })
 
 describe('resolution', () => {
@@ -129,12 +144,31 @@ describe('the stats actually drive the machine', () => {
     expect(r.ai.stateOf(enemy.id)).toBe('engage')
   })
 
-  it('a long-sighted archetype engages from further than the default', () => {
+  it('a long-sighted archetype NOTICES a man from further than the default', () => {
+    /**
+     * ASSERTED ON SIGHT, NOT ON ENGAGEMENT, and the distinction is load-bearing.
+     * Whether a man is SEEN is this ticket's business — it is the archetype's
+     * `sightRangeTiles`. Whether he can then be SHOT is the rifle's, pinned by
+     * `states.test.ts`'s "range is the rifle`s, not a number of its own" at eight
+     * tiles. At fourteen tiles apart nothing can engage, whatever it can see, and
+     * an archetype that could would be a second "how far can he shoot" — exactly
+     * the drift `tuning.ts` exists to prevent.
+     */
     const r = rig(OPEN, { archetypes: { hawk: spec({ name: 'hawk', sightRangeTiles: 18 }) } })
     const enemy = r.spawnKind(1, 5, 'enemy', 'hawk')
     r.spawn(15, 5, 'player', 1000) // 14 tiles: outside the default 12
     r.run(10)
-    expect(r.ai.stateOf(enemy.id)).toBe('engage')
+    expect(r.ai.stateOf(enemy.id)).not.toBe('idle')
+  })
+
+  it('and the default-sighted one does not notice him at all', () => {
+    // The control for the case above, and the half that proves the row was read:
+    // same geometry, no archetype, and he stands there.
+    const r = rig(OPEN)
+    const enemy = r.spawn(1, 5, 'enemy')
+    r.spawn(15, 5, 'player', 1000)
+    r.run(10)
+    expect(r.ai.stateOf(enemy.id)).toBe('idle')
   })
 
   it('two archetypes on one map behave differently at the same instant', () => {
@@ -151,19 +185,29 @@ describe('the stats actually drive the machine', () => {
     const sharp = r.spawnKind(2, 8, 'enemy', 'hawk')
     r.spawn(9, 5, 'player', 1000)
     r.run(10)
-    expect({ blind: r.ai.stateOf(blind.id), sharp: r.ai.stateOf(sharp.id) }).toEqual({
-      blind: 'idle',
-      sharp: 'engage',
-    })
+    expect({
+      blind: r.ai.stateOf(blind.id) === 'idle',
+      sharp: r.ai.stateOf(sharp.id) === 'idle',
+    }).toEqual({ blind: true, sharp: false })
   })
 
   it('an unknown kind falls back to the system defaults', () => {
-    // Which is what keeps every level authored before this ticket working.
+    // Which is what keeps every level authored before this ticket working. Sight
+    // again, not engagement: an unarmed kind has no weapon range at all, so it
+    // can notice a man and never shoot him — see the note above.
     const r = rig(OPEN)
     const enemy = r.spawnKind(2, 5, 'enemy', 'wandering-minstrel')
-    r.spawn(9, 5, 'player', 1000)
+    r.spawn(9, 5, 'player', 1000) // 7 tiles: inside the default 12
     r.run(10)
-    expect(r.ai.stateOf(enemy.id)).toBe('engage')
+    expect(r.ai.stateOf(enemy.id)).not.toBe('idle')
+  })
+
+  it('and an unknown kind still cannot see past that default', () => {
+    const r = rig(OPEN)
+    const enemy = r.spawnKind(1, 5, 'enemy', 'wandering-minstrel')
+    r.spawn(15, 5, 'player', 1000) // 14 tiles: outside it
+    r.run(10)
+    expect(r.ai.stateOf(enemy.id)).toBe('idle')
   })
 })
 
@@ -191,24 +235,30 @@ describe('adding an archetype is a table row', () => {
     // keeps it green while making "only a table row" true just for rows the
     // module already anticipated.
     /**
-     * The system default is deliberately set to 3 here, DIFFERENT from the
-     * shipped `rifleman` row's 12. Without that difference the case cannot
-     * discriminate at all: the shipped row and the default agree by design (see
-     * the regression guard above), so a merged table and a replaced one would
-     * both engage and the test would be decoration.
+     * DISCRIMINATED THROUGH A SHIPPED ROW THAT DIFFERS FROM THE DEFAULTS, which
+     * is the only thing that can tell the two apart.
      *
-     * Replaced: `rifleman` is unknown to this system → system default 3 → a man
-     * 4 tiles away is not seen. Merged: `rifleman` resolves to the shipped row's
-     * 12 → he is.
+     * The obvious version of this test — supply a caller table, then spawn
+     * `rifleman` — cannot work: `rifleman`'s row equals `tuning.ts` by design
+     * (see the regression guard above), so "unknown, fell back to the default"
+     * and "found the shipped row" produce identical behaviour. Setting an
+     * explicit `sightRangeTiles` option instead does not help either, because an
+     * explicit option outranks an archetype and would decide the outcome
+     * whichever way the table resolved.
+     *
+     * So it uses the row that genuinely varies. Replaced: that kind is unknown to
+     * this system, falls back to the default 12, and does not see a man 14 tiles
+     * off. Merged: its own longer sight finds him.
      */
-    const shipped = Object.keys(ARCHETYPES)[0]
-    expect(shipped).toBeDefined()
+    const varied = Object.values(ARCHETYPES).find(
+      (a) => a.sightRangeTiles > DEFAULT_SIGHT_RANGE_TILES,
+    )
+    expect(varied).toBeDefined()
     const r = rig(OPEN, {
-      sightRangeTiles: 3,
       archetypes: { 'jungle-scout': spec({ name: 'jungle-scout', sightRangeTiles: 2 }) },
     })
-    const enemy = r.spawnKind(2, 5, 'enemy', shipped ?? '')
-    r.spawn(6, 5, 'player', 1000)
+    const enemy = r.spawnKind(1, 5, 'enemy', varied?.name ?? '')
+    r.spawn(15, 5, 'player', 1000) // 14 tiles
     r.run(10)
     expect(r.ai.stateOf(enemy.id)).toBe('idle')
   })
