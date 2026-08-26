@@ -242,7 +242,7 @@ describe('the leash bounds a chase, it does not forbid one', () => {
    * static one: he would see you, shoot at you, and forget you completely the
    * moment you stepped behind a tree.
    */
-  const BIG = '\n' + Array.from({ length: 40 }, () => '  ' + '.'.repeat(40)).join('\n') + '\n'
+  const BIG = '\n' + Array.from({ length: 60 }, () => '  ' + '.'.repeat(60)).join('\n') + '\n'
 
   /** Engage a man, then move him out of sight, and report the state that follows. */
   function chase(route: readonly { x: number; y: number }[] | null, stepFirst: boolean): string {
@@ -314,6 +314,86 @@ describe('the leash bounds a chase, it does not forbid one', () => {
     const far = lureThenVanish(16)
     expect(far.away).toBeGreaterThan(12)
     expect(far.state).toBe('idle')
+  })
+
+  it('a man standing on his own route is never already off the leash', () => {
+    /**
+     * THE DEAD ZONE, and it is the same player-visible symptom as the anchor bug
+     * one layer up: a guard who will not fight.
+     *
+     * Anchoring the post at the NEAREST WAYPOINT fixed the map-centre bug but
+     * left a subtler one, because nothing guarantees a waypoint is within the
+     * leash. Halfway along a leg longer than twice the leash, a man standing
+     * exactly where he was authored to stand is already outside it — so he sees
+     * an enemy, shoots, and abandons the chase the instant sight breaks.
+     * Measured before the fix: legs of 6, 18 and 22 pursued; 24, 32 and 40 did
+     * not, the boundary landing exactly at 2 x the rifleman's 12-tile leash.
+     *
+     * The earlier leash cases could not see it because they LURE him off the
+     * route; this failure is a man still on it. So the post is anchored at where
+     * he actually stands when contact takes him off his beat, which is the
+     * distance `aggression` was always meant to bound and has no dead zone at
+     * any leg length.
+     */
+    const legs = [6, 18, 24, 40]
+    const outcomes = legs.map((legLen) => {
+      const r = rig(BIG)
+      const start = 2
+      const end = start + legLen
+      const mid = Math.round((start + end) / 2)
+      const enemy = r.spawn(mid, 5, 'enemy')
+      r.ai.assignPatrol(enemy.id, [
+        { x: start, y: 5 },
+        { x: end, y: 5 },
+      ])
+      const man = r.spawn(mid + 6, 5, 'player', 10_000)
+      r.run(10)
+      if (r.ai.stateOf(enemy.id) !== 'engage') throw new Error(`leg ${String(legLen)} never engaged`)
+      r.place(man.id, 58, 58)
+      r.run(9)
+      return { legLen, state: String(r.ai.stateOf(enemy.id)) }
+    })
+    expect(outcomes).toEqual(legs.map((legLen) => ({ legLen, state: 'pursue' })))
+  })
+
+  it('does not inherit a post from a contact at the far end of his beat', () => {
+    /**
+     * The post is released on the return to `idle`. Without that release a guard
+     * ambushed at one end of a long route carries that post for the rest of the
+     * mission, and by the time his beat has taken him to the other end he is
+     * permanently off the leash — the dead zone above, arriving by a different
+     * door and lasting the whole mission rather than one leg.
+     *
+     * The system's own comment argues for this release; nothing pinned it, and a
+     * mutant that never released survived the whole suite.
+     */
+    const r = rig(BIG)
+    const enemy = r.spawn(4, 5, 'enemy')
+    r.ai.assignPatrol(enemy.id, [
+      { x: 4, y: 5 },
+      { x: 40, y: 5 },
+    ])
+    // Contact at the western end, then let him go back to his beat.
+    const first = r.spawn(10, 5, 'player', 10_000)
+    r.run(10)
+    r.world.despawn(first.id)
+    let idle = false
+    for (let i = 0; i < 60 && !idle; i += 1) {
+      r.run(10)
+      idle = r.ai.stateOf(enemy.id) === 'idle'
+    }
+    expect(idle).toBe(true)
+
+    // Walk him a long way east, then ambush him again where he now stands.
+    r.run(500)
+    const now = r.tileOf(enemy.id).x
+    expect(now).toBeGreaterThan(20)
+    const second = r.spawn(now + 6, 5, 'player', 10_000)
+    r.run(10)
+    expect(r.ai.stateOf(enemy.id)).toBe('engage')
+    r.place(second.id, 58, 58)
+    r.run(9)
+    expect(r.ai.stateOf(enemy.id)).toBe('pursue')
   })
 
   it('but not on one that has barely moved him', () => {
