@@ -83,6 +83,32 @@ export interface ShotFiredEvent extends EventStamp {
   readonly targetZ: number
 }
 
+/**
+ * Ordnance detonated (ticket 015). Carries everything FX, audio and the HUD
+ * need to stage a blast without looking anything up in the sim.
+ *
+ * THE POSITION IS WHERE IT ACTUALLY WENT OFF, height included: a fuse that
+ * expires before impact detonates the round in mid-air, and an airburst reported
+ * on the ground would hide the whole mechanic. `radiusTiles` rides along so an
+ * effect can be scaled to the blast that caused it rather than to a table the
+ * renderer would otherwise have to import, which is the same reason `ShotFired`
+ * carries both its endpoints.
+ *
+ * `ordnance` is the open-enum `OrdnanceSpec.name`, so adding a weapon never
+ * touches this union — and `sourceId` names the launcher even when he did not
+ * live to see it land, because ids are never reused.
+ */
+export interface ExplosionEvent extends EventStamp {
+  readonly type: 'Explosion'
+  readonly ordnance: string
+  readonly x: number
+  readonly z: number
+  /** Height above the ground plane. Zero for a round that reached its target. */
+  readonly y: number
+  readonly radiusTiles: number
+  readonly sourceId: number
+}
+
 /** An objective was satisfied. `objective` is the open-enum `LevelObjective.type`. */
 export interface MissionCompleteEvent extends EventStamp {
   readonly type: 'MissionComplete'
@@ -101,6 +127,7 @@ export type SimEvent =
   | UnitDespawnedEvent
   | UnitDiedEvent
   | ShotFiredEvent
+  | ExplosionEvent
   | MissionCompleteEvent
   | MissionFailedEvent
 

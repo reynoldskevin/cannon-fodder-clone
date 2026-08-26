@@ -13,7 +13,6 @@
  */
 
 import type { World } from '../world/world'
-import type { WeaponSpec } from './weapons'
 
 // ---------------------------------------------------------------------------
 // Range
@@ -112,8 +111,23 @@ export function readyToFire(cooldowns: Cooldowns, id: number, tick: number): boo
   return ready === undefined || tick >= ready
 }
 
-/** Record that unit `id` fired on `tick` with `spec`. */
-export function markFired(cooldowns: Cooldowns, id: number, tick: number, spec: WeaponSpec): void {
+/**
+ * Record that unit `id` fired on `tick` with `spec`.
+ *
+ * The parameter is the COOLDOWN, not a whole weapon: ticket 015's `OrdnanceSpec`
+ * is not a `WeaponSpec` and never will be (a grenade has no range or per-hit
+ * damage), but a thrown grenade puts a man on a rate-of-fire clock in exactly
+ * the same way a round does. Widening the type is what lets both share one
+ * cooldown table instead of ordnance growing a parallel copy that then disagrees
+ * about whether a man may act this tick. Every existing `WeaponSpec` caller
+ * still satisfies it structurally.
+ */
+export function markFired(
+  cooldowns: Cooldowns,
+  id: number,
+  tick: number,
+  spec: { readonly cooldownTicks: number },
+): void {
   cooldowns.readyAt.set(id, tick + spec.cooldownTicks)
 }
 
