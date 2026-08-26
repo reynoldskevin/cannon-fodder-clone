@@ -32,6 +32,16 @@ export {
   MAX_UNLOCKED_LEVELS,
 } from './roster'
 export type { CreateCampaignOptions, MissionTally } from './roster'
+// Ticket 021. Squad selection is `core`'s business for the same reason the flow
+// models are: the Recruitment screen has no tests, so a rule that lives inside
+// its click handler is a rule nothing checks.
+export { maxSquadFor, selectSquad, recruitmentModel } from './selection'
+export type {
+  RecruitmentEntry,
+  RecruitmentModel,
+  SquadMember,
+  SquadSelection,
+} from './selection'
 export { RANKS, rankFor } from './ranks'
 export type { Rank } from './ranks'
 export { NAME_POOL } from './names'

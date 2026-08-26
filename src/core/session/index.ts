@@ -35,6 +35,7 @@ import { worldToTile } from '../view/projection'
 import { propRenderEntities } from './props'
 import type { AiSystem } from '../ai'
 import type { Armoury } from '../armoury'
+import type { SquadMember } from '../campaign'
 import type { CombatOptions, CombatSystem } from '../combat'
 import type { CommandQueue } from '../command'
 import type { LevelData } from '../level'
@@ -53,8 +54,30 @@ export type GroundHeightAt = (tileX: number, tileY: number) => number
 export interface SessionOptions {
   /** Mission seed. The same seed, level and commands replay identically. */
   readonly seed?: number
-  /** Movement tuning, passed straight to `createSquadSystem`. */
-  readonly squad?: SquadOptions
+  /**
+   * Movement tuning, passed straight to `createSquadSystem`.
+   *
+   * RENAMED FROM `squad` BY TICKET 021, which needed that word for the men
+   * themselves — a session takes a squad in the sense the player means, and
+   * `squad: { speed: 3 }` next to `squad: [aMan, anotherMan]` is a name doing
+   * two jobs. Nothing in the repo passed it; the capability is kept because the
+   * squad system's tuning has to be reachable from somewhere.
+   */
+  readonly movement?: SquadOptions
+  /**
+   * The men on this mission, in the order they take the avatar spawn points
+   * (ticket 021).
+   *
+   * OPTIONAL, AND ITS ABSENCE MUST CHANGE NOTHING. Every session built before
+   * this ticket — the whole test suite, and `main.ts` until the campaign is
+   * wired up — passes no squad and must play exactly the mission it always did.
+   * Absent, `assignment` is EMPTY rather than missing, so no consumer needs a
+   * branch for it.
+   *
+   * `selectSquad` guarantees exactly one man per avatar slot, which is why
+   * nothing here has to reconcile the two counts.
+   */
+  readonly squad?: readonly SquadMember[]
   /**
    * Combat tuning. Passed to `createCombatSystem` OVER a default of
    * `autoEngageTeams: ['enemy']` — the session's own decision that the player
@@ -130,6 +153,27 @@ export interface Session {
   readonly pickups: PickupSystem
   /** The baked passability grid both systems path and sight against. */
   readonly grid: NavGrid
+  /**
+   * Which campaign recruit each player entity IS: entity id -> recruit id
+   * (ticket 021).
+   *
+   * THE ONE PLACE THE SIM'S VOCABULARY AND THE CAMPAIGN'S MEET. The simulation
+   * has never heard of a recruit and must not have to; the campaign has never
+   * heard of an entity id. `missionReport(events, assignment, levelId)` takes
+   * this map verbatim, so there is no conversion step for the two to be
+   * mismatched in silently — and a mismatch here is the worst bug available:
+   * the campaign would be telling the truth about the wrong people, and nothing
+   * inside either half could notice.
+   *
+   * EMPTY, NEVER MISSING, when no squad was given. `undefined` would make every
+   * consumer test for it.
+   *
+   * NEVER PRUNED. Entity ids are not reused, so a dead man's entry stays
+   * meaningful, and that is precisely what lets the report name him afterwards.
+   * Pruning on death would silently drop every casualty from the campaign's
+   * record — the one thing Boot Hill exists to remember.
+   */
+  readonly assignment: ReadonlyMap<number, string>
   /**
    * The registration order of the simulation systems, DERIVED.
    *
@@ -426,7 +470,32 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
   // is a decision the caller owns. Avatars then enemies, each in level order.
   world.spawnFromLevel()
 
-  const squad = createSquadSystem(grid, options.squad ?? {})
+  const squad = createSquadSystem(grid, options.movement ?? {})
+  // WHO IS WHO (ticket 021), built once, before the first tick. Pairing is by
+  // COUNTING PLAYER ENTITIES AS THEY COME OUT OF `world.entities`, exactly as
+  // `assignPatrolRoutes` counts enemies and for the reason given there: writing
+  // `entities[i]` would bake in a second fact about what `spawnFromLevel` does
+  // with the avatar list, and ticket 018 paid for that assumption once already.
+  // Insertion order is player-entity order, so `assignment.values()` reads back
+  // in squad order.
+  const assignment = new Map<number, string>()
+  {
+    const chosen = options.squad ?? []
+    const spawned = world.entities
+    let index = 0
+    for (let i = 0; i < spawned.length; i += 1) {
+      const entity = spawned[i]
+      if (entity === undefined || entity.team !== 'player') continue
+      const man = chosen[index]
+      index += 1
+      // A squad shorter than the level's avatar list leaves the remaining men
+      // unassigned rather than throwing: `selectSquad` guarantees the counts
+      // match, and a session handed a hand-built squad should still run the
+      // mission — an unassigned entity simply does not reach the campaign.
+      if (man === undefined) continue
+      assignment.set(entity.id, man.id)
+    }
+  }
   // WHO SHOOTS WITHOUT BEING TOLD (tickets 011a, 012): nobody at all. The player
   // squad holds fire until a `fire` command puts it on a standing order, which
   // is the owner's call about when his men start a firefight, and the enemy
@@ -977,6 +1046,7 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
     armoury,
     pickups,
     grid,
+    assignment,
     systemOrder,
     // A getter, not a snapshot: the object is built once and the count changes
     // every frame, so a plain property would freeze at its initial zero.
