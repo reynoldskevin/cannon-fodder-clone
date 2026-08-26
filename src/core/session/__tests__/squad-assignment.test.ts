@@ -135,12 +135,24 @@ describe('a session given no squad is exactly the session it always was', () => 
   })
 
   it('plays a mission unchanged', () => {
+    /**
+     * MEASURED AGAINST WHERE HE STARTED, not against zero. `Entity.x` is a
+     * CENTRE-INDEXED WORLD coordinate, not a tile index: `tileToWorld` maps tile
+     * n to `n - (w - 1) / 2`, so on a 20-wide map tile 2 is world -7.5 and tile
+     * 10 is +0.5. The first draft asserted `> 0` and failed at -1.5 having moved
+     * a correct six tiles — the assertion was comparing against a point seven
+     * and a half tiles away.
+     *
+     * This is the same coordinate convention that has cost this project two
+     * review cycles in `worldToTile`, arriving through a test fixture instead.
+     */
     const s = createSession(level(2))
     const id = s.selection()[0]
     expect(id).toBeDefined()
+    const startX = s.world.get(id ?? 0)?.x ?? 0
     s.queue.push({ type: 'move', unitIds: [id ?? 0], target: { x: 10, y: 7 } })
     for (let f = 0; f < 120; f += 1) s.advance(1 / 60)
-    expect(s.world.get(id ?? 0)?.x ?? 0).toBeGreaterThan(0)
+    expect(s.world.get(id ?? 0)?.x ?? 0).toBeGreaterThan(startX + 3)
   })
 
   it('is still deterministic', () => {

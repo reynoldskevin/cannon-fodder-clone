@@ -166,12 +166,35 @@ describe('a selection that would break the level is refused', () => {
     }
   })
 
-  it('a refusal changes nothing', () => {
-    // No half-recruitment: a rejected selection must not leave names issued.
+  it('a refusal changes nothing, on every path that can refuse', () => {
+    /**
+     * No half-recruitment: a rejected selection must not leave names issued.
+     *
+     * SWEPT RATHER THAN SAMPLED. The first draft only exercised the over-long
+     * path, so a `recruitsIssued += 1` slipped into the under-selection branch
+     * stayed green — and that branch is the one that sits next to the code which
+     * legitimately DOES issue names, which is exactly where such a slip would
+     * happen.
+     */
     const s = createCampaign({ seed: 18, recruits: 6 })
+    const dead = 'nobody'
+    const one = ids(s, 1)[0] ?? ''
+    const refusals: readonly string[][] = [
+      ids(s, 9),
+      ids(s, 2),
+      [],
+      [one, one, ids(s, 2)[1] ?? ''],
+      [...ids(s, 2), dead],
+    ]
     const before = JSON.stringify(s)
-    selectSquad(s, levelWith(3), ids(s, 9))
-    expect(JSON.stringify(s)).toBe(before)
+    for (const chosen of refusals) {
+      const result = selectSquad(s, levelWith(3), chosen)
+      expect({ chosen: chosen.join(','), refused: !result.ok }).toEqual({
+        chosen: chosen.join(','),
+        refused: true,
+      })
+      expect(JSON.stringify(s)).toBe(before)
+    }
   })
 })
 
@@ -218,11 +241,18 @@ describe('a campaign short of men fields a squad anyway', () => {
     if (result.ok) expect(result.squad).toHaveLength(3)
   })
 
-  it('keeps the men the player DID choose', () => {
-    // Auto-fill tops up; it does not overrule. A player who picked his veteran
-    // must still get him.
-    const s = createCampaign({ seed: 24, recruits: 2 })
-    const chosen = ids(s, 2)
+  it('keeps the men the player DID choose, in the order he chose them', () => {
+    /**
+     * Auto-fill tops up; it does not overrule. A player who picked his veteran
+     * must still get him, and on the flank he put him on.
+     *
+     * CHOSEN OUT OF ROSTER ORDER, deliberately. The first draft picked the
+     * roster's first two men in roster order, so an auto-fill that threw the
+     * player's choices away and rebuilt the squad from the top of the roster
+     * produced an identical answer and passed.
+     */
+    const s = createCampaign({ seed: 24, recruits: 4 })
+    const chosen = [...ids(s, 3)].reverse().slice(0, 2)
     const result = selectSquad(s, levelWith(4), chosen)
     if (!result.ok) throw new Error(result.reason)
     expect(result.squad.slice(0, 2).map((m) => m.id)).toEqual(chosen)
@@ -300,9 +330,39 @@ describe('what the Recruitment screen draws', () => {
     expect(JSON.parse(JSON.stringify(model))).toEqual(model)
   })
 
-  it('is a copy, not a window onto the roster', () => {
+  it('is a copy a screen can hold without changing the roster', () => {
+    /**
+     * THE FIRST DRAFT OF THIS COULD NOT FAIL. It asserted
+     * `model.available !== recruitsAvailable(s)`, and `recruitsAvailable` is a
+     * `.map` — it returns a fresh array on every call, so the two are never the
+     * same object no matter what `recruitmentModel` does. Replacing the whole
+     * model with a bare `recruitsAvailable(state)` left it green.
+     *
+     * What actually matters is that a screen holding the list cannot reach back
+     * into the campaign through it, so that is what is measured.
+     */
     const s = createCampaign({ seed: 36, recruits: 3 })
     const model = recruitmentModel(s, levelWith(2))
-    expect(model.available).not.toBe(recruitsAvailable(s))
+    expect(model.available).toHaveLength(3)
+    // Cast to reach past `readonly`. The type already forbids this — which is
+    // itself half the guarantee — but a screen is DOM code that can be written
+    // in a hurry, and the runtime must hold too.
+    ;(model.available as { length: number }).length = 0
+    expect(recruitmentModel(s, levelWith(2)).available).toHaveLength(3)
+    expect(recruitsAvailable(s)).toHaveLength(3)
+  })
+
+  it('carries only the fields the screen was promised', () => {
+    // A model that handed back the roster's own record would leak whatever the
+    // campaign happens to store today and quietly become a dependency on it.
+    const s = createCampaign({ seed: 37, recruits: 2 })
+    const entry = recruitmentModel(s, levelWith(2)).available[0]
+    expect(Object.keys(entry ?? {}).sort()).toEqual([
+      'id',
+      'kills',
+      'missionsSurvived',
+      'name',
+      'rank',
+    ])
   })
 })
