@@ -1,0 +1,347 @@
+import { describe, it, expect } from 'vitest'
+import {
+  applyMissionReport,
+  bootHillModel,
+  createCampaign,
+  loadCampaign,
+  promotionsBetween,
+  recruitmentModel,
+  recruitsAvailable,
+  saveCampaign,
+  RANKS,
+} from '../index'
+import { asciiLevel } from '../../pathing/__tests__/ascii'
+import type { CampaignState, PersistencePort } from '../index'
+import type { LevelData, SpawnPoint } from '../../level/types'
+
+/**
+ * Ticket 022 — Boot Hill.
+ *
+ * THE ONLY SCREEN IN THIS GAME THAT IS ABOUT MEMORY. Every other one shows the
+ * player something he can act on; this one shows him a list of names he cannot
+ * do anything about, and that is why the campaign has weight at all. A soldier
+ * who dies in the mission and vanishes from the record is a unit; a soldier
+ * whose gravestone is still on the hill four levels later is a loss.
+ *
+ * SO IT ADDS NO STATE, and that is the test of the three tickets before it.
+ * Ticket 019 already carves the stones — `DeadRecruit` carries `rankAtDeath` and
+ * `diedOnLevel`, and a dead man's rank is RECORDED rather than derived precisely
+ * so this screen can show what he was when he fell. If this ticket needed a new
+ * field, something upstream was wrong.
+ */
+
+const levelWith = (slots: number): LevelData => {
+  const base = asciiLevel(`
+    ....................
+    ....................
+    ....................
+  `)
+  const avatars: SpawnPoint[] = []
+  for (let i = 0; i < slots; i += 1) avatars.push({ x: 2 + i, y: 1 })
+  return { ...base, spawns: { ...base.spawns, avatars } }
+}
+
+/** Fight `levelId`, killing the named men and surviving with the rest. */
+function fight(
+  state: CampaignState,
+  levelId: number,
+  killIds: readonly string[],
+  outcome: 'complete' | 'failed' = 'complete',
+): CampaignState {
+  const men = recruitsAvailable(state)
+  return applyMissionReport(state, {
+    levelId,
+    outcome,
+    entries: men.map((m) => ({
+      recruitId: m.id,
+      survived: !killIds.includes(m.id),
+      kills: killIds.includes(m.id) ? 2 : 1,
+    })),
+  })
+}
+
+describe('the hill', () => {
+  it('is empty before anybody has died', () => {
+    const s = createCampaign({ seed: 1, recruits: 4 })
+    expect(bootHillModel(s, promotionsBetween(s, s)).graves).toEqual([])
+  })
+
+  it('carves a stone for the man who fell', () => {
+    const before = createCampaign({ seed: 2, recruits: 4 })
+    const doomed = recruitsAvailable(before)[0]!
+    const after = fight(before, 1, [doomed.id])
+    const graves = bootHillModel(after, promotionsBetween(before, after)).graves
+    expect(graves.map((g) => g.name)).toEqual([doomed.name])
+  })
+
+  it('the stone says his name, his rank when he fell, and where', () => {
+    /**
+     * All three, because a stone with only a name is a list. `rankAtDeath` is
+     * RECORDED by ticket 019 rather than recomputed — the ladder is a tuning
+     * surface, and a stone that changed its inscription when a designer edited a
+     * table would be worse than no stone at all.
+     */
+    const before = createCampaign({ seed: 3, recruits: 4 })
+    const doomed = recruitsAvailable(before)[0]!
+    const after = fight(before, 4, [doomed.id])
+    const stone = bootHillModel(after, promotionsBetween(before, after)).graves[0]
+    expect({ name: stone?.name, rank: stone?.rankAtDeath, level: stone?.diedOnLevel }).toEqual({
+      name: doomed.name,
+      rank: doomed.rank,
+      level: 4,
+    })
+  })
+
+  it('and how many he took with him', () => {
+    // A gravestone reading "3 kills" is the difference between a casualty and a
+    // soldier the player remembers.
+    const before = createCampaign({ seed: 4, recruits: 3 })
+    const doomed = recruitsAvailable(before)[0]!
+    const after = fight(before, 1, [doomed.id])
+    expect(bootHillModel(after, []).graves[0]?.kills).toBeGreaterThan(0)
+  })
+
+  it('GROWS across the campaign, oldest first', () => {
+    /**
+     * THE WHOLE POINT OF THE SCREEN, and the reason 019's dead list is
+     * append-only. A hill that showed only this mission's casualties would be a
+     * casualty report — the player is meant to scroll past men he lost four
+     * levels ago and recognise the names.
+     */
+    let s = createCampaign({ seed: 5, recruits: 8 })
+    const fallen: string[] = []
+    for (let level = 1; level <= 4; level += 1) {
+      const next = recruitsAvailable(s)[0]!
+      fallen.push(next.name)
+      s = fight(s, level, [next.id])
+    }
+    const graves = bootHillModel(s, []).graves
+    expect(graves.map((g) => g.name)).toEqual(fallen)
+    expect(graves.map((g) => g.diedOnLevel)).toEqual([1, 2, 3, 4])
+  })
+
+  it('keeps two men who fell on the same level, both of them', () => {
+    const before = createCampaign({ seed: 6, recruits: 5 })
+    const men = recruitsAvailable(before).slice(0, 2)
+    const after = fight(before, 2, men.map((m) => m.id))
+    expect(bootHillModel(after, []).graves).toHaveLength(2)
+  })
+
+  it('marks the men who fell THIS mission, so the new stones stand out', () => {
+    let s = createCampaign({ seed: 7, recruits: 6 })
+    const first = recruitsAvailable(s)[0]!
+    s = fight(s, 1, [first.id])
+    const beforeSecond = s
+    const second = recruitsAvailable(s)[0]!
+    s = fight(s, 2, [second.id])
+    const model = bootHillModel(s, promotionsBetween(beforeSecond, s))
+    expect(model.graves).toHaveLength(2)
+    expect(model.fallenThisMission.map((g) => g.name)).toEqual([second.name])
+  })
+
+  it('a mission nobody lost marks nobody', () => {
+    const before = createCampaign({ seed: 8, recruits: 4 })
+    const after = fight(before, 1, [])
+    expect(bootHillModel(after, promotionsBetween(before, after)).fallenThisMission).toEqual([])
+  })
+
+  it('a wipe puts the whole squad on the hill at once', () => {
+    const before = createCampaign({ seed: 9, recruits: 4 })
+    const all = recruitsAvailable(before).map((m) => m.id)
+    const after = fight(before, 3, all, 'failed')
+    const model = bootHillModel(after, promotionsBetween(before, after))
+    expect(model.graves).toHaveLength(4)
+    expect(model.fallenThisMission).toHaveLength(4)
+  })
+
+  it('is a copy a screen can hold', () => {
+    const before = createCampaign({ seed: 10, recruits: 3 })
+    const after = fight(before, 1, [recruitsAvailable(before)[0]!.id])
+    const model = bootHillModel(after, [])
+    expect(model.graves).not.toBe(after.dead)
+    expect(JSON.parse(JSON.stringify(model))).toEqual(model)
+  })
+})
+
+describe('promotions', () => {
+  /** Survive `n` winning missions with everybody alive. */
+  const veteranise = (state: CampaignState, n: number): CampaignState => {
+    let s = state
+    for (let i = 0; i < n; i += 1) s = fight(s, 1, [])
+    return s
+  }
+
+  it('nobody is promoted for standing still', () => {
+    const s = createCampaign({ seed: 21, recruits: 3 })
+    expect(promotionsBetween(s, s)).toEqual([])
+  })
+
+  it('names the man who crossed a threshold, and both ranks', () => {
+    const step = RANKS[1]?.missionsRequired ?? 2
+    const before = veteranise(createCampaign({ seed: 22, recruits: 3 }), step - 1)
+    const after = fight(before, 1, [])
+    const promoted = promotionsBetween(before, after)
+    expect(promoted).toHaveLength(recruitsAvailable(before).length)
+    expect(promoted[0]?.from).toBe(RANKS[0]?.name)
+    expect(promoted[0]?.to).toBe(RANKS[1]?.name)
+    expect(promoted[0]?.name.length).toBeGreaterThan(0)
+  })
+
+  it('covers only THIS mission, not the whole campaign', () => {
+    /**
+     * The list is what the player earned just now. Recomputing it from the
+     * campaign's total record would re-announce every promotion ever, every
+     * time — the screen would grow a paragraph a mission and mean nothing.
+     */
+    const step = RANKS[1]?.missionsRequired ?? 2
+    let s = veteranise(createCampaign({ seed: 23, recruits: 3 }), step)
+    const beforeNext = s
+    s = fight(s, 2, [])
+    expect(promotionsBetween(beforeNext, s)).toEqual([])
+  })
+
+  it('a mission that promoted nobody promotes nobody', () => {
+    const before = createCampaign({ seed: 24, recruits: 3 })
+    const after = fight(before, 1, [])
+    // One survived mission, and the second rung needs more than one.
+    const step = RANKS[1]?.missionsRequired ?? 2
+    expect(promotionsBetween(before, after)).toEqual(step > 1 ? [] : promotionsBetween(before, after))
+  })
+
+  it('a man who DIED is never listed as promoted', () => {
+    /**
+     * He did not survive the mission, so `applyMissionReport` credits him
+     * nothing — and a posthumous promotion printed beside his own gravestone,
+     * on the same screen, would read as a bug in the most conspicuous place the
+     * game has.
+     */
+    const step = RANKS[1]?.missionsRequired ?? 2
+    const before = veteranise(createCampaign({ seed: 25, recruits: 3 }), step - 1)
+    const doomed = recruitsAvailable(before)[0]!
+    const after = fight(before, 2, [doomed.id])
+    const promoted = promotionsBetween(before, after).map((p) => p.name)
+    expect(promoted).not.toContain(doomed.name)
+    expect(bootHillModel(after, promotionsBetween(before, after)).graves.map((g) => g.name)).toEqual(
+      [doomed.name],
+    )
+  })
+
+  it('and his squadmates who lived still are', () => {
+    // The control: a mission with a casualty still promotes the survivors.
+    const step = RANKS[1]?.missionsRequired ?? 2
+    const before = veteranise(createCampaign({ seed: 26, recruits: 4 }), step - 1)
+    const doomed = recruitsAvailable(before)[0]!
+    const after = fight(before, 2, [doomed.id])
+    expect(promotionsBetween(before, after).length).toBeGreaterThan(0)
+  })
+
+  it('a defeat promotes nobody, however many survive it', () => {
+    const step = RANKS[1]?.missionsRequired ?? 2
+    let s = veteranise(createCampaign({ seed: 27, recruits: 3 }), step - 1)
+    const beforeLoss = s
+    s = fight(s, 2, [], 'failed')
+    expect(promotionsBetween(beforeLoss, s)).toEqual([])
+  })
+
+  it('a new recruit who was not there before is not a promotion', () => {
+    // Auto-fill issues men between missions. Somebody appearing on the roster is
+    // not somebody who was promoted, and a naive diff would report him as one.
+    const before = createCampaign({ seed: 28, recruits: 2 })
+    const after = applyMissionReport(before, { levelId: 1, outcome: 'complete', entries: [] })
+    const grown = { ...after, recruits: after.recruits }
+    expect(promotionsBetween(before, grown).length).toBe(0)
+  })
+
+  it('is data, and survives a JSON round-trip', () => {
+    const step = RANKS[1]?.missionsRequired ?? 2
+    const before = veteranise(createCampaign({ seed: 29, recruits: 3 }), step - 1)
+    const after = fight(before, 1, [])
+    const promoted = promotionsBetween(before, after)
+    expect(JSON.parse(JSON.stringify(promoted))).toEqual(promoted)
+  })
+})
+
+describe('the hill survives a reload', () => {
+  it('the same stones come back, in the same order', () => {
+    /**
+     * Boot Hill is the reason ticket 019 exists. A memorial that emptied when
+     * the player closed the tab would be worse than no memorial — it would
+     * teach them the deaths did not matter.
+     */
+    let stored: string | null = null
+    const port: PersistencePort = {
+      load: () => stored,
+      save: (state) => {
+        stored = JSON.stringify(state)
+      },
+    }
+    let s = createCampaign({ seed: 31, recruits: 8 })
+    for (let level = 1; level <= 3; level += 1) {
+      s = fight(s, level, [recruitsAvailable(s)[0]!.id])
+    }
+    const before = bootHillModel(s, [])
+    saveCampaign(port, s)
+    const reloaded = loadCampaign(port)
+    expect(reloaded.notice).toBeNull()
+    expect(bootHillModel(reloaded.state, [])).toEqual(before)
+  })
+
+  it('and the ranks on them are the ranks they were carved with', () => {
+    // The freeze ticket 019 fixed, seen from the screen that depends on it.
+    let stored: string | null = null
+    const port: PersistencePort = {
+      load: () => stored,
+      save: (state) => {
+        stored = JSON.stringify(state)
+      },
+    }
+    const step = RANKS[1]?.missionsRequired ?? 2
+    let s = createCampaign({ seed: 32, recruits: 4 })
+    for (let i = 0; i < step; i += 1) s = fight(s, 1, [])
+    const veteran = recruitsAvailable(s)[0]!
+    expect(veteran.rank).toBe(RANKS[1]?.name)
+    s = fight(s, 2, [veteran.id])
+    saveCampaign(port, s)
+    const stone = bootHillModel(loadCampaign(port).state, []).graves[0]
+    expect(stone?.rankAtDeath).toBe(RANKS[1]?.name)
+  })
+})
+
+describe('the Recruitment screen says how many men it will assign for you', () => {
+  it('none when the player has picked a full squad', () => {
+    const s = createCampaign({ seed: 41, recruits: 6 })
+    const chosen = recruitsAvailable(s).slice(0, 3).map((r) => r.id)
+    expect(recruitmentModel(s, levelWith(3), chosen).autoFilled).toBe(0)
+  })
+
+  it('the shortfall when the roster leaves him no choice', () => {
+    /**
+     * THE TRAP TICKET 021 LEFT FOR THIS ONE. Auto-fill silently completes a
+     * short selection when the roster is no bigger than the squad, so the same
+     * click means "refused" or "deploys three men you did not pick" depending on
+     * a quantity the screen never showed. The button can now say so.
+     */
+    const s = createCampaign({ seed: 42, recruits: 4 })
+    expect(recruitmentModel(s, levelWith(4), []).autoFilled).toBe(4)
+  })
+
+  it('counts only the shortfall, not the whole squad', () => {
+    const s = createCampaign({ seed: 43, recruits: 4 })
+    const chosen = recruitsAvailable(s).slice(0, 1).map((r) => r.id)
+    expect(recruitmentModel(s, levelWith(4), chosen).autoFilled).toBe(3)
+  })
+
+  it('is zero when a short selection would be REFUSED rather than filled', () => {
+    // The other side of 021's rule: with more living men than slots, a short
+    // list is a half-made choice and nothing is assigned for him.
+    const s = createCampaign({ seed: 44, recruits: 8 })
+    const chosen = recruitsAvailable(s).slice(0, 1).map((r) => r.id)
+    expect(recruitmentModel(s, levelWith(3), chosen).autoFilled).toBe(0)
+  })
+
+  it('still works when the screen has not asked about a selection yet', () => {
+    // The screen renders before the player clicks anything.
+    const s = createCampaign({ seed: 45, recruits: 6 })
+    expect(() => recruitmentModel(s, levelWith(3))).not.toThrow()
+  })
+})
