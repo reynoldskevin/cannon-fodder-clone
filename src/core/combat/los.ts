@@ -118,7 +118,8 @@ export function hasLineOfSight(
  * fractions the traversal is already comparing, so reporting the parameter costs
  * a single division, formed at the return sites and therefore paid only on the
  * tick a shot is actually blocked — never on the clear walks, which is nearly
- * all of them and which `pickTarget` runs per candidate per armed unit per tick.
+ * all of them and which target selection runs per candidate per armed unit per
+ * tick.
  */
 export function clearFractionAlong(
   grid: NavGrid,

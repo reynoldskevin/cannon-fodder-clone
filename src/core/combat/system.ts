@@ -20,9 +20,10 @@
  *
  * DETERMINISM. Target choice is a pure function of world state: candidates are
  * scanned in `world.entities` order (spawn order, which ticket 005 guarantees is
- * stable), scored on squared distance, and ties are broken on the lower entity
- * id. No `Set`/`Map` iteration order, no `rng` draw, no float comparison whose
- * result depends on traversal direction.
+ * stable), scored on a distance — squared, from the shooter, when he engages on
+ * his own initiative; along the line of fire when he was commanded (011c) — and
+ * ties are broken on the lower entity id. No `Set`/`Map` iteration order, no
+ * `rng` draw, no float comparison whose result depends on traversal direction.
  */
 
 import { clearFractionAlong, hasLineOfSight } from './los'
@@ -34,7 +35,7 @@ import {
   markFired,
   readyToFire,
 } from './resolution'
-import { AIM_TOLERANCE_TILES, weaponForKind } from './weapons'
+import { AIM_CORRIDOR_TILES, weaponForKind } from './weapons'
 import { INFANTRY } from '../pathing/navgrid'
 import { TILE_WORLD_SIZE, tileToWorld } from '../view/projection'
 import type { NavGrid, TraversalMask } from '../pathing/navgrid'
@@ -121,9 +122,10 @@ export interface CombatSystem extends SimSystem {
    * his rounds go another — which reads as a targeting bug and is really a
    * bookkeeping one. The same shape, for the same reason, as `AiSystem.targetOf`.
    *
-   * It is the AIM, not the victim. `AIM_TOLERANCE_TILES` lets a round aimed near
-   * a man hit him, so the two are routinely a tile or more apart, and the
-   * shooter should face where the PLAYER pointed.
+   * It is the AIM, not the victim. The aim point is a DIRECTION (ticket 011c):
+   * the round runs down that line to the weapon's full reach and hits the first
+   * man on it, who may be nowhere near the click, so the two are routinely
+   * several tiles apart and the shooter should face where the PLAYER pointed.
    *
    * A READ, AND ONLY A READ. Nothing about how a shot is aimed, chosen or
    * resolved changes because somebody asked this.
@@ -135,7 +137,13 @@ export interface CombatSystem extends SimSystem {
 const ALL_TEAMS: readonly Team[] = ['player', 'enemy']
 
 /**
- * A standing fire order: the aim point, in both spaces it is needed in.
+ * A standing fire order: the point the player pointed at, in world units.
+ *
+ * WORLD UNITS AND NOTHING ELSE. It also carried the same point in TILE space
+ * until ticket 011c, for the cover clamp to walk the grid to — but the clamp now
+ * walks to the far end of the weapon's RANGE along this direction rather than to
+ * the aim point itself, so that copy had become a second, unused answer that the
+ * next reader would have had to check for agreement with the first.
  *
  * Mutated in place when the order is re-issued rather than replaced, so holding
  * the button and dragging leaves the order table's entries alone however many
@@ -143,10 +151,6 @@ const ALL_TEAMS: readonly Team[] = ['player', 'enemy']
  * `tileToWorld` returns, per call and not per unit.)
  */
 interface FireOrder {
-  /** Corner-indexed tile coordinates — the space `hasLineOfSight` walks. */
-  tileX: number
-  tileY: number
-  /** The same point in world units, which is the ray the round is fired along. */
   worldX: number
   worldZ: number
 }
@@ -209,10 +213,10 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
   const levelSize = { w: grid.w, h: grid.h }
 
   /**
-   * `AIM_TOLERANCE_TILES` in WORLD units, squared, so the check against it is a
-   * comparison of the squared distances `pickTarget` already computes.
+   * `AIM_CORRIDOR_TILES` in WORLD units, squared, so the corridor test is a
+   * comparison against a squared perpendicular distance and costs no `sqrt`.
    */
-  const aimToleranceSq = (AIM_TOLERANCE_TILES * TILE_WORLD_SIZE) ** 2
+  const aimCorridorSq = (AIM_CORRIDOR_TILES * TILE_WORLD_SIZE) ** 2
 
   /**
    * Standing fire orders, by unit id.
@@ -274,36 +278,53 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
   const committed = new Map<number, number>()
 
   /**
-   * The best target for `shooter`, or `null`.
+   * Whether `candidate` is a thing `shooter` is willing to shoot at all.
    *
-   * NEAREST VISIBLE ENEMY. Nearest because it is both the most immediate threat
-   * and the shot most likely to connect, and because any cleverer rule (weakest,
-   * most dangerous) reads as psychic to a player who cannot see the numbers it
-   * is reasoning about.
+   * Shared by both selection rules below so the two can never drift on WHO is a
+   * legal target while differing — as they must — on WHICH of them is chosen.
+   *
+   * TARGET SELECTION NEVER PICKS YOUR OWN TEAM.
+   *
+   * Which means FRIENDLY FIRE IS UNREACHABLE FROM GAMEPLAY AS SHIPPED, and
+   * saying so is worth more than implying otherwise: the rifle is hitscan and
+   * damages only the entity it was aimed at, so a round whose line happens to
+   * cross a friendly harms nobody — including now, when the round has a line and
+   * a friendly may be standing squarely on it. `applyDamage` nonetheless detects
+   * and attributes friendly fire correctly (see `resolution.ts`), which is what
+   * the acceptance tests exercise directly. It becomes reachable the moment
+   * ordnance lands in ticket 015 — a grenade damages everything in a radius and
+   * does not ask whose side they are on.
+   *
+   * MAKING THE ROUND HIT THE FIRST *ANYBODY* IS OUT OF SCOPE, AND DELIBERATELY
+   * SO (ticket 011c). It is defensible and faithful to the original, but it is a
+   * change to how the game PLAYS — every enemy volley would become a hazard to
+   * the enemy line too — rather than to how it is AIMED, which is all 011c is.
+   */
+  function engageable(shooter: Entity, candidate: Entity): boolean {
+    if (candidate.team === shooter.team) return false
+    // Already dead as far as this tick is concerned — see `committed`.
+    if ((committed.get(candidate.id) ?? 0) >= candidate.health) return false
+    return true
+  }
+
+  /**
+   * The best target for a shooter engaging on his OWN INITIATIVE, or `null`.
+   *
+   * NEAREST VISIBLE ENEMY, MEASURED FROM THE SHOOTER. Nearest because it is both
+   * the most immediate threat and the shot most likely to connect, and because
+   * any cleverer rule (weakest, most dangerous) reads as psychic to a player who
+   * cannot see the numbers it is reasoning about.
+   *
+   * TICKET 011'S RULE, UNCHANGED BY 011c. An auto-engaging unit has no aim point,
+   * so there is no ray to rank anybody along; the corridor rule below applies to
+   * commanded fire and to nothing else.
    *
    * The LOS raycast is done LAST, after team, range and the distance comparison
    * have all been passed. It walks a tile at a time and is by far the most
    * expensive test here; almost every candidate is eliminated by a subtraction
    * and a multiply instead.
    */
-  function pickTarget(
-    world: World,
-    shooter: Entity,
-    spec: WeaponSpec,
-    /**
-     * The point candidates are ranked by nearness to, in world units, and how
-     * far from it a candidate may be at all.
-     *
-     * An auto-engaging unit ranks from ITS OWN position with no limit — the
-     * nearest visible enemy, which is ticket 011's rule unchanged. A commanded
-     * one ranks from the AIM POINT within `AIM_TOLERANCE_TILES`, because
-     * right-clicking one man in a crowd must shoot the man pointed at rather
-     * than whoever happens to stand closest to the shooter.
-     */
-    fromX: number,
-    fromZ: number,
-    toleranceSq: number,
-  ): Entity | null {
+  function pickNearest(world: World, shooter: Entity, spec: WeaponSpec): Entity | null {
     const sx = worldToTileAxis(shooter.x, grid.w)
     const sz = worldToTileAxis(shooter.z, grid.h)
     // Maximum range converted from tiles to WORLD units here, at the one place
@@ -320,25 +341,12 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
     for (let i = 0; i < candidates.length; i += 1) {
       const candidate = candidates[i]
       if (candidate === undefined) continue
-      // Target selection never picks your own team.
-      //
-      // Which means FRIENDLY FIRE IS UNREACHABLE FROM GAMEPLAY AS SHIPPED, and
-      // saying so is worth more than implying otherwise: the rifle is hitscan
-      // and damages only the entity it was aimed at, so a round whose line
-      // happens to cross a friendly harms nobody. `applyDamage` nonetheless
-      // detects and attributes it correctly (see `resolution.ts`), which is what
-      // the acceptance tests exercise directly. It becomes reachable the moment
-      // ordnance lands in ticket 015 — a grenade damages everything in a radius
-      // and does not ask whose side they are on.
-      if (candidate.team === shooter.team) continue
-      // Already dead as far as this tick is concerned — see `committed`.
-      if ((committed.get(candidate.id) ?? 0) >= candidate.health) continue
+      if (!engageable(shooter, candidate)) continue
       if (!inRange(shooter.x, shooter.z, candidate.x, candidate.z, rangeWorld)) continue
 
-      const dx = candidate.x - fromX
-      const dz = candidate.z - fromZ
+      const dx = candidate.x - shooter.x
+      const dz = candidate.z - shooter.z
       const distanceSq = dx * dx + dz * dz
-      if (distanceSq > toleranceSq) continue
       if (best !== null) {
         if (distanceSq > bestDistanceSq) continue
         // Equal range is common — a squad advancing abreast — and without an
@@ -359,9 +367,97 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
   }
 
   /**
+   * The first man along a COMMANDED round's line of fire, or `null`.
+   *
+   * THE WHOLE OF TICKET 011c. Aiming supplies a DIRECTION, not a destination, so
+   * candidates are ranked by how far DOWN THE RAY they stand and the smallest
+   * wins. Before this, they were ranked by nearness to the aim POINT within a
+   * two-tile disc, which meant a click into the gap between two enemies, or at
+   * the ground behind one, hit nobody at all — while ticket 011a's tracer was
+   * already being drawn the full length of this very ray. That was two answers
+   * to one question; this removes the second one.
+   *
+   * A man qualifies when all three hold:
+   *   - FORWARD of the muzzle (`along >= 0`). Projecting onto the infinite LINE
+   *     rather than the forward RAY would let a man standing behind the shooter
+   *     be "on it" — a soldier shooting over his own shoulder.
+   *   - within `reachWorld` along the ray — see the caller for what shortens it.
+   *   - within `AIM_CORRIDOR_TILES` PERPENDICULAR of the line. A mathematical
+   *     ray has no width and would hit nothing.
+   *
+   * `direction` MUST BE A UNIT VECTOR: both the projection and the cross product
+   * below are lengths only because it is, and a caller that passed the raw
+   * aim-point delta would scale the corridor by the distance of the click —
+   * silently making a far click forgiving and a near one impossible. The caller
+   * normalises, and refuses the zero-length case rather than dividing by it.
+   */
+  function pickAlongRay(
+    world: World,
+    shooter: Entity,
+    directionX: number,
+    directionZ: number,
+    reachWorld: number,
+  ): Entity | null {
+    const sx = worldToTileAxis(shooter.x, grid.w)
+    const sz = worldToTileAxis(shooter.z, grid.h)
+    let best: Entity | null = null
+    let bestAlong = 0
+    const candidates = world.entities
+    for (let i = 0; i < candidates.length; i += 1) {
+      const candidate = candidates[i]
+      if (candidate === undefined) continue
+      if (!engageable(shooter, candidate)) continue
+
+      const dx = candidate.x - shooter.x
+      const dz = candidate.z - shooter.z
+      // Distance along the ray, which is BOTH the range test and the ranking.
+      // The euclidean `inRange` that `pickNearest` uses is deliberately not
+      // applied here: the round travels down the corridor, so what bounds it is
+      // how far it has flown, not how far the man is off to one side.
+      const along = dx * directionX + dz * directionZ
+      if (along < 0 || along > reachWorld) continue
+      // Perpendicular offset, as the 2-D cross product with a unit direction.
+      // Squared so no `sqrt` is paid on a test run per candidate per commanded
+      // shooter per tick.
+      const across = dx * directionZ - dz * directionX
+      if (across * across > aimCorridorSq) continue
+      if (best !== null) {
+        if (along > bestAlong) continue
+        // Two men abreast of each other across the corridor are exactly as far
+        // down the line as one another. Lower id wins — the tie-break the rest
+        // of the sim uses, and a fact about the world rather than about the
+        // order `world.entities` happened to reach them in.
+        if (along === bestAlong && candidate.id >= best.id) continue
+      }
+
+      // LOAD-BEARING FOR "CAN THIS PARTICULAR MAN BE SEEN FROM THE MUZZLE", and
+      // it is the only test that asks. A candidate stands up to a corridor's
+      // half-width OFF the centre line, so his own sightline can be blocked by
+      // cover that line misses entirely — delete this and a man tucked behind a
+      // tree beside the line of fire becomes shootable through it.
+      //
+      // NOT REDUNDANT WITH THE CALLER'S `clearFractionAlong`, which asks the
+      // other question — how far the ROUND gets before it meets cover — and is
+      // what stops a man who has a clear diagonal sightline of his own from
+      // being hit by a round that struck a wall three tiles short of him.
+      //
+      // Done LAST because it walks a tile at a time and is by far the most
+      // expensive test here; almost every candidate is eliminated above by a
+      // subtraction and a multiply instead.
+      const tx = worldToTileAxis(candidate.x, grid.w)
+      const tz = worldToTileAxis(candidate.z, grid.h)
+      if (!hasLineOfSight(grid, { x: sx, y: sz }, { x: tx, y: tz }, sightMask)) continue
+
+      best = candidate
+      bestAlong = along
+    }
+    return best
+  }
+
+  /**
    * Give a standing fire order. See `CombatSystem.orderFire`.
    *
-   * The aim point is converted to both spaces once, here, rather than on every
+   * The aim point is converted to world units once, here, rather than on every
    * tick the order stands: an order is issued at pointer rate and read at tick
    * rate, and the conversion is the same answer every time.
    */
@@ -376,18 +472,11 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
       if (existing !== undefined) {
         // Re-aimed in place. Nothing here touches the cooldown, which is what
         // stops dragging the pointer from becoming rapid fire.
-        existing.tileX = worldToTileAxis(point.x, grid.w)
-        existing.tileY = worldToTileAxis(point.z, grid.h)
         existing.worldX = point.x
         existing.worldZ = point.z
         continue
       }
-      orders.set(id, {
-        tileX: worldToTileAxis(point.x, grid.w),
-        tileY: worldToTileAxis(point.z, grid.h),
-        worldX: point.x,
-        worldZ: point.z,
-      })
+      orders.set(id, { worldX: point.x, worldZ: point.z })
     }
   }
 
@@ -457,13 +546,14 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
       if (order === undefined) {
         // No standing order: only a team inside the auto-engage policy shoots.
         if (!autoEngageTeams.includes(shooter.team)) return
-        target = pickTarget(world, shooter, spec, shooter.x, shooter.z, Number.POSITIVE_INFINITY)
+        target = pickNearest(world, shooter, spec)
         if (target === null) return
         aimX = target.x
         aimZ = target.z
       } else {
         // A COMMANDED SHOT ALWAYS LEAVES THE RIFLE, subject only to the cooldown
-        // above. What is clamped is its ENDPOINT.
+        // above. What the aim point decides is its DIRECTION; what bounds it is
+        // the weapon's range and the first cover on that line.
         //
         // THE ALTERNATIVE WAS SILENCE, and it was wrong twice over. Refusing an
         // aim point with no clear line to it meant right-clicking a tree — the
@@ -475,53 +565,84 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
         //
         // So the round goes where a round could actually go: as far along the
         // line the player pointed as the weapon carries, stopping at the near
-        // face of whatever it meets first. Aiming past the reach fires short;
-        // aiming at or through cover fires into the cover. Neither is silence,
-        // and neither draws the eighteen-tile tracer. The clamp is measured from
-        // the shooter's TILE CENTRE, so it is accurate to under a tile rather
-        // than exact — see the note on the cover clamp below for the bound.
+        // face of whatever it meets first. Aiming past the reach still fires
+        // only the reach; aiming at or through cover fires into the cover.
+        // Neither is silence, and neither draws the eighteen-tile tracer. The
+        // clamp is measured from the shooter's TILE CENTRE, so it is accurate to
+        // under a tile rather than exact — see the cover clamp below.
         //
-        // TARGET SELECTION IS UNTOUCHED BY ANY OF THIS. A man is hit only if he
-        // is in range, in sight, and inside `AIM_TOLERANCE_TILES` of the AIM
-        // point — the clamp decides only what `ShotFired` REPORTS, which is what
-        // FX draws. A shot that found a target needs no clamp at all: passing
-        // those three tests is what makes the target's own position reachable.
-        target = pickTarget(world, shooter, spec, order.worldX, order.worldZ, aimToleranceSq)
-        if (target !== null) {
-          aimX = target.x
-          aimZ = target.z
+        // TARGET SELECTION NOW COMES FROM THIS SAME RAY (ticket 011c), which is
+        // the whole of that ticket. It used to come from a disc around the aim
+        // POINT while the endpoint above came from the line — so the game drew
+        // the right tracer and then damaged somebody chosen by a different rule,
+        // and the two agreed only most of the time. One ray, one answer: the
+        // reported endpoint is either the man the round stopped in or the point
+        // it reached, and the tracer and the damage cannot disagree.
+        const dx = order.worldX - shooter.x
+        const dz = order.worldZ - shooter.z
+        const distance = Math.hypot(dx, dz)
+        if (distance === 0) {
+          // ORDERED ONTO HIS OWN TILE: a zero-length aim is not a direction, so
+          // there is no line to be on and nobody is hit. Guarded rather than
+          // divided through, because `dx / 0` is the `NaN` that would fail every
+          // comparison in `pickAlongRay` — which reads as "nobody is in the
+          // corridor" only until somebody flips one of those comparisons round.
+          // The round collapses to the muzzle, exactly as before 011c.
+          target = null
+          aimX = shooter.x
+          aimZ = shooter.z
         } else {
-          const dx = order.worldX - shooter.x
-          const dz = order.worldZ - shooter.z
-          const distance = Math.hypot(dx, dz)
-          // The whole way to the aim point unless something below shortens it.
-          // A zero-length ray — ordered onto his own tile — skips the clamping
-          // entirely: there is no direction to clamp along, and scaling nothing
-          // by anything is still the muzzle.
-          let reach = 1
-          if (distance > 0) {
-            const rangeWorld = spec.rangeTiles * TILE_WORLD_SIZE
-            if (distance > rangeWorld) reach = rangeWorld / distance
-            // Measured on the ray between TILE CENTRES, which is the same
-            // flooring `hasLineOfSight` does and the only space the grid walk
-            // exists in. A shooter standing off-centre therefore has his cover
-            // sampled from the middle of his tile rather than from the muzzle —
-            // an error under one tile, on a tracer, in the direction he is
-            // already pointing. Solving it properly means a second raycast in
-            // continuous space, which is a different module and buys a
-            // difference nobody can see.
-            const sx = worldToTileAxis(shooter.x, grid.w)
-            const sz = worldToTileAxis(shooter.z, grid.h)
-            const clear = clearFractionAlong(
-              grid,
-              { x: sx, y: sz },
-              { x: order.tileX, y: order.tileY },
-              sightMask,
-            )
-            if (clear < reach) reach = clear
+          const directionX = dx / distance
+          const directionZ = dz / distance
+          // THE ROUND CARRIES ITS OWN RANGE, NOT THE DISTANCE TO THE CLICK
+          // (ticket 011c). A click two tiles ahead fires the full eight; before
+          // this, `reach` started at "the whole way to the aim point" and could
+          // only be shortened, so a short click fired short and hit nothing that
+          // stood past it. The distance of a click is not something anybody aims.
+          const rangeWorld = spec.rangeTiles * TILE_WORLD_SIZE
+          // Measured on the ray between TILE CENTRES, which is the same
+          // flooring `hasLineOfSight` does and the only space the grid walk
+          // exists in. A shooter standing off-centre therefore has his cover
+          // sampled from the middle of his tile rather than from the muzzle —
+          // an error under one tile, on a tracer, in the direction he is
+          // already pointing. Solving it properly means a second raycast in
+          // continuous space, which is a different module and buys a
+          // difference nobody can see.
+          const sx = worldToTileAxis(shooter.x, grid.w)
+          const sz = worldToTileAxis(shooter.z, grid.h)
+          // LOAD-BEARING FOR "HOW FAR DOES THE ROUND GET", and that is the only
+          // question it answers. It stops the ray at the near face of the first
+          // cover on it, and it is the SOLE answer for what `ShotFired` reports
+          // — delete it and an eight-tile rifle draws its tracer straight
+          // through a wall. Since 011c it bounds selection too, which is belt
+          // and braces against the per-candidate `hasLineOfSight` for a man
+          // squarely behind that wall, but not only that: a man off to one side
+          // of the wall may have a clear sightline of his own, and this is what
+          // says the round never got as far as him. Neither test replaces the
+          // other — see the note in `pickAlongRay`.
+          const clear = clearFractionAlong(
+            grid,
+            { x: sx, y: sz },
+            {
+              x: worldToTileAxis(shooter.x + directionX * rangeWorld, grid.w),
+              y: worldToTileAxis(shooter.z + directionZ * rangeWorld, grid.h),
+            },
+            sightMask,
+          )
+          const reachWorld = rangeWorld * clear
+          target = pickAlongRay(world, shooter, directionX, directionZ, reachWorld)
+          if (target !== null) {
+            // The man the round stopped in. A shot that found a target needs no
+            // clamp at all: being inside the reach computed above is what put
+            // him in the running.
+            aimX = target.x
+            aimZ = target.z
+          } else {
+            // Suppressing fire: as far along the line the player pointed as the
+            // weapon carries, stopping at the near face of whatever it meets.
+            aimX = shooter.x + directionX * reachWorld
+            aimZ = shooter.z + directionZ * reachWorld
           }
-          aimX = shooter.x + dx * reach
-          aimZ = shooter.z + dz * reach
         }
       }
 

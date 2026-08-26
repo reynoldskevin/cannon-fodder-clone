@@ -141,8 +141,10 @@ describe('aimOf agrees with where the rounds actually go', () => {
   it('is the AIM, not the victim — they are different points', () => {
     /**
      * The distinction that makes this worth exposing separately from the target.
-     * `AIM_TOLERANCE_TILES` lets a round aimed near a man hit him, so the aim
-     * point and the man's position are routinely a tile or two apart. The
+     * The aim point is a DIRECTION (ticket 011c): the round runs down that line
+     * to the rifle's full reach and hits the first man within
+     * `AIM_CORRIDOR_TILES` of it, so the aim point and the man's position are
+     * routinely several tiles apart — here, the click is a tile past him. The
      * shooter should face where the PLAYER pointed; anything else makes the
      * sprite twitch toward a target the player never selected.
      */

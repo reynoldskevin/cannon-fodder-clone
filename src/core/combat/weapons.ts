@@ -133,18 +133,27 @@ export const RIFLE: Weapon = 'rifle'
 export const INFANTRY_HEALTH = 1
 
 /**
- * How far from a commanded aim point a unit may be and still count as the thing
- * that was aimed at, in tiles (ticket 011a).
+ * HOW WIDE THE LINE OF FIRE IS: the greatest PERPENDICULAR distance, in tiles, a
+ * man may stand from the ray a commanded round travels along and still be the
+ * thing it hits (ticket 011c).
+ *
+ * A HALF-WIDTH, not a width. The corridor is `2 * AIM_CORRIDOR_TILES` tiles
+ * across, centred on the line, because the forgiveness is the same on both sides
+ * of it.
+ *
+ * IT REPLACED `AIM_TOLERANCE_TILES`, AND THE RENAME WAS THE POINT. That number
+ * was a radius around the aim POINT: a click had to land within two tiles of a
+ * man to hit him, so a click into the gap between two enemies, or at the ground
+ * behind one, hit nobody. Aiming is a DIRECTION (ticket 011c), so the same
+ * forgiveness is rotated — a disc around the click becomes a corridor along the
+ * line of fire. Keeping the old name would have left every comment naming it
+ * describing the wrong shape.
  *
  * A FEEL NUMBER, and it lives here for that reason: it decides who gets shot.
- * Without a bound, "shoot that patch of ground" would silently become "shoot
- * whoever is nearest that patch of ground", and a right-click on empty grass
- * next to a firefight would pick a man off across the field. RAISE IT and the
- * right-click becomes forgiving to the point of aiming itself; LOWER IT and a
- * click a pixel off a running man is suppressing fire into the dirt beside him.
- * Two tiles is generous enough to forgive the aim of a pointer on a moving
- * target and small enough that the man hit is one the player can see he pointed
- * at.
+ * A soldier occupies about a tile, so 0.75 forgives a pointer that is off by
+ * roughly a third of a man. RAISE IT and "vaguely forwards" becomes a guaranteed
+ * hit and the rifle starts aiming itself; LOWER IT and a click a pixel off a
+ * running man is suppressing fire into the dirt beside him.
  *
  * Not a `WeaponSpec` field: it describes the POINTER, not the rifle, and every
  * weapon in the game is aimed with the same one. It becomes per-weapon the day
@@ -152,7 +161,7 @@ export const INFANTRY_HEALTH = 1
  * moving it into the spec then is a one-line change with this comment as the
  * reason it was ever outside.
  */
-export const AIM_TOLERANCE_TILES = 2
+export const AIM_CORRIDOR_TILES = 0.75
 
 /**
  * Every weapon in the game, keyed by the identifier `ShotFired` carries.

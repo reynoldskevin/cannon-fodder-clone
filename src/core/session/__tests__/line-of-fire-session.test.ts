@@ -141,8 +141,16 @@ describe('a right-click on empty ground finds the man in that direction', () => 
      * that can only pass if the direction is actually being read.
      */
     for (const seed of SEEDS) {
-      const { firstTarget } = fireAt({ x: 1, y: 7 }, 6, seed)
-      expect({ seed, hit: firstTarget }).toEqual({ seed, hit: null })
+      const { firstTarget, shots } = fireAt({ x: 1, y: 7 }, 6, seed)
+      // `fired` GUARDED, because `firstTarget` is null both for "the round
+      // found nobody" and for "no round was ever fired". Without it the control
+      // — the test whose own comment says the three above prove nothing without
+      // it — goes green the moment commanded fire stops working at all.
+      expect({ seed, hit: firstTarget, fired: shots.length > 0 }).toEqual({
+        seed,
+        hit: null,
+        fired: true,
+      })
     }
   })
 })

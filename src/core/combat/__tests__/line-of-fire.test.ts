@@ -60,6 +60,26 @@ const BESIDE = `
   ....................
 `
 
+/**
+ * ONE blocking tile at (9, 5), squarely ON the line of fire from (4, 5) east.
+ *
+ * The pair with `BESIDE`: there the tile is beside the line and only the
+ * candidate's own sightline can catch it; here it is on the line and only the
+ * ROUND'S REACH can. Two tiles, two cover tests, one each.
+ */
+const ACROSS = `
+  ....................
+  ....................
+  ....................
+  ....................
+  ....................
+  .........#..........
+  ....................
+  ....................
+  ....................
+  ....................
+`
+
 /** A wall down x=12, so a man at x=15 is behind cover from x=4. */
 const WALLED = `
   ............#.......
@@ -109,6 +129,23 @@ function rig(art = OPEN) {
     },
   }
 }
+
+/**
+ * How far off the centre line the BESIDE fixtures place their man.
+ *
+ * DERIVED, NOT A LITERAL, and midway between two bounds that both matter:
+ *
+ *   - it must exceed HALF A TILE, or `worldToTileAxis` leaves him in the same
+ *     tile row as the line and his sightline is the round's own walk — which is
+ *     the whole thing those fixtures exist to tell apart;
+ *   - it must stay inside `AIM_CORRIDOR_TILES`, or he is not on the line at all.
+ *
+ * A hard-coded 0.6 silently pinned the corridor to "greater than 0.6" — the same
+ * defect as a session fixture that sat 0.7442 against a width of 0.75, with more
+ * headroom and no more honesty. The guard below makes a retune fail at the
+ * tuning constant, where a designer is looking, instead of inside a cover test.
+ */
+const BESIDE_OFFSET = 0.5 + (AIM_CORRIDOR_TILES - 0.5) / 2
 
 const rifle = () => {
   const spec = WEAPONS[RIFLE]
@@ -226,6 +263,23 @@ describe('the FIRST man along the line takes it', () => {
     expect(victimOf(r.run(4))).toBe(down.id)
   })
 
+  it('a man exactly abreast of the muzzle IS on the line', () => {
+    /**
+     * `along === 0` — he stands at the shooter's own distance along the ray,
+     * off to one side. The boundary is `along < 0`, so he counts, and that is
+     * the intended answer rather than an accident of a comparison: inside the
+     * corridor he is under a tile from the muzzle, which is close enough to be
+     * in contact. Pinned because `<` and `<=` are otherwise indistinguishable
+     * and a later reader has no way to know which was meant.
+     */
+    const r = rig()
+    const shooter = r.spawn(4, 5, 'player')
+    const beside = r.at(4, 5)
+    const abreast = r.spawnAt(beside.x, beside.z + AIM_CORRIDOR_TILES * 0.5, 'enemy')
+    r.combat.orderFire([shooter.id], { x: 12, y: 5 })
+    expect(victimOf(r.run(4))).toBe(abreast.id)
+  })
+
   it('and a man BEHIND the shooter is never hit', () => {
     // A ray has a direction. Projecting onto an infinite LINE rather than onto
     // the forward ray would let a man standing behind the muzzle be "on it" —
@@ -272,10 +326,24 @@ describe('the corridor is what gives a ray width', () => {
   })
 
   it('the corridor is a half-width, and a sane one', () => {
-    // Wide enough to forgive a pointer that is off by a third of a man, narrow
-    // enough that "vaguely forwards" is not a guaranteed hit.
-    expect(AIM_CORRIDOR_TILES).toBeGreaterThan(0.25)
+    // Narrow enough that "vaguely forwards" is not a guaranteed hit.
     expect(AIM_CORRIDOR_TILES).toBeLessThanOrEqual(1.5)
+  })
+
+  it('and it cannot go below half a tile, because the AI aims at tile CENTRES', () => {
+    /**
+     * THE REAL FLOOR, AND IT IS NOT ABOUT THE PLAYER'S POINTER AT ALL.
+     * `ai/system.ts`'s `shootAt` aims at the target's TILE, so the man the
+     * machine has explicitly selected sits up to half a tile perpendicular off
+     * the line the machine itself drew. Tune below that and an enemy becomes
+     * unable to hit the man he chose — the auto-commanded path simply stops
+     * working, on every enemy in the game, with the pointer still feeling fine.
+     *
+     * Stated here rather than only in a comment because a designer retuning
+     * `AIM_CORRIDOR_TILES` will meet this as a failing test naming the reason,
+     * which is the only place the constraint can do any good.
+     */
+    expect(AIM_CORRIDOR_TILES).toBeGreaterThan(0.5)
   })
 })
 
@@ -301,6 +369,46 @@ describe('the bounds a round is still subject to', () => {
     expect(victimOf(r.run(4))).toBe(enemy.id)
   })
 
+  it('a SHORT click does not fire through cover the click never reached', () => {
+    /**
+     * THE CASE THAT PINS WHERE THE COVER WALK ENDS, and without it a plausible
+     * refactor shoots men through walls with the whole suite green.
+     *
+     * `clearFractionAlong` must be walked to the ray's FULL-RANGE endpoint, not
+     * to the aim tile. Walk it to the aim tile and `clear` is a fraction of the
+     * SHORT segment to the click — which is then multiplied by the full range,
+     * so cover standing past the click is never examined at all. Reverting that
+     * one destination left all 1837 tests passing.
+     *
+     * So: the click lands two tiles out, the wall is at five, and the man is at
+     * eight. Every other fixture in this file clicks PAST its cover, and none of
+     * them can tell the two destinations apart.
+     *
+     * He is placed off the centre line so that HIS sightline round the tile is
+     * clear — otherwise the per-candidate `hasLineOfSight` would refuse him and
+     * the reach would never be the thing under test.
+     */
+    const r = rig(ACROSS)
+    const shooter = r.spawn(4, 5, 'player')
+    const line = r.at(12, 5)
+    r.spawnAt(line.x, line.z + BESIDE_OFFSET, 'enemy')
+    r.combat.orderFire([shooter.id], { x: 6, y: 5 })
+    const shots = r.run(4)
+    expect(shots.length).toBeGreaterThan(0)
+    expect(victimOf(shots)).toBeNull()
+  })
+
+  it('and the identical short click connects with that tile taken away', () => {
+    // The control, on the same geometry: without it the case above passes for a
+    // man out of range or outside the corridor, and the wall proves nothing.
+    const r = rig(OPEN)
+    const shooter = r.spawn(4, 5, 'player')
+    const line = r.at(12, 5)
+    const enemy = r.spawnAt(line.x, line.z + BESIDE_OFFSET, 'enemy')
+    r.combat.orderFire([shooter.id], { x: 6, y: 5 })
+    expect(victimOf(r.run(4))).toBe(enemy.id)
+  })
+
   it('a man beside the line, behind cover of his own, is not hit through it', () => {
     /**
      * THE ONLY CASE THAT DISTINGUISHES THE TWO COVER TESTS, and without it the
@@ -321,7 +429,7 @@ describe('the bounds a round is still subject to', () => {
     const r = rig(BESIDE)
     const shooter = r.spawn(4, 5, 'player')
     const line = r.at(9, 5)
-    r.spawnAt(line.x, line.z + 0.6, 'enemy')
+    r.spawnAt(line.x, line.z + BESIDE_OFFSET, 'enemy')
     r.combat.orderFire([shooter.id], { x: 14, y: 5 })
     const shots = r.run(4)
     expect(shots.length).toBeGreaterThan(0)
@@ -334,7 +442,7 @@ describe('the bounds a round is still subject to', () => {
     const r = rig(OPEN)
     const shooter = r.spawn(4, 5, 'player')
     const line = r.at(9, 5)
-    const enemy = r.spawnAt(line.x, line.z + 0.6, 'enemy')
+    const enemy = r.spawnAt(line.x, line.z + BESIDE_OFFSET, 'enemy')
     r.combat.orderFire([shooter.id], { x: 14, y: 5 })
     expect(victimOf(r.run(4))).toBe(enemy.id)
   })

@@ -76,9 +76,10 @@ describe('a firing unit faces its aim point', () => {
 
   it('faces the aim, not the man it happens to hit', () => {
     /**
-     * `AIM_TOLERANCE_TILES` lets a round aimed near a target hit it, so the aim
-     * point and the victim are routinely a tile or two apart. The player pointed
-     * at the ground; the man looks at the ground.
+     * The aim point is a DIRECTION (ticket 011c): the round runs down that line
+     * and hits the first man within `AIM_CORRIDOR_TILES` of it, so the aim point
+     * and the victim are routinely several tiles apart. The player pointed at
+     * the ground; the man looks at the ground.
      *
      * THE SHOOTER IS SPAWNED WITH 10,000 HIT POINTS, and that is not decoration.
      * At `INFANTRY_HEALTH = 1` the level's own avatar is killed by the enemy on

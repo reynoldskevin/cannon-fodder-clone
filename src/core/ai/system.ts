@@ -875,10 +875,11 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    * Open — or re-aim — fire on a target.
    *
    * Aimed at the target's TILE, which is what `CombatSystem` takes, and re-aimed
-   * only when that tile changes. Combat's own `AIM_TOLERANCE_TILES` is what
-   * turns a tile back into the man standing in it, so this is the player's
-   * pointer's own path to a round leaving a rifle, with the machine holding the
-   * pointer.
+   * only when that tile changes. Combat reads that tile as a DIRECTION and hits
+   * the first man within `AIM_CORRIDOR_TILES` of the line to it (ticket 011c) —
+   * which is normally the man aimed at, and is his mate if the mate has stepped
+   * in front of him. So this is the player's pointer's own path to a round
+   * leaving a rifle, with the machine holding the pointer.
    */
   function shootAt(memory: Memory, unitId: number, target: Entity): void {
     // Axes first, object second — see `aimErrandAt`. An engaged man asks this
