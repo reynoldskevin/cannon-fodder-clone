@@ -20,7 +20,7 @@
  * else — no listener is added, no object is built, and no array grows.
  */
 
-import { DEBUG_LAYERS, debugSnapshot, layerForHotkey } from '../core/debug'
+import { DEBUG_LAYERS, debugSnapshot, layerForKeyCode } from '../core/debug'
 import { DebugOverlay } from '../render/debug-overlay'
 import { createDebugPanel } from '../ui/debug-panel'
 import type { DebugLayerId } from '../core/debug'
@@ -92,7 +92,13 @@ export function attachDebugMode(options: DebugModeOptions): DebugMode {
     // tabs — and swallowing it would make the overlay a thing the player has to
     // close before they can use their own machine.
     if (event.altKey || event.ctrlKey || event.metaKey) return
-    const layer = layerForHotkey(event.key)
+    // SHIFT IS REQUIRED AND IS NOT FILTERED OUT HERE. Ticket 016 gave the bare
+    // digits to the ordnance selector, so the overlay's keys became
+    // `Shift+1`..`Shift+5`; an early return on `shiftKey` alongside the three
+    // above would leave the overlay with no working controls at all. Matched on
+    // `event.code`, the physical key, because `Shift+1` is `'!'` on one keyboard
+    // layout and something else on the next.
+    const layer = layerForKeyCode(event.code, event.shiftKey)
     if (layer === undefined) return
     if (active.has(layer.id)) active.delete(layer.id)
     else active.add(layer.id)

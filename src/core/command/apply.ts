@@ -22,8 +22,9 @@
  *
  * The return value is "was this command accepted rather than refused", which is
  * what lets a caller count refusals without this function needing to throw or
- * log. Accepted is not the same as "changed something": `selectOrdnance` has
- * nothing to act on yet and is accepted without touching the world.
+ * log. Accepted is not the same as "changed something": `selectOrdnance` names
+ * no units and no tile, and changes the pouch's selection without touching the
+ * world at all.
  *
  * WHY A FIRE COMMAND HAS TO REACH SOMETHING (ticket 011a). `fire` used to
  * validate and return true having done nothing at all, which is exactly what a
@@ -33,8 +34,12 @@
  */
 
 import { INFANTRY, type NavGrid } from '../pathing'
+import { ORDNANCE } from '../ordnance'
+import type { Armoury } from '../armoury'
 import type { CombatSystem } from '../combat'
+import type { OrdnanceSystem } from '../ordnance'
 import type { SquadSystem } from '../squad'
+import type { FireCommand } from './types'
 import type { World } from '../world/world'
 import type { Command, CommandTarget } from './types'
 
@@ -45,6 +50,18 @@ export interface CommandContext {
   /** Where `fire` and `ceaseFire` go. Holds the standing orders. */
   readonly combat: CombatSystem
   readonly grid: NavGrid
+  /**
+   * Where a `fire` naming a row of `ORDNANCE` goes instead (ticket 016).
+   *
+   * OPTIONAL, AND THE FALLBACK IS THE PRE-016 BEHAVIOUR: without it every
+   * `fire` is a rifle order, whatever it names. A context with no ordnance
+   * system is a caller that has not registered one, and refusing its throws
+   * outright would turn "this harness does not fly grenades" into "this
+   * harness's squad cannot shoot".
+   */
+  readonly ordnance?: OrdnanceSystem
+  /** The squad's pouch and its selection (ticket 016). Optional for the same reason. */
+  readonly armoury?: Armoury
 }
 
 /**
@@ -64,10 +81,10 @@ const MAX_RETARGET_RADIUS = 8
  * Apply one command. Returns true when it was accepted, false when it was
  * refused — an unknown target, or an id list with nobody living in it.
  *
- * Accepted, not "changed something": `selectOrdnance` has nothing to act on
- * until ticket 016, so it validates and returns true having changed nothing.
- * `move` retargets the squad system; `fire` and `ceaseFire` set and clear a
- * standing order on the combat system.
+ * `move` retargets the squad system; a rifle `fire` and `ceaseFire` set and
+ * clear a standing order on the combat system; a `fire` naming a row of
+ * `ORDNANCE` throws a single round and spends one from the pouch;
+ * `selectOrdnance` changes what the input layer will name next.
  *
  * Never throws on bad input: commands arrive from a click on a world a mortar
  * round may have edited since, so a stale id is expected traffic, not an error.
@@ -89,9 +106,26 @@ export function applyCommand(command: Command, ctx: CommandContext): boolean {
       // blocked tile is exactly what shooting at a wall means. Only "that tile
       // is not on the map" is a refusal.
       if (!inBounds(command.target, ctx.grid)) return false
-      // A STANDING order, not a single round: the combat system fires it once
-      // per cooldown until a `ceaseFire` arrives. `ordnance` is not consulted
-      // yet — ticket 016 owns selection, and there is only the rifle.
+      // THE COMMAND'S OWN `ordnance` DECIDES THE ROUTING, NOT THE SELECTION
+      // (ticket 016). The input layer is what consults `armoury.selected` when
+      // it builds the command; reading it here would make the simulation a
+      // function of what the HUD happened to have selected, and a mission
+      // replayed from a command log would then diverge from the one it recorded.
+      //
+      // A name in the table is a SINGLE round out of a finite pouch; anything
+      // else is the rifle, and the rifle is untouched — a standing order the
+      // combat system fires once per cooldown until a `ceaseFire` arrives, with
+      // no ammunition anywhere in it. That split is what stops this branch from
+      // being able to break the only offensive verb the game already had.
+      const launcher = ctx.ordnance
+      const armoury = ctx.armoury
+      if (
+        ORDNANCE[command.ordnance] !== undefined &&
+        launcher !== undefined &&
+        armoury !== undefined
+      ) {
+        return launchOrdnance(command, ids, launcher, armoury, ctx.world)
+      }
       ctx.combat.orderFire(ids, command.target)
       return true
     }
@@ -103,11 +137,56 @@ export function applyCommand(command: Command, ctx: CommandContext): boolean {
     }
     case 'selectOrdnance':
       // Names no units and no tile, so there is nothing to validate against the
-      // world. Which ordnance strings exist is ticket 016's question.
-      return true
+      // world — only against the list of weapons that exist, which is the
+      // armoury's. A context without one has nothing to select and accepts the
+      // command unchanged, exactly as it did from ticket 008 to ticket 015.
+      if (ctx.armoury === undefined) return true
+      return ctx.armoury.select(command.ordnance)
     default:
       return assertNever(command)
   }
+}
+
+/**
+ * Put one round of ordnance into the air, and charge the pouch for it.
+ *
+ * ONE ROUND PER COMMAND, THROWN BY THE FIRST LIVING MAN NAMED. A `fire` command
+ * arrives EVERY FRAME the button is held — that is how ticket 011a's standing
+ * order works — so the rate at which grenades leave has to be bounded by
+ * something other than the command stream. Ticket 015's PER-UNIT cooldown is
+ * that bound, and it only bounds anything if the same man is asked each time:
+ * walking the whole selection until somebody was off cooldown would empty a
+ * five-man squad's entire supply in five frames of one press.
+ *
+ * THE POUCH IS CHARGED FOR A ROUND THAT ACTUALLY LEFT, never for a request.
+ * `launch` returns false for a man still on cooldown, and spending on that
+ * would cost the squad a grenade sixty times a second for holding a button.
+ *
+ * A refusal for an EMPTY POUCH is announced; a refusal for a cooldown is not.
+ * The first is a fact the player cannot otherwise discover — an empty pouch and
+ * a dead button look identical — and the second is the weapon working as
+ * designed, sixty times a second, which on the bus would be noise.
+ */
+function launchOrdnance(
+  command: FireCommand,
+  ids: readonly number[],
+  ordnance: OrdnanceSystem,
+  armoury: Armoury,
+  world: World,
+): boolean {
+  if (armoury.count(command.ordnance) <= 0) {
+    world.emit({
+      type: 'FireRejected',
+      ordnance: command.ordnance,
+      reason: 'no rounds left',
+    })
+    return false
+  }
+  const thrower = ids[0]
+  if (thrower === undefined) return false
+  if (!ordnance.launch(thrower, command.ordnance, command.target)) return false
+  armoury.consume(command.ordnance)
+  return true
 }
 
 /** Fails to compile if a variant is added to `Command` without a case above. */

@@ -14,6 +14,7 @@ import { parseElevation } from '../core/view/orientation'
 import { tileToWorld } from '../core/view/projection'
 import { levelRelief } from '../core/view/relief'
 import { createSession } from '../core/session'
+import { ordnanceForHotkey } from '../core/armoury'
 import { createTracerBuffer } from '../core/render-state/tracers'
 import { CameraRig } from '../render/camera-rig'
 import { TracerRenderer } from '../render/tracer-renderer'
@@ -26,6 +27,7 @@ import {
   type UnitVisual,
 } from '../render/sprite-atlas'
 import { FloorTextureError, loadFloorTexture } from '../render/floor-texture'
+import { isEditableTarget } from '../input/editable-target'
 import { PanController } from '../input/pan-controller'
 import { PointerController } from '../input/pointer-controller'
 import { ZoomController } from '../input/zoom-controller'
@@ -319,7 +321,67 @@ async function boot(): Promise<void> {
       session.queue,
       level.size,
       () => session.selection(),
+      // WHAT THE SQUAD IS HOLDING, ASKED AT THE CLICK. The command carries the
+      // name and `applyCommand` routes on it, so the simulation never has to
+      // consult the HUD's selection — a mission replayed from a command log
+      // throws exactly what the log says it threw.
+      () => session.armoury.selected,
     )
+  }
+
+  /**
+   * The ordnance selector's keys: a BARE `1`/`2`/`3` (ticket 016).
+   *
+   * MATCHED ON `event.code`, never on `event.key`, for the reason
+   * `core/debug/layers.ts` spells out at length: the character a digit produces
+   * depends on the keyboard, the physical key does not.
+   *
+   * SHIFT IS EXCLUDED HERE AND CLAIMED THERE. `Shift+1`..`Shift+5` toggle the
+   * debug overlay's layers, and the overlay's listener sits on the same window;
+   * without this guard a developer with `?debug=1` open would change weapon
+   * every time he switched a layer.
+   *
+   * Queued as a `selectOrdnance` COMMAND rather than written straight into the
+   * armoury, because that is what the command union is for: the selection is
+   * part of the input log, and a session replayed from one has to make the same
+   * changes at the same ticks.
+   */
+  const onSelectKey = (event: KeyboardEvent): void => {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+    if (isEditableTarget(event.target)) return
+    const digit = /^Digit([1-9])$/.exec(event.code)?.[1]
+    if (digit === undefined) return
+    const ordnance = ordnanceForHotkey(digit)
+    if (ordnance === undefined) return
+    event.preventDefault()
+    session.queue.push({ type: 'selectOrdnance', ordnance })
+  }
+
+  /**
+   * SHIFT+WHEEL CYCLES THE SELECTOR; the bare wheel still zooms.
+   *
+   * Ticket 009b bound zoom to the wheel and it is the stronger convention, so
+   * ordnance took the modifier — a bare wheel that did both would move the
+   * camera every time the player changed weapon. `ZoomController` declines a
+   * shifted wheel for the other half of the same bargain.
+   *
+   * Written straight into the armoury rather than queued, because a cycle is
+   * RELATIVE — "the next one" — and a command log full of relative steps would
+   * replay differently the moment anything else touched the selection. The
+   * absolute name it lands on is what the next `fire` command carries, which is
+   * the only thing the simulation ever sees.
+   */
+  const onSelectWheel = (event: WheelEvent): void => {
+    if (!event.shiftKey) return
+    // A trackpad reports the horizontal axis for a shifted scroll on some
+    // platforms and the vertical on others, so whichever moved is the gesture.
+    const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX
+    if (delta === 0) return
+    event.preventDefault()
+    // ONE STEP PER EVENT, not one per pixel: a trackpad fling delivers hundreds
+    // of pixels of delta in a single event, and scaling by it would spin the
+    // selector past every weapon and back.
+    session.armoury.cycle(delta > 0 ? 1 : -1)
   }
 
   const onResize = (): void => {
@@ -487,6 +549,12 @@ async function boot(): Promise<void> {
     renderer.setAnimationLoop(null)
     window.removeEventListener('resize', onResize)
     window.removeEventListener('blur', onBlur)
+    // BOTH OF THEM, and for the reason `debug-mode.ts`'s header gives about its
+    // own listener: ticket 020 loads a second level into the same page, and a
+    // leaked handler would keep pushing commands onto a dead session's queue
+    // while the live one never heard the key at all.
+    window.removeEventListener('keydown', onSelectKey)
+    renderer.domElement.removeEventListener('wheel', onSelectWheel)
     ending?.dispose()
     // Its own group, its own listener, its own GPU buffers — none of which the
     // scene's `dispose` knows about, because the overlay was added to the scene
@@ -510,11 +578,17 @@ async function boot(): Promise<void> {
   // the whole level. A hint that still promised a fit would be a lie.
   showControlHint(
     mount,
-    'WASD / arrows or screen edge to pan  ·  wheel or +/− to zoom  ·  F to zoom out fully',
+    'WASD / arrows or screen edge to pan  ·  wheel or +/− to zoom  ·  F to zoom out fully  ·  ' +
+      '1–3 or shift+wheel to change weapon',
   )
 
   window.addEventListener('resize', onResize)
   window.addEventListener('blur', onBlur)
+  window.addEventListener('keydown', onSelectKey)
+  // On the canvas and not the window, so a shifted scroll over a future DOM
+  // panel still scrolls the panel. `passive: false` because it calls
+  // `preventDefault` — a passive listener's call is ignored with a warning.
+  renderer.domElement.addEventListener('wheel', onSelectWheel, { passive: false })
 
   // A context loss AFTER boot would otherwise leave exactly the black canvas the
   // error overlay exists to prevent, since `boot()`'s catch has long since run.
@@ -572,6 +646,7 @@ async function boot(): Promise<void> {
         squad: rosterNow(),
         objectives: session.objectives.progress(),
         elapsedTicks: session.objectives.elapsedTicks,
+        selector: session.armoury.slots(),
       })
       // FROM THE STATE, NOT FROM THE EVENT. A frame that ran eight steps drains
       // them all at once and a frame that ran none drains nothing, so an end

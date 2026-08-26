@@ -197,8 +197,30 @@ export function createOrdnanceSystem(
    *
    * `launch` needs it to read the launcher's position and liveness, exactly as
    * `CombatSystem.orderFire` does and for the same reason: the system is handed
-   * a grid, not a world. The session ticks before it applies commands, so a
-   * launch before the first tick only ever happens in a test.
+   * a grid, not a world.
+   *
+   * THIS COMMENT USED TO SAY "the session ticks before it applies commands, so a
+   * launch before the first tick only ever happens in a test", AND THAT IS
+   * EXACTLY BACKWARDS. `createSession`'s step loop drains the command queue at
+   * the TOP of every step, BEFORE `world.tick()` runs a single system — go and
+   * read it, the loop is a dozen lines and its own comment says "Commands at the
+   * TOP OF EVERY STEP, before the systems that read them". So the FIRST command
+   * of every mission genuinely does reach `launch` with `attached === null`.
+   *
+   * WHICH IS WHY THE SESSION PRIMES THIS SYSTEM with an inert pass at
+   * construction, immediately after `world.addSystem(ordnance)`. That call is
+   * LOAD-BEARING, not defensive: delete it as the no-op it resembles and the
+   * first grenade of every mission is refused here — no projectile, no
+   * `Explosion`, no `FireRejected`, no error, and a pouch that is never charged.
+   * The player's first right-click with grenades selected simply does nothing,
+   * and the second one works, which is the shape of bug nobody reports
+   * accurately.
+   *
+   * A WRONG COMMENT IS WORSE THAN NO COMMENT, and this one cost ticket 015 a
+   * review round: a reader reasoned from the sentence instead of from the loop
+   * and concluded the null case was unreachable outside a test. Every claim
+   * above names the file that proves it so the next reader can check rather than
+   * trust.
    */
   let attached: World | null = null
 

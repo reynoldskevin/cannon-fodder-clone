@@ -60,13 +60,26 @@ const LEFT_BUTTON = 0
 const RIGHT_BUTTON = 2
 
 /**
- * The ordnance a right-click fires with until there is a selector.
+ * The ordnance a right-click fires with when the host names no selector.
  *
- * Ticket 016 owns ordnance selection (hotkeys, scroll, HUD) and will feed the
- * active type in; naming it here keeps the `fire` command well-formed in the
- * meantime rather than leaving the field empty.
+ * The rifle, because it is the one weapon that always works and can never run
+ * out: a host that has not wired ticket 016's armoury in must still be able to
+ * shoot. Spelled as a literal rather than imported from `core/armoury`, because
+ * this file may reach into `core/` for the command module and nothing else —
+ * see the header, and `__tests__/layering.test.ts`, which asserts it.
  */
 const DEFAULT_ORDNANCE = 'rifle'
+
+/**
+ * What the squad is holding, asked afresh at every click.
+ *
+ * A function for the same reason `SelectionProvider` is one: the player changes
+ * weapon mid-mission, and a value captured at construction is the weapon he had
+ * when the level loaded. THE COMMAND CARRIES THE NAME, and `applyCommand` routes
+ * on that — so the simulation stays a pure function of the commands it was
+ * given rather than of what the HUD happened to have selected.
+ */
+export type OrdnanceProvider = () => string
 
 /**
  * Who a queued order is for, asked afresh at every click.
@@ -137,7 +150,7 @@ export class PointerController {
     const tile = this.tileUnderPointer(event)
     if (tile === null) return
 
-    this.queue.push(buildCommand(type, tile, unitIds))
+    this.queue.push(buildCommand(type, tile, unitIds, this.ordnance()))
   }
 
   /**
@@ -151,7 +164,7 @@ export class PointerController {
     if (unitIds === null) return
     const tile = this.tileUnderPointer(event)
     if (tile === null) return
-    this.queue.push(buildCommand('fire', tile, unitIds))
+    this.queue.push(buildCommand('fire', tile, unitIds, this.ordnance()))
   }
 
   /**
@@ -185,6 +198,7 @@ export class PointerController {
     private readonly queue: CommandQueue,
     private readonly size: LevelTileSize,
     private readonly selection: SelectionProvider,
+    private readonly ordnance: OrdnanceProvider = () => DEFAULT_ORDNANCE,
   ) {
     this.host.addEventListener('pointerdown', this.onPointerDown as EventListener)
     this.host.addEventListener('pointermove', this.onPointerMove as EventListener)
@@ -285,8 +299,9 @@ function buildCommand(
   type: 'move' | 'fire',
   target: { x: number; y: number },
   unitIds: readonly number[],
+  ordnance: string,
 ): Command {
   return type === 'move'
     ? { type: 'move', unitIds, target }
-    : { type: 'fire', unitIds, ordnance: DEFAULT_ORDNANCE, target }
+    : { type: 'fire', unitIds, ordnance, target }
 }

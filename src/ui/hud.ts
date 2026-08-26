@@ -1,5 +1,6 @@
 /**
- * The mission HUD (ticket 013): the squad roster, the objectives and the clock.
+ * The mission HUD (ticket 013): the squad roster, the objectives, the clock and
+ * — since ticket 016 — the weapon selector.
  *
  * DRAWS WHAT THE SESSION ALREADY KNOWS AND DECIDES NOTHING. Every question this
  * file could get wrong — whether an objective is complete, how far through it
@@ -19,7 +20,9 @@
  * text nodes every frame and invite a layout pass the game does not need.
  */
 
+import { selectorLine } from '../core/armoury'
 import { FIXED_TIMESTEP } from '../core/world'
+import type { ArmourySlot } from '../core/armoury'
 import type { ObjectiveProgress } from '../core/objectives'
 
 /** One man on the roster. `alive` is the only thing that changes about him. */
@@ -35,6 +38,17 @@ export interface HudModel {
   readonly objectives: readonly ObjectiveProgress[]
   /** The simulation's own clock. Divided by the fixed timestep, never by a wall clock. */
   readonly elapsedTicks: number
+  /**
+   * The weapon selector, straight from `Armoury.slots()` (ticket 016).
+   *
+   * EVERY DECISION IN IT WAS ALREADY MADE. Which weapons exist, which is
+   * active, how many rounds are left and what each row reads as are all
+   * `src/core/armoury`'s, where Vitest can see them under Node; what is left
+   * here is which element the text goes into. That split is the only reason
+   * "the HUD shows the active type and remaining counts" is a testable claim at
+   * all — see the header, and `core/debug/layers.ts` before it.
+   */
+  readonly selector: readonly ArmourySlot[]
 }
 
 export interface Hud {
@@ -131,7 +145,12 @@ export function createHud(mount: HTMLElement): Hud {
   const objectives = document.createElement('ul')
   objectives.style.cssText = 'margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0.2rem'
 
-  panel.append(header, roster, objectives)
+  /** The weapon selector: one row per known weapon, its key printed beside it. */
+  const selector = document.createElement('div')
+  selector.style.cssText =
+    'display:flex;flex-direction:column;gap:0.15rem;font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace'
+
+  panel.append(header, roster, objectives, selector)
   mount.append(panel)
 
   /**
@@ -144,6 +163,8 @@ export function createHud(mount: HTMLElement): Hud {
    */
   const pips: HTMLElement[] = []
   const lines: HTMLElement[] = []
+  /** One selector row: the line of text, and the hotkey pushed to the right of it. */
+  const slotRows: { readonly text: HTMLElement; readonly key: HTMLElement }[] = []
 
   function pipAt(index: number): HTMLElement {
     const existing = pips[index]
@@ -168,6 +189,21 @@ export function createHud(mount: HTMLElement): Hud {
     lines[index] = line
     objectives.append(line)
     return line
+  }
+
+  function slotAt(index: number): { readonly text: HTMLElement; readonly key: HTMLElement } {
+    const existing = slotRows[index]
+    if (existing !== undefined) return existing
+    const row = document.createElement('div')
+    row.style.cssText = 'display:flex;justify-content:space-between;gap:0.75rem'
+    const text = document.createElement('span')
+    const key = document.createElement('span')
+    key.style.color = MUTED
+    row.append(text, key)
+    const made = { text, key }
+    slotRows[index] = made
+    selector.append(row)
+    return made
   }
 
   function update(model: HudModel): void {
@@ -198,6 +234,21 @@ export function createHud(mount: HTMLElement): Hud {
       setText(line, objectiveLine(progress))
       const colour = !progress.supported ? LOST : progress.complete ? DONE : MUTED
       if (line.style.color !== colour) line.style.color = colour
+    }
+
+    for (let i = 0; i < model.selector.length; i += 1) {
+      const slot = model.selector[i]
+      if (slot === undefined) continue
+      const row = slotAt(i)
+      // The LINE comes from core and the HOTKEY is placed here: `selectorLine`
+      // deliberately leaves the key out so the HUD can put it where it likes.
+      setText(row.text, selectorLine(slot))
+      setText(row.key, slot.hotkey)
+      // Colour on top of the marker `selectorLine` already carries, never
+      // instead of it: "which weapon am I holding" must survive a colour-blind
+      // player and a washed-out screen, the same bargain the roster pips make.
+      const colour = slot.active ? TEXT : MUTED
+      if (row.text.style.color !== colour) row.text.style.color = colour
     }
   }
 
