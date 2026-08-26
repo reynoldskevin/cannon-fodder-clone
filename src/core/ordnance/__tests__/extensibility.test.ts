@@ -177,6 +177,25 @@ describe('a weapon invented at runtime works end to end', () => {
     // already anticipated.
     expect(Object.keys(ORDNANCE)).not.toContain('siege-mortar')
   })
+
+  it('and the caller`s table REPLACES the shipped one rather than extending it', () => {
+    /**
+     * The mutant the assertion above cannot see: `{ ...ORDNANCE, ...options.table }`
+     * keeps every case in this file passing while quietly making "only a table
+     * row" true just for rows the module already anticipated. A designer whose
+     * level declares its own ordnance set would silently inherit the shipped
+     * weapons on top of it, and could never remove one.
+     *
+     * The shipped key is read from `ORDNANCE` rather than named, so this cannot
+     * rot when the table is retuned.
+     */
+    const shipped = Object.keys(ORDNANCE)[0]
+    expect(shipped).toBeDefined()
+    const r = rig()
+    const gunner = r.spawn(2, 5)
+    r.run(1)
+    expect(r.ordnance.launch(gunner.id, shipped ?? '', { x: 12, y: 5 })).toBe(false)
+  })
 })
 
 describe('the shipped table is a table, not a special case', () => {

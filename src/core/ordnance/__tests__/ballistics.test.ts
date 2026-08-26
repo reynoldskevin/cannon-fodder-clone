@@ -157,6 +157,20 @@ describe('flight time comes from speed and distance', () => {
     }
   })
 
+  it('rounds a part-tick UP, so a round is never cut short of its target', () => {
+    /**
+     * Every other distance in this file divides exactly by its speed, which is
+     * how `ceil` and `floor` both passed the whole suite. 9.6 tiles at 0.25 a
+     * tick is 38.4, and the difference between 39 and 38 is the difference
+     * between landing on the aim point and landing a tenth of a tile short of
+     * it — the flight is solved to arrive at `flightTicks`, so a truncated one
+     * detonates before it gets there.
+     */
+    expect(planTrajectory(spec({ speedTilesPerTick: 0.25 }), 0, 0, 9.6, 0).flightTicks).toBe(39)
+    expect(planTrajectory(spec({ speedTilesPerTick: 1 }), 0, 0, 4.01, 0).flightTicks).toBe(5)
+    expect(planTrajectory(spec({ speedTilesPerTick: 1 }), 0, 0, 4, 0).flightTicks).toBe(4)
+  })
+
   it('never takes less than a tick, however short the throw', () => {
     // A flight of zero ticks divides by zero when the arc is solved and detonates
     // the projectile inside the tick that launched it — before anything has had a

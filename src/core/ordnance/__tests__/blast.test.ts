@@ -50,6 +50,22 @@ const TREE_AND_WALL = `
   ....................
 `
 
+/**
+ * A wall down column 9, leaving column 10 open. For the off-by-half case: a man
+ * standing in the western part of tile 10 is read as standing in tile 9 — solid
+ * rock — under the wrong world-to-tile spelling.
+ */
+const WALL_AT_9 = `
+  .........#..........
+  .........#..........
+  .........#..........
+  .........#..........
+  .........#..........
+  .........#..........
+  .........#..........
+  .........#..........
+`
+
 /** A wall down column 10, with a gap at row 2 to fire through. */
 const WALLED = `
   ..........#.........
@@ -172,7 +188,10 @@ describe('blast damage falls off with distance', () => {
     const victim = r.spawn(9, 5)
     const centre = r.at(5, 5)
     const hits = resolveBlast(r.world, r.grid, spec({}), centre.x, centre.z, null)
-    expect(damageTo(hits, victim.id)).toBe(0)
+    // Absent from the list, not present carrying a zero — `damageTo` collapses
+    // those two into the same answer, and only one of them agrees with what
+    // `applyDamage` (which ignores non-positive damage) would actually do.
+    expect(hits.some((h) => h.id === victim.id)).toBe(false)
   })
 
   it('a man outside the radius is not in the list at all', () => {
@@ -264,6 +283,37 @@ describe('cover stops a blast', () => {
     const centre = r.at(9, 5)
     const hits = resolveBlast(r.world, r.grid, spec({}), centre.x, centre.z, null)
     expect(damageTo(hits, exposed.id)).toBeGreaterThan(0)
+  })
+
+  it('finds the victim`s tile by the right half-tile, not the off-by-half one', () => {
+    /**
+     * THE OFF-BY-HALF, GIVEN A FIXTURE THAT CAN ACTUALLY SEE IT.
+     *
+     * World and tile space share a scale but not an origin, and the conversion
+     * is `floor(worldX + w / 2)`. The wrong spelling — `floor(worldX + (w - 1) /
+     * 2)` — has cost this project two review cycles, and it survives any test
+     * whose entities stand on tile CENTRES, because there the two agree exactly.
+     * Every other fixture in this file places men with `tileToWorld`, so every
+     * other test in this file is blind to it.
+     *
+     * So this man stands OFF-CENTRE: 0.4 of a tile west of tile 10's centre, at
+     * world x 0.1. Tile 10 spans world [0.0, 1.0), so he is in tile 10 — and
+     * under the wrong spelling he would be read as standing in tile 9, which is
+     * solid rock. `hasLineOfSight` refuses an impassable destination outright,
+     * so the wrong spelling loses him from the blast entirely.
+     */
+    const r = rig(WALL_AT_9)
+    const centre = r.at(14, 5)
+    const tile10 = r.at(10, 5)
+    const offCentre = r.world.spawn({
+      kind: 'rifleman',
+      team: 'enemy',
+      x: tile10.x - 0.4,
+      z: tile10.z,
+      health: 1000,
+    })
+    const hits = resolveBlast(r.world, r.grid, spec({ blastRadiusTiles: 6 }), centre.x, centre.z, null)
+    expect(damageTo(hits, offCentre.id)).toBeGreaterThan(0)
   })
 
   it('a man reachable through the gap is still caught', () => {

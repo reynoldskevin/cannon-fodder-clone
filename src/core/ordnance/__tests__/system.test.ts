@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { World } from '../../world/world'
 import { asciiLevel } from '../../pathing/__tests__/ascii'
 import { bakeNavGrid } from '../../pathing/navgrid'
-import { tileToWorld } from '../../view/projection'
+import { tileToWorld, worldToTileX } from '../../view/projection'
 import { createOrdnanceSystem } from '../system'
+import { planTrajectory } from '../ballistics'
 import type { OrdnanceSpec } from '../table'
 import type { SimEvent } from '../../world/events'
 
@@ -195,6 +196,50 @@ describe('flight and detonation', () => {
     expect(r.ordnance.inFlightCount).toBe(0)
   })
 
+  it('is in the air for exactly the flight its trajectory was planned for', () => {
+    /**
+     * Pins the off-by-one that a `>=` quietly turned into a `>` would introduce,
+     * and which nothing else here can see: every other case runs the clock far
+     * past impact and only asks whether the round eventually went off.
+     *
+     * Expressed against `planTrajectory`'s own answer rather than a literal, so
+     * this asserts the SYSTEM agrees with the flight it planned rather than
+     * restating a number that would then have to be maintained in two places.
+     */
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    const from = r.at(3, 5)
+    const aim = r.at(9, 5)
+    const flight = planTrajectory(TABLE.lob, from.x, from.z, aim.x, aim.z).flightTicks
+    expect(flight).toBeGreaterThan(2)
+    r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })
+    r.run(flight - 1)
+    expect({ when: 'one tick short', count: r.ordnance.inFlightCount }).toEqual({
+      when: 'one tick short',
+      count: 1,
+    })
+    r.run(1)
+    expect({ when: 'on the tick', count: r.ordnance.inFlightCount }).toEqual({
+      when: 'on the tick',
+      count: 0,
+    })
+  })
+
+  it('refuses to launch before the system has ever ticked', () => {
+    // It has no world to read a position out of. Same shape as
+    // `CombatSystem.orderFire`'s `attached`, and stated here so a later refactor
+    // that made it throw — or worse, launch from the origin — is caught.
+    const level = asciiLevel(OPEN)
+    const world = new World(level, { seed: 1 })
+    const ordnance = createOrdnanceSystem(bakeNavGrid(level), { table: TABLE })
+    world.addSystem(ordnance)
+    const p = tileToWorld(3, 5, level.size)
+    const man = world.spawn({ kind: 'rifleman', team: 'player', x: p.x, z: p.z, health: 1000 })
+    expect(ordnance.launch(man.id, 'lob', { x: 9, y: 5 })).toBe(false)
+    expect(ordnance.inFlightCount).toBe(0)
+  })
+
   it('it climbs and comes back down rather than sliding along the floor', () => {
     const r = rig()
     const man = r.spawn(3, 5)
@@ -282,6 +327,90 @@ describe('flight and detonation', () => {
     const aim = r.at(17, 5)
     expect(boom.x).toBeLessThan(wall.x)
     expect(boom.x).toBeLessThan(aim.x)
+  })
+
+  it('stops at the wall from ANY position within the launcher`s tile', () => {
+    /**
+     * THE CASE A TILE-CENTRE FIXTURE CANNOT SEE, and it cost this ticket a
+     * review cycle.
+     *
+     * `clearFractionAlong` reports a fraction of the ray joining two tile
+     * CENTRES. Applying that fraction to the ray from a launcher's ACTUAL
+     * position — which is only at a tile centre when he is standing on a
+     * waypoint, i.e. almost never — scales a different, differently-anchored
+     * vector, and the impact lands INSIDE the wall. `resolveBlast` then finds
+     * its centre tile solid, snaps the sightline to the nearest passable
+     * neighbour, and that neighbour can be on the FAR side of the wall: the
+     * blast reaches straight through the cover it was supposed to stop at.
+     *
+     * The error is one-directional and therefore easy to miss — a launcher
+     * nudged AWAY from the wall detonates harmlessly short, and only one nudged
+     * TOWARD it punches through. Every fixture above stands on a centre, where
+     * the two rays coincide exactly and the bug is invisible.
+     *
+     * The invariant asserted is the one that actually matters and that any
+     * correct fix satisfies: a flat round never detonates inside solid terrain.
+     */
+    const r = rig(WALLED)
+    const from = r.at(13, 5)
+    const impacts: { off: number; tile: number }[] = []
+    for (const off of [0, -0.2, -0.4, -0.49, 0.2, 0.49]) {
+      const one = rig(WALLED)
+      const man = one.world.spawn({
+        kind: 'rifleman',
+        team: 'player',
+        x: from.x + off,
+        z: from.z,
+        health: 1000,
+      })
+      one.run(1)
+      one.ordnance.launch(man.id, 'dart', { x: 3, y: 5 })
+      one.run(200)
+      const boom = one.explosions()[0]
+      if (boom?.type !== 'Explosion') throw new Error(`no explosion at offset ${String(off)}`)
+      // World x back to a tile index, through the shared projection rather than
+      // a hand-rolled `+ (w - 1) / 2`, which is the off-by-half this project has
+      // paid for twice.
+      impacts.push({ off, tile: worldToTileX(boom.x, one.level.size) })
+    }
+    // Column 10 is the wall. No impact may be inside it.
+    expect(impacts.filter((i) => i.tile === 10)).toEqual([])
+    expect(r.level.size.w).toBe(20)
+  })
+
+  it('and nobody sheltering behind that wall is touched, from any offset', () => {
+    // The consequence stated in the terms a player would report it in. At
+    // `INFANTRY_HEALTH = 1` any positive damage through the wall is a death.
+    const from = tileToWorld(13, 5, { w: 20, h: 8 })
+    const survived: { off: number; hp: number }[] = []
+    for (const off of [0, -0.2, -0.4, -0.49]) {
+      const one = rig(WALLED)
+      const man = one.world.spawn({
+        kind: 'rifleman',
+        team: 'player',
+        x: from.x + off,
+        z: from.z,
+        health: 1000,
+      })
+      const behind = one.at(9, 5)
+      const victim = one.world.spawn({
+        kind: 'rifleman',
+        team: 'enemy',
+        x: behind.x,
+        z: behind.z,
+        health: 1000,
+      })
+      one.run(1)
+      one.ordnance.launch(man.id, 'dart', { x: 3, y: 5 })
+      one.run(200)
+      survived.push({ off, hp: one.world.get(victim.id)?.health ?? 0 })
+    }
+    expect(survived).toEqual([
+      { off: 0, hp: 1000 },
+      { off: -0.2, hp: 1000 },
+      { off: -0.4, hp: 1000 },
+      { off: -0.49, hp: 1000 },
+    ])
   })
 
   it('a ballistic projectile clears the same wall and lands beyond it', () => {
