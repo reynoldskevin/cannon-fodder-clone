@@ -89,7 +89,11 @@ describe('the enemy shoots because the machine said so', () => {
     const enemy = s.world.entities.find((e) => e.team === 'enemy')!.id
     const tough = tileToWorld(10, 7, level.size)
     s.world.spawn({ kind: 'rifleman', team: 'player', x: tough.x, z: tough.z, health: 10_000 })
-    for (let f = 0; f < 30; f += 1) s.advance(1 / 60)
+    // SIXTY FRAMES, NOT THIRTY (ticket 012a): the enemy holds fire for the
+    // rifleman's 45-tick beat after entering `engage`, so thirty frames now land
+    // inside it. The claim is unchanged — an engaged enemy holds a STANDING
+    // order — and this is simply the first frame at which he has one.
+    for (let f = 0; f < 60; f += 1) s.advance(1 / 60)
     expect(s.combat.isFiring(enemy)).toBe(true)
   })
 

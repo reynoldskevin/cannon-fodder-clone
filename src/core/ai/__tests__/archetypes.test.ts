@@ -26,6 +26,12 @@ const spec = (over: Partial<ArchetypeSpec>): ArchetypeSpec => ({
   pursueTimeoutTicks: 120,
   alertTimeoutTicks: 120,
   aggression: 1,
+  // Ticket 012a added a required row-field, so this factory has to name it or
+  // it no longer builds a whole spec. Twelve, like every other number here, is
+  // deliberately NOT a shipped value: a fixture that happened to equal the
+  // default could not tell "the machine read the row" apart from "the machine
+  // fell back". No case in this file asserts on it.
+  reactionTicks: 12,
   ...over,
 })
 

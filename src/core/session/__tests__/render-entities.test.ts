@@ -221,7 +221,11 @@ describe('renderEntities — animation', () => {
     const level = makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [{ x: 10, y: 7 }] })
     const s = createSession(level)
     let firedFrame = -1
-    for (let f = 0; f < 40 && firedFrame < 0; f++) {
+    // Ninety frames rather than forty: the enemy holds fire for a 45-tick beat
+    // after entering `engage` (ticket 012a), so the first `ShotFired` of the
+    // mission now arrives after frame 40. The assertion is still that the
+    // shooter is drawn playing `fire` ON the tick it shoots.
+    for (let f = 0; f < 90 && firedFrame < 0; f++) {
       s.advance(1 / 60)
       const shooters = s.events().filter((e) => e.type === 'ShotFired')
       if (shooters.length > 0) firedFrame = f
@@ -245,7 +249,12 @@ describe('renderEntities — the dead', () => {
     const level = makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [{ x: 10, y: 7 }] })
     const s = createSession(level)
     let deadId = -1
-    for (let f = 0; f < 60 && deadId < 0; f++) {
+    // A wider budget than sixty frames: the first round of the mission is now
+    // 45 ticks late (the reaction beat, ticket 012a) and, since ticket 011b, a
+    // round is a chance rather than a certainty, so the first casualty may take
+    // several. This loop stops at the first death; it is a budget to reach one,
+    // not a claim about when it happens.
+    for (let f = 0; f < 300 && deadId < 0; f++) {
       s.advance(1 / 60)
       for (const e of s.events()) if (e.type === 'UnitDied') deadId = e.id
     }
@@ -261,7 +270,8 @@ describe('renderEntities — the dead', () => {
     const level = makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [{ x: 10, y: 7 }] })
     const s = createSession(level)
     let deadId = -1
-    for (let f = 0; f < 60 && deadId < 0; f++) {
+    // The same widened budget as the case above, for the same two reasons.
+    for (let f = 0; f < 300 && deadId < 0; f++) {
       s.advance(1 / 60)
       for (const e of s.events()) if (e.type === 'UnitDied') deadId = e.id
     }
