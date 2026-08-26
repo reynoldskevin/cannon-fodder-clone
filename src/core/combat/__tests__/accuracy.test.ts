@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { World } from '../../world/world'
 import { makeLevel } from '../../world/__tests__/fixture'
 import { WEAPONS, RIFLE, INFANTRY_HEALTH, hitChanceAt, createCombatSystem } from '../index'
+import { bakeNavGrid } from '../../pathing/navgrid'
 import type { WeaponSpec } from '../index'
 import type { SimEvent } from '../../world/events'
 
@@ -26,7 +27,22 @@ import type { SimEvent } from '../../world/events'
  */
 
 const level = () => makeLevel()
-const world = (seed = 1): World => new World(level(), { seed })
+
+/**
+ * A world and the nav grid its sightlines are walked on.
+ *
+ * BAKED FROM THE SAME LEVEL DOCUMENT, and passed in, because that is what every
+ * caller of `createCombatSystem` in this codebase does — `createSession`, the AI
+ * rig, `aim.test.ts`. An earlier draft of this suite built combat with no grid
+ * at all, which forced an overload and a documented wart into production code to
+ * serve one test's convenience. A fixture is not a reason to widen an API.
+ */
+function arena(seed = 1): { world: World; grid: ReturnType<typeof bakeNavGrid> } {
+  const doc = level()
+  return { world: new World(doc, { seed }), grid: bakeNavGrid(doc) }
+}
+
+const world = (seed = 1): World => arena(seed).world
 
 const rifle = (): WeaponSpec => {
   const spec = WEAPONS[RIFLE]
@@ -146,7 +162,7 @@ function duel(options: {
   readonly ticks?: number
   readonly gap?: number
 }): { readonly shots: readonly SimEvent[]; readonly world: World } {
-  const w = world(options.seed ?? 1)
+  const { world: w, grid } = arena(options.seed ?? 1)
   w.spawn({ kind: 'rifleman', team: 'enemy', x: 0, z: 0 })
   /**
    * A target that cannot die and cannot shoot back.
@@ -160,6 +176,7 @@ function duel(options: {
    */
   w.spawn({ kind: 'sandbag', team: 'player', x: options.gap ?? 0.5, z: 0, health: 10_000 })
   const combat = createCombatSystem(
+    grid,
     options.hitPolicy === undefined ? {} : { hitPolicy: options.hitPolicy },
   )
   w.addSystem(combat)
@@ -318,10 +335,10 @@ describe('the roll is deterministic, because a mission must replay', () => {
      * had combat would have drawn.
      */
     const idle = (withCombat: boolean): number => {
-      const w = world(11)
+      const { world: w, grid } = arena(11)
       w.spawn({ kind: 'rifleman', team: 'enemy', x: 0, z: 0 })
       w.spawn({ kind: 'sandbag', team: 'player', x: 30, z: 30, health: 10_000 })
-      if (withCombat) w.addSystem(createCombatSystem({ hitPolicy: 'weapon' }))
+      if (withCombat) w.addSystem(createCombatSystem(grid, { hitPolicy: 'weapon' }))
       for (let t = 0; t < 400; t += 1) w.tick()
       return w.rng.next()
     }
