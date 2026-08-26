@@ -211,6 +211,61 @@ describe('the stats actually drive the machine', () => {
   })
 })
 
+describe('an explicit option outranks the archetype row', () => {
+  /**
+   * THE PRECEDENCE, PINNED — explicit `AiOptions` value, then archetype row,
+   * then `tuning.ts`.
+   *
+   * The rule was proposed by the implementer rather than by this ticket, and it
+   * is the right one: an option is a statement about THIS session, a row is a
+   * default for a KIND, and the specific instruction should win. Taking the
+   * ticket's original wording literally would have broken the pre-existing
+   * `states.test.ts` case that runs riflemen with `pursueTimeoutTicks: 30`.
+   *
+   * Only `pursueTimeoutTicks` was accidentally covered by that older test.
+   * Adversarial review flipped the other three and the suite stayed green, so
+   * the rule was documented in a comment and asserted nowhere — which is how the
+   * ticket document and the code came to disagree with nothing adjudicating.
+   */
+  const seen = (r: ReturnType<typeof rig>, id: number): boolean => r.ai.stateOf(id) !== 'idle'
+
+  it('for sight range', () => {
+    // The row says he sees 18 tiles; the session says 3. At 7 tiles he must not
+    // see the man, or the row won.
+    const r = rig(OPEN, {
+      sightRangeTiles: 3,
+      archetypes: { hawk: spec({ name: 'hawk', sightRangeTiles: 18 }) },
+    })
+    const enemy = r.spawnKind(2, 5, 'enemy', 'hawk')
+    r.spawn(9, 5, 'player', 1000)
+    r.run(10)
+    expect(seen(r, enemy.id)).toBe(false)
+  })
+
+  it('for alert radius', () => {
+    // A shout carries the session's distance, not the row's. The enemy is 10
+    // tiles from the shot: inside the row's 18, outside the session's 4.
+    const r = rig(OPEN, {
+      alertRadiusTiles: 4,
+      archetypes: { hawk: spec({ name: 'hawk', alertRadiusTiles: 18, sightRangeTiles: 2 }) },
+    })
+    const enemy = r.spawnKind(2, 5, 'enemy', 'hawk')
+    r.ai.hear([r.shotAt(12, 5)])
+    r.run(5)
+    expect(seen(r, enemy.id)).toBe(false)
+  })
+
+  it('and the row still decides when the session says nothing', () => {
+    // The other half. Without it, "the option wins" is satisfied by an
+    // implementation that ignores the row entirely.
+    const r = rig(OPEN, { archetypes: { hawk: spec({ name: 'hawk', sightRangeTiles: 2 }) } })
+    const enemy = r.spawnKind(2, 5, 'enemy', 'hawk')
+    r.spawn(9, 5, 'player', 1000)
+    r.run(10)
+    expect(seen(r, enemy.id)).toBe(false)
+  })
+})
+
 describe('adding an archetype is a table row', () => {
   it('a row invented at runtime drives the machine end to end', () => {
     /**

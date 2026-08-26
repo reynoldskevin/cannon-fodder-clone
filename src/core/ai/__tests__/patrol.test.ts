@@ -227,6 +227,54 @@ describe('contact interrupts the beat', () => {
   })
 })
 
+describe('the leash bounds a chase, it does not forbid one', () => {
+  /**
+   * `aggression` scales how far from his post a man will chase before giving up.
+   * BOUNDING a pursuit is the feature; PREVENTING one is a bug, and the
+   * difference is invisible unless a routeless enemy is measured beside a routed
+   * one in the same breath.
+   *
+   * The failure this catches, found by adversarial review and then measured to be
+   * worse than first diagnosed: a routed enemy dropped to `idle` the instant it
+   * lost sight — not only before its first patrol step, but after one too —
+   * because the leash was anchored somewhere other than where the man actually
+   * stands. A patrolling guard was therefore strictly WORSE at his job than a
+   * static one: he would see you, shoot at you, and forget you completely the
+   * moment you stepped behind a tree.
+   */
+  const BIG = '\n' + Array.from({ length: 40 }, () => '  ' + '.'.repeat(40)).join('\n') + '\n'
+
+  /** Engage a man, then move him out of sight, and report the state that follows. */
+  function chase(route: readonly { x: number; y: number }[] | null, stepFirst: boolean): string {
+    const r = rig(BIG)
+    const enemy = r.spawn(2, 2, 'enemy')
+    if (route !== null) r.ai.assignPatrol(enemy.id, route)
+    if (stepFirst) r.run(20)
+    const man = r.spawn(9, 2, 'player', 10_000)
+    r.run(10)
+    if (r.ai.stateOf(enemy.id) !== 'engage') throw new Error('fixture never engaged')
+    r.place(man.id, 38, 38) // out of sight, and still alive
+    r.run(9)
+    return String(r.ai.stateOf(enemy.id))
+  }
+
+  it('a man with no route pursues, which is the behaviour to match', () => {
+    expect(chase(null, false)).toBe('pursue')
+  })
+
+  it('a routed man standing on his post pursues too', () => {
+    // His post is the waypoint he is standing on, so he is zero tiles from it
+    // and nothing about a leash should stop him.
+    expect(chase([{ x: 2, y: 2 }, { x: 20, y: 2 }], false)).toBe('pursue')
+  })
+
+  it('and so does one who has already set off along his beat', () => {
+    // The other half. The first diagnosis of this bug was that only the
+    // not-yet-stepped case failed; both did, so both are pinned.
+    expect(chase([{ x: 2, y: 2 }, { x: 20, y: 2 }], true)).toBe('pursue')
+  })
+})
+
 describe('determinism', () => {
   it('two identical patrols walk identically', () => {
     const walk = () => {
