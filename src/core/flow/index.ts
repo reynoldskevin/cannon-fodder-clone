@@ -27,3 +27,12 @@ export {
 export type { Screen, FlowEvent, Transition, AdvanceResult } from './transitions'
 export { briefingModel, debriefModel } from './screens'
 export type { BriefingModel, DebriefModel, FlowSoldier } from './screens'
+// Ticket 022a. The one thing in here that DOES hold state, and it is the reason
+// the four tickets before it are reachable at all: the screen, the campaign, the
+// squad and the pre-mission state have to be owned somewhere, and every module
+// above kept them at arm's length precisely so that owner could be one place
+// with one set of rules. It still decides nothing itself — it asks `advance`,
+// `selectSquad`, `missionReport` and the rest, and the browser's half of a
+// mission and of a store reach it as ports.
+export { createCampaignRunner } from './runner'
+export type { CampaignRunner, MissionHost, RunnerOptions } from './runner'
