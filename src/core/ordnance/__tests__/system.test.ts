@@ -49,6 +49,39 @@ const TALL_WALL = `
   ..........#.........
 `
 
+/**
+ * A wall that is not axis-aligned. The sweep needs one: a staircase presents
+ * corners and short runs that a straight column never does, and the retreat
+ * loop's worst case is a ray that grazes along geometry rather than crossing it
+ * squarely.
+ */
+const DIAGONAL_WALL = `
+  ..#.................
+  ...#................
+  ....#...............
+  .....#..............
+  ......#.............
+  .......#............
+  ........#...........
+  .........#..........
+  ..........#.........
+  ...........#........
+`
+
+/** The geometries the cover sweep fires across. */
+const WALL_MAPS: Record<string, string> = {
+  column: TALL_WALL,
+  diagonal: DIAGONAL_WALL,
+}
+
+/** Targets for the sweep: along each wall, across it, and past both ends. */
+const SWEEP_TARGETS: readonly { x: number; y: number }[] = [
+  { x: 10, y: 9 },
+  { x: 10, y: 0 },
+  { x: 19, y: 5 },
+  { x: 0, y: 5 },
+]
+
 /** A wall down column 10. */
 const WALLED = `
   ..........#.........
@@ -448,59 +481,64 @@ describe('flight and detonation', () => {
      * face nudge, both axes of the slab intersection, and the world-to-tile
      * spelling at THIS call site, which the blast test's fixture does not cover.
      */
-    const level = asciiLevel(TALL_WALL)
-    const grid = bakeNavGrid(level)
     const inSolid: string[] = []
     let fired = 0
-    for (const column of [9, 11]) {
-      for (const row of [0, 3, 6, 9]) {
-        for (const ox of [-0.3, 0, 0.3]) {
-          for (const oz of [-0.3, 0, 0.3]) {
-            for (const target of [
-              { x: 10, y: 9 },
-              { x: 10, y: 0 },
-            ]) {
-              const world = new World(level, { seed: 1 })
-              const ordnance = createOrdnanceSystem(grid, { table: TABLE })
-              world.addSystem(ordnance)
-              const from = tileToWorld(column, row, level.size)
-              const man = world.spawn({
-                kind: 'rifleman',
-                team: 'player',
-                x: from.x + ox,
-                z: from.z + oz,
-                health: 1000,
-              })
-              world.tick()
-              world.drainEvents()
-              if (!ordnance.launch(man.id, 'dart', target)) continue
-              let bx = Number.NaN
-              let bz = Number.NaN
-              for (let i = 0; i < 60; i += 1) {
+    // Sub-tile offsets, deliberately including values very close to the tile
+    // edge: the failures live in thin slivers of this space, and a coarse set
+    // (the first version used ±0.3) walks straight past them.
+    const offsets = [-0.45, -0.3, -0.15, 0, 0.15, 0.3, 0.45]
+    for (const [name, art] of Object.entries(WALL_MAPS)) {
+      const level = asciiLevel(art)
+      const grid = bakeNavGrid(level)
+      for (let column = 0; column < level.size.w; column += 3) {
+        for (let row = 0; row < level.size.h; row += 2) {
+          if (!grid.passable(column, row, INFANTRY)) continue
+          for (const ox of offsets) {
+            for (const oz of offsets) {
+              for (const target of SWEEP_TARGETS) {
+                const world = new World(level, { seed: 1 })
+                const ordnance = createOrdnanceSystem(grid, { table: TABLE })
+                world.addSystem(ordnance)
+                const from = tileToWorld(column, row, level.size)
+                const man = world.spawn({
+                  kind: 'rifleman',
+                  team: 'player',
+                  x: from.x + ox,
+                  z: from.z + oz,
+                  health: 1000,
+                })
                 world.tick()
-                for (const e of world.drainEvents()) {
-                  if (e.type === 'Explosion') {
-                    bx = e.x
-                    bz = e.z
+                world.drainEvents()
+                if (!ordnance.launch(man.id, 'dart', target)) continue
+                let bx = Number.NaN
+                let bz = Number.NaN
+                for (let i = 0; i < 45; i += 1) {
+                  world.tick()
+                  for (const e of world.drainEvents()) {
+                    if (e.type === 'Explosion') {
+                      bx = e.x
+                      bz = e.z
+                    }
                   }
                 }
-              }
-              if (Number.isNaN(bx)) continue
-              fired += 1
-              const tx = worldToTileX(bx, level.size)
-              const tz = worldToTileY(bz, level.size)
-              if (!grid.passable(tx, tz, INFANTRY)) {
-                inSolid.push(
-                  `from (${String(column)}${ox >= 0 ? '+' : ''}${String(ox)}, ${String(row)}${oz >= 0 ? '+' : ''}${String(oz)}) at (${String(target.x)},${String(target.y)}) -> tile ${String(tx)},${String(tz)}`,
-                )
+                if (Number.isNaN(bx)) continue
+                fired += 1
+                const tx = worldToTileX(bx, level.size)
+                const tz = worldToTileY(bz, level.size)
+                if (!grid.passable(tx, tz, INFANTRY) && inSolid.length < 6) {
+                  inSolid.push(
+                    `${name}: from (${String(column)}${ox >= 0 ? '+' : ''}${String(ox)}, ${String(row)}${oz >= 0 ? '+' : ''}${String(oz)}) at (${String(target.x)},${String(target.y)}) -> tile ${String(tx)},${String(tz)}`,
+                  )
+                }
               }
             }
           }
         }
       }
     }
-    // Non-vacuity: a sweep that fired nothing would pass this silently.
-    expect(fired).toBeGreaterThan(100)
+    // Non-vacuity: a sweep that fired nothing would pass this silently, which is
+    // how a guard like this rots after a fixture changes underneath it.
+    expect(fired).toBeGreaterThan(2000)
     expect(inSolid).toEqual([])
   })
 
