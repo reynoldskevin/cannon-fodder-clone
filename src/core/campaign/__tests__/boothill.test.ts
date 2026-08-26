@@ -134,22 +134,58 @@ describe('the hill', () => {
     const beforeSecond = s
     const second = recruitsAvailable(s)[0]!
     s = fight(s, 2, [second.id])
-    const model = bootHillModel(s, promotionsBetween(beforeSecond, s))
+    const model = bootHillModel(s, promotionsBetween(beforeSecond, s), beforeSecond)
     expect(model.graves).toHaveLength(2)
     expect(model.fallenThisMission.map((g) => g.name)).toEqual([second.name])
+  })
+
+  it('and marks only the new ones when the SAME level is replayed', () => {
+    /**
+     * THE CASE A LEVEL-BASED HEURISTIC CANNOT SEE, and it is reachable: lose men
+     * on level 3, retry level 3, lose more. `applyMissionReport` appends one
+     * mission's fallen as a block, so "the trailing run sharing the last grave's
+     * level" identifies them — until two consecutive missions are fought on the
+     * SAME level, when the two blocks merge and last attempt's dead are marked
+     * fresh again.
+     *
+     * Measured before the fix: after the retry, Boot Hill marked both Kovac (the
+     * previous attempt) and Farrow (this one) as newly fallen. Comparing against
+     * the previous CAMPAIGN STATE is exact and needs no new state, because the
+     * dead list is append-only.
+     */
+    let s = createCampaign({ seed: 71, recruits: 8 })
+    const firstAttempt = recruitsAvailable(s)[0]!
+    s = fight(s, 3, [firstAttempt.id], 'failed')
+    const beforeRetry = s
+    const secondAttempt = recruitsAvailable(s)[0]!
+    s = fight(s, 3, [secondAttempt.id])
+    const model = bootHillModel(s, [], beforeRetry)
+    expect(model.graves.map((g) => g.name)).toEqual([firstAttempt.name, secondAttempt.name])
+    expect(model.fallenThisMission.map((g) => g.name)).toEqual([secondAttempt.name])
+  })
+
+  it('marks nobody when it has no previous state to compare against', () => {
+    // What a RELOAD is: the campaign comes back and nothing fell this session,
+    // so no stone is new. Marking the last mission's dead as fresh every time
+    // the player reopened the tab would be the same lie in the other direction.
+    let s = createCampaign({ seed: 72, recruits: 4 })
+    s = fight(s, 1, [recruitsAvailable(s)[0]!.id])
+    expect(bootHillModel(s, []).fallenThisMission).toEqual([])
   })
 
   it('a mission nobody lost marks nobody', () => {
     const before = createCampaign({ seed: 8, recruits: 4 })
     const after = fight(before, 1, [])
-    expect(bootHillModel(after, promotionsBetween(before, after)).fallenThisMission).toEqual([])
+    expect(
+      bootHillModel(after, promotionsBetween(before, after), before).fallenThisMission,
+    ).toEqual([])
   })
 
   it('a wipe puts the whole squad on the hill at once', () => {
     const before = createCampaign({ seed: 9, recruits: 4 })
     const all = recruitsAvailable(before).map((m) => m.id)
     const after = fight(before, 3, all, 'failed')
-    const model = bootHillModel(after, promotionsBetween(before, after))
+    const model = bootHillModel(after, promotionsBetween(before, after), before)
     expect(model.graves).toHaveLength(4)
     expect(model.fallenThisMission).toHaveLength(4)
   })
