@@ -74,7 +74,11 @@ describe('the beat before the first round', () => {
     const r = contact(45)
     const at = ticksToFirstOrder(r, 200)
     expect(at).not.toBeNull()
-    expect(at ?? 0).toBeGreaterThanOrEqual(45)
+    // 46, NOT 45. He engages on tick 1 and must HOLD for forty-five, so the
+    // earliest honest round is the forty-sixth tick. A bound of 45 let a
+    // `reactionTicks - 1` mutant land exactly on it and survive the suite,
+    // which is a beat one tick shorter than the table says.
+    expect(at ?? 0).toBeGreaterThanOrEqual(46)
     expect(at ?? 0).toBeLessThanOrEqual(47)
   })
 
@@ -83,9 +87,9 @@ describe('the beat before the first round', () => {
     // machine would pass the case above perfectly and fail here.
     const quick = ticksToFirstOrder(contact(10), 200)
     const slow = ticksToFirstOrder(contact(90), 300)
-    expect(quick ?? 0).toBeGreaterThanOrEqual(10)
+    expect(quick ?? 0).toBeGreaterThanOrEqual(11)
     expect(quick ?? 0).toBeLessThanOrEqual(12)
-    expect(slow ?? 0).toBeGreaterThanOrEqual(90)
+    expect(slow ?? 0).toBeGreaterThanOrEqual(91)
     expect(slow ?? 0).toBeLessThanOrEqual(92)
   })
 
@@ -169,6 +173,35 @@ describe('`isReacting` is how anything else can see the beat', () => {
     expect(r.ai.isReacting(id)).toBe(false)
   })
 
+  it('is false the moment he stops engaging, even with the beat unfinished', () => {
+    /**
+     * THE GATE IS THE ONLY THING HOLDING THIS UP, and until this test it was
+     * unasserted. Nothing drains the remainder when a man leaves `engage` — the
+     * reload on re-entry makes draining unnecessary — so a man who breaks off at
+     * tick 5 of a 45-tick beat walks away with 40 still on the clock. If
+     * `isReacting` ever stopped checking the state, ticket 025 would hang an
+     * "alerted" cue over him for the rest of the mission.
+     *
+     * A mutation dropping the state check survived all 1803 tests before this.
+     */
+    const r = rig(WALLED, { archetypes: table(45) })
+    const enemy = r.spawn(10, 5, 'enemy')
+    const player = r.spawn(12, 5, 'player', 10_000)
+    r.run(5)
+    expect(r.ai.stateOf(enemy.id)).toBe('engage')
+    expect(r.ai.isReacting(enemy.id)).toBe(true)
+
+    // Behind the wall, well inside the beat he never finished.
+    r.place(player.id, 3, 5)
+    r.run(6)
+    expect(r.ai.stateOf(enemy.id)).not.toBe('engage')
+    expect(r.ai.isReacting(enemy.id)).toBe(false)
+    // And it stays false for as long as he is not engaging, rather than the
+    // remainder quietly ticking down to the same answer.
+    r.run(120)
+    expect(r.ai.isReacting(enemy.id)).toBe(false)
+  })
+
   it('is false for a man who is not engaging at all', () => {
     // An idle man is not "about to shoot"; a cue hung off a flag that were true
     // for everybody would light up the whole map.
@@ -205,6 +238,60 @@ describe('`isReacting` is how anything else can see the beat', () => {
       expect({ t, both: reacting && hasFired }).toEqual({ t, both: false })
     }
     expect(r.spy.fires.length).toBeGreaterThan(0)
+  })
+})
+
+describe('where the count comes from', () => {
+  /**
+   * Option, then the archetype row, then `tuning.ts` — the same precedence every
+   * other fallback in `AiOptions` uses, and the one `system.ts` documents. It
+   * was shipped with no coverage at all: two mutations, one inverting the order
+   * and one ignoring the option entirely, both survived the whole suite. A
+   * difficulty setting passing `reactionTicks` would silently do nothing for
+   * every enemy in the game, and appear to work only for kinds nobody wrote a
+   * row for.
+   */
+
+  it('a caller`s option outranks the archetype row', () => {
+    const r = rig(OPEN, { archetypes: table(10), reactionTicks: 80 })
+    r.spawn(10, 5, 'enemy')
+    r.spawn(5, 5, 'player', 10_000)
+    const at = ticksToFirstOrder(r, 200)
+    // 80, not 10: the row says ten and the caller says eighty.
+    expect(at ?? 0).toBeGreaterThanOrEqual(81)
+    expect(at ?? 0).toBeLessThanOrEqual(82)
+  })
+
+  it('and the row is used when the caller says nothing', () => {
+    // The control for the case above: without it, an implementation that always
+    // used the option and ignored the row would need the option to be absent to
+    // be caught, and nothing here would ever make it absent.
+    const r = rig(OPEN, { archetypes: table(10) })
+    r.spawn(10, 5, 'enemy')
+    r.spawn(5, 5, 'player', 10_000)
+    const at = ticksToFirstOrder(r, 200)
+    expect(at ?? 0).toBeGreaterThanOrEqual(11)
+    expect(at ?? 0).toBeLessThanOrEqual(12)
+  })
+
+  it('and the tuning default when neither does', () => {
+    /**
+     * An EMPTIED table rather than an unknown kind, and the difference matters.
+     * `AiOptions.archetypes` REPLACES, so this is a rifleman the behaviour table
+     * has never heard of — which is ticket 018's whole compatibility story: a
+     * level authored before archetypes existed gets exactly the numbers it got
+     * when `tuning.ts` was the only place numbers lived.
+     *
+     * A genuinely unnamed kind was the first draft and it proves nothing:
+     * `WEAPON_BY_KIND` arms nobody it has not heard of, so the man never
+     * engages, never fires, and the test measures an enemy who cannot shoot.
+     */
+    const r = rig(OPEN, { archetypes: {} })
+    r.spawn(10, 5, 'enemy')
+    r.spawn(5, 5, 'player', 10_000)
+    const at = ticksToFirstOrder(r, 300)
+    expect(at ?? 0).toBeGreaterThanOrEqual(DEFAULT_REACTION_TICKS + 1)
+    expect(at ?? 0).toBeLessThanOrEqual(DEFAULT_REACTION_TICKS + 2)
   })
 })
 
@@ -354,5 +441,87 @@ describe('the beat is a tick count, so a mission still replays', () => {
       return marks.join('')
     }
     expect(pattern()).toBe(pattern())
+  })
+})
+
+describe('a target on the weapon-range boundary', () => {
+  /**
+   * THE HOLE THE "STARTS ON ENTERING ENGAGE" RULE LEAVES, found by an
+   * adversarial review and reproduced before it was written down.
+   *
+   * `engage` is left when a target crosses out of WEAPON RANGE while staying in
+   * sight — he drops to `pursue` to close the gap. So a man who holds the
+   * boundary makes his enemy re-enter `engage` over and over, and a beat armed
+   * on every entry is a beat that never completes. Measured: the state flickers
+   * engage/pursue every four ticks, `isReacting` is true on every engage tick,
+   * and the fire count stays at zero.
+   *
+   * It self-heals in the ordinary case, because a pursuing man closes the gap
+   * and the flicker stops. It does NOT heal against a player who withdraws at
+   * the enemy's own speed, which is a kite that makes an enemy permanently
+   * harmless — and it is the same "switches and waits forever without firing"
+   * failure the design section says the entering-engage rule prevents. That rule
+   * prevents it for target SWITCHING; this is the other door into the same room.
+   *
+   * The rule that closes it: the beat is armed per TARGET ACQUISITION, not per
+   * state entry. Re-entering `engage` on the man you were already engaging costs
+   * nothing; genuinely losing him — going idle — and finding him again costs the
+   * beat afresh, which is what the case above this one pins.
+   */
+
+  it('is still fired at, even while it crosses in and out of range', () => {
+    const r = rig(OPEN, { archetypes: table(30) })
+    const enemy = r.spawn(10, 5, 'enemy')
+    const player = r.spawn(2, 5, 'player', 10_000)
+    /**
+     * BOTH MEN ARE PINNED EVERY TICK, so the enemy cannot close and end the
+     * flicker by walking. That is what turns a self-healing case into the kite
+     * it has to survive — a probe that let him advance would have watched the
+     * bug fix itself and reported success.
+     *
+     * Tile 2 is eight tiles away and inside the rifle; tile 1 is nine and
+     * outside it.
+     */
+    for (let t = 0; t < 240; t += 1) {
+      r.place(enemy.id, 10, 5)
+      r.place(player.id, Math.floor(t / 4) % 2 === 0 ? 2 : 1, 5)
+      r.run(1)
+    }
+    expect(r.spy.fires.length).toBeGreaterThan(0)
+  })
+
+  it('and the beat does not simply never end', () => {
+    // The other half: an `isReacting` pinned true for the whole engagement would
+    // leave ticket 025's alerted cue burning over a man in a firefight.
+    const r = rig(OPEN, { archetypes: table(30) })
+    const enemy = r.spawn(10, 5, 'enemy')
+    const player = r.spawn(2, 5, 'player', 10_000)
+    let everFinished = false
+    for (let t = 0; t < 240; t += 1) {
+      r.place(enemy.id, 10, 5)
+      r.place(player.id, Math.floor(t / 4) % 2 === 0 ? 2 : 1, 5)
+      r.run(1)
+      if (r.ai.stateOf(enemy.id) === 'engage' && !r.ai.isReacting(enemy.id)) everFinished = true
+    }
+    expect(everFinished).toBe(true)
+  })
+
+  it('but a man who was genuinely lost still costs the beat again', () => {
+    // The guard on the fix: "do not re-arm on re-entry" must not become "never
+    // re-arm", which would delete the ticket. This is the wall case again,
+    // stated here so the two rules are read together.
+    const r = rig(WALLED, { archetypes: table(30) })
+    const enemy = r.spawn(10, 5, 'enemy')
+    const player = r.spawn(12, 5, 'player', 10_000)
+    r.run(60)
+    expect(r.spy.fires.length).toBeGreaterThan(0)
+    r.place(player.id, 3, 5)
+    r.run(90)
+    expect(r.ai.stateOf(enemy.id)).toBe('idle')
+    const before = r.spy.fires.length
+    r.place(player.id, 12, 5)
+    r.run(4)
+    expect(r.ai.isReacting(enemy.id)).toBe(true)
+    expect(r.spy.fires.length).toBe(before)
   })
 })
