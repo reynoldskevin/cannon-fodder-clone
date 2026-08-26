@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { briefingModel, debriefModel } from '../index'
-import { createCampaign, recruitsAvailable } from '../../campaign'
+import { applyMissionReport, createCampaign, recruitsAvailable, RANKS } from '../../campaign'
 import { asciiLevel } from '../../pathing/__tests__/ascii'
 import type { CampaignState } from '../../campaign'
 import type { LevelData } from '../../level/types'
@@ -83,6 +83,24 @@ describe('the Briefing', () => {
     const model = briefingModel(level(), squadOf(s, 2))
     expect(JSON.parse(JSON.stringify(model))).toEqual(model)
   })
+
+  it('is a copy, not a window onto the caller`s arrays', () => {
+    /**
+     * The round-trip above cannot see this: comparing a model to ITSELF
+     * round-tripped is true of any JSON-safe value, aliased or not. Handing back
+     * the caller's own array is the allocation win somebody reaches for, and it
+     * has already been caught three times in this codebase — the tracer buffer,
+     * the ordnance system and the chest snapshot.
+     */
+    const s = createCampaign({ seed: 6, recruits: 4 })
+    const squad = [...squadOf(s, 3)]
+    const doc = level()
+    const model = briefingModel(doc, squad)
+    expect(model.squad).not.toBe(squad)
+    expect(model.objectives).not.toBe(doc.objectives)
+    squad.length = 0
+    expect(model.squad).toHaveLength(3)
+  })
 })
 
 describe('the Debrief', () => {
@@ -122,10 +140,33 @@ describe('the Debrief', () => {
   })
 
   it('gives each casualty the rank he held, not the one he would have earned', () => {
-    const { before, men, report } = played(1, 1, 0)
-    const model = debriefModel(before, report)
-    const dead = men[1]
-    expect(model.casualties[0]?.rank).toBe(dead?.rank)
+    /**
+     * ONE MISSION SHORT OF THE SECOND RUNG, deliberately. The first draft used
+     * fresh recruits, and with the ladder starting at 0 and 2 both `rankFor(0)`
+     * and `rankFor(1)` answer 'Private' — so an implementation crediting
+     * `missionsSurvived + 1`, the exact mistake this test is named for, passed.
+     * A man who has survived ONE mission is the only place a one-mission
+     * overshoot is visible.
+     */
+    const step = RANKS[1]?.missionsRequired ?? 2
+    let s = createCampaign({ seed: 31, recruits: 2 })
+    const men = recruitsAvailable(s)
+    for (let i = 0; i < step - 1; i += 1) {
+      s = applyMissionReport(s, {
+        levelId: 1,
+        outcome: 'complete',
+        entries: men.map((m) => ({ recruitId: m.id, survived: true, kills: 0 })),
+      })
+    }
+    const veteran = recruitsAvailable(s)[0]!
+    expect(veteran.missionsSurvived).toBe(step - 1)
+    const model = debriefModel(s, {
+      levelId: 2,
+      outcome: 'complete',
+      entries: [{ recruitId: veteran.id, survived: false, kills: 0 }],
+    })
+    expect(model.casualties[0]?.rank).toBe(veteran.rank)
+    expect(model.casualties[0]?.rank).not.toBe(RANKS[1]?.name)
   })
 
   it('names the survivors too', () => {
@@ -158,6 +199,64 @@ describe('the Debrief', () => {
     const stray = { ...report, entries: [...report.entries, { recruitId: 'ghost', survived: false, kills: 3 }] }
     expect(() => debriefModel(before, stray)).not.toThrow()
     expect(debriefModel(before, stray).casualties.every((c) => c.name.length > 0)).toBe(true)
+  })
+
+  it('and does not count a ghost`s kills toward the squad total', () => {
+    /**
+     * The Debrief is a VIEW of what the campaign will keep. `applyMissionReport`
+     * skips an unknown id before its kill tally, so those kills reach no man's
+     * record — and a Debrief that counted them would report a squad total
+     * exceeding the sum of every soldier's kills, with nobody you could point at
+     * to explain the difference. Boot Hill would then carve one number where the
+     * Debrief showed another.
+     */
+    const { before, report } = played(2, 0, 4)
+    const stray = {
+      ...report,
+      entries: [...report.entries, { recruitId: 'ghost', survived: true, kills: 99 }],
+    }
+    expect(debriefModel(before, stray).kills).toBe(4)
+  })
+
+  it('folds a man named twice into one outcome, and death wins', () => {
+    /**
+     * `applyMissionReport` already does this — its own comment says two entities
+     * could in principle carry the same recruit id, and it resolves
+     * death-beats-survival. `debriefModel` reads the SAME `MissionReport` and
+     * must reach the same answer, or the Debrief lists a man among the survivors
+     * AND among the dead while Boot Hill carves him once. This file's own
+     * docstring promises the two screens agree about who died.
+     */
+    const before = createCampaign({ seed: 51, recruits: 3 })
+    const man = recruitsAvailable(before)[0]!
+    const model = debriefModel(before, {
+      levelId: 1,
+      outcome: 'complete',
+      entries: [
+        { recruitId: man.id, survived: true, kills: 1 },
+        { recruitId: man.id, survived: false, kills: 0 },
+      ],
+    })
+    expect(model.casualties.map((c) => c.name)).toEqual([man.name])
+    expect(model.survivors.map((s) => s.name)).not.toContain(man.name)
+  })
+
+  it('never reports a kill count that is not a number', () => {
+    // `applyMissionReport` drops a non-finite or negative count; a Debrief that
+    // summed them raw would render "NaN kills" over a campaign that recorded
+    // zero. Same report, two screens, two answers.
+    const before = createCampaign({ seed: 52, recruits: 2 })
+    const men = recruitsAvailable(before)
+    const model = debriefModel(before, {
+      levelId: 1,
+      outcome: 'complete',
+      entries: [
+        { recruitId: men[0]!.id, survived: true, kills: Number.NaN },
+        { recruitId: men[1]!.id, survived: true, kills: -3 },
+      ],
+    })
+    expect(Number.isFinite(model.kills)).toBe(true)
+    expect(model.kills).toBe(0)
   })
 
   it('is data, and survives a JSON round-trip', () => {

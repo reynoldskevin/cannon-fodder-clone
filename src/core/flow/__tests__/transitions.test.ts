@@ -9,6 +9,7 @@ import {
   SCREENS,
   TRANSITIONS,
 } from '../index'
+import { applyMissionReport, createCampaign } from '../../campaign'
 import type { FlowEvent, Screen } from '../index'
 
 /**
@@ -323,6 +324,37 @@ describe('when the campaign is over', () => {
      * campaign is.
      */
     expect(campaignComplete(6, 5)).toBe(true)
+  })
+
+  it('is NOT over when the last level is merely unlocked', () => {
+    /**
+     * THE BOUNDARY THE WHOLE COMPARISON TURNS ON, and the first draft never
+     * asserted it. Walked through a real campaign: beating level 4 of 5 sets
+     * `unlockedLevels` to 5 — the final mission is now available and has not
+     * been played. `>=` here would declare the campaign over at that moment and
+     * the player would NEVER PLAY THE LAST LEVEL, with the suite green.
+     *
+     * Every other case in this block sits comfortably to one side or the other,
+     * which is exactly why none of them can see it.
+     */
+    expect(campaignComplete(5, 5)).toBe(false)
+  })
+
+  it('and is over only once it has actually been beaten', () => {
+    expect(campaignComplete(6, 5)).toBe(true)
+  })
+
+  it('the same boundary, walked rather than asserted', () => {
+    // Against the real roster, so a change to how `unlockedLevels` counts cannot
+    // quietly move the finish line without this failing too.
+    const total = 5
+    let state = createCampaign({ seed: 1, recruits: 3 })
+    const answers: boolean[] = []
+    for (let level = 1; level <= total; level += 1) {
+      state = applyMissionReport(state, { levelId: level, outcome: 'complete', entries: [] })
+      answers.push(campaignComplete(state.unlockedLevels, total))
+    }
+    expect(answers).toEqual([false, false, false, false, true])
   })
 
   it('is over if the counter somehow ran past the end', () => {
