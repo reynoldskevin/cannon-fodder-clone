@@ -115,11 +115,20 @@ describe('a right-click on empty ground finds the man in that direction', () => 
   })
 
   it('and so does aiming a little to one side of him', () => {
-    // The corridor, through the real thing: a click a tile off the line of a man
-    // eight tiles away is a pointer that was very slightly high, which is what
-    // aiming with a mouse across a jungle actually looks like.
+    /**
+     * The corridor, through the real thing: a pointer that was very slightly
+     * high, which is what aiming with a mouse across a jungle actually looks
+     * like.
+     *
+     * COMFORTABLY INSIDE THE CORRIDOR, NOT ON ITS EDGE. The first draft aimed at
+     * (12, 8), which puts the man 0.7442 tiles off the line — against a corridor
+     * of 0.75 it cleared by six thousandths, so this fixture was silently
+     * pinning a tuning value to three significant figures and would have failed
+     * on any retune downwards. Aiming further along the same side gives 0.4275,
+     * which tests the corridor rather than its exact width.
+     */
     for (const seed of SEEDS) {
-      const { firstTarget, enemy } = fireAt({ x: 12, y: 8 }, 6, seed)
+      const { firstTarget, enemy } = fireAt({ x: 18, y: 8 }, 6, seed)
       expect({ seed, hit: firstTarget === enemy.id }).toEqual({ seed, hit: true })
     }
   })

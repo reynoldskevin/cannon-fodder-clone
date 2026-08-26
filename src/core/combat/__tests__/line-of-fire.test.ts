@@ -39,6 +39,27 @@ const OPEN = `
   ....................
 `
 
+/**
+ * ONE blocking tile at (8, 6), beside the line of fire rather than on it.
+ *
+ * The centre line from (4,5) straight along +x never touches it, so the round's
+ * own reach is unclamped — but a man standing half a tile high of that line sits
+ * in tile (9,6), and the sightline to HIM runs right through it. That is the
+ * only geometry that can tell the two cover tests apart.
+ */
+const BESIDE = `
+  ....................
+  ....................
+  ....................
+  ....................
+  ....................
+  ....................
+  ........#...........
+  ....................
+  ....................
+  ....................
+`
+
 /** A wall down x=12, so a man at x=15 is behind cover from x=4. */
 const WALLED = `
   ............#.......
@@ -277,6 +298,44 @@ describe('the bounds a round is still subject to', () => {
     const shooter = r.spawn(8, 5, 'player')
     const enemy = r.spawn(15, 5, 'enemy')
     r.combat.orderFire([shooter.id], { x: 18, y: 5 })
+    expect(victimOf(r.run(4))).toBe(enemy.id)
+  })
+
+  it('a man beside the line, behind cover of his own, is not hit through it', () => {
+    /**
+     * THE ONLY CASE THAT DISTINGUISHES THE TWO COVER TESTS, and without it the
+     * per-candidate `hasLineOfSight` inside the ray scan is dead: deleting it
+     * passed all 342 tests, while its own comment called it load-bearing.
+     *
+     * A full-height wall blocks the CENTRE line too, so `clearFractionAlong`
+     * shortens the round's reach and catches it without anybody's sightline
+     * being consulted. Here the blocking tile is beside the line: the round's
+     * reach is unclamped, the man is inside the corridor and inside the range,
+     * and the only thing standing between him and the bullet is the sightline
+     * from the muzzle to HIM.
+     *
+     * He is placed HALF A TILE off the centre line — inside the corridor, but
+     * far enough that `worldToTileAxis` puts him in the next tile row, which is
+     * what makes his sightline a different walk from the round's.
+     */
+    const r = rig(BESIDE)
+    const shooter = r.spawn(4, 5, 'player')
+    const line = r.at(9, 5)
+    r.spawnAt(line.x, line.z + 0.6, 'enemy')
+    r.combat.orderFire([shooter.id], { x: 14, y: 5 })
+    const shots = r.run(4)
+    expect(shots.length).toBeGreaterThan(0)
+    expect(victimOf(shots)).toBeNull()
+  })
+
+  it('and the identical shot connects with that one tile taken away', () => {
+    // The control. Without it the case above passes for a man who was outside
+    // the corridor, or out of range, and the cover would be proving nothing.
+    const r = rig(OPEN)
+    const shooter = r.spawn(4, 5, 'player')
+    const line = r.at(9, 5)
+    const enemy = r.spawnAt(line.x, line.z + 0.6, 'enemy')
+    r.combat.orderFire([shooter.id], { x: 14, y: 5 })
     expect(victimOf(r.run(4))).toBe(enemy.id)
   })
 
