@@ -17,7 +17,15 @@ import { loadLevel } from '../../../src/core/level/index'
  * Measured with STRICT 8-connected components (no dilation): every crosshair
  * glyph is exactly 25x25, and each text label is a separate 3-5 x 8 cluster.
  * Glyph centroids in pixels — avatars (465,639) (511,660); enemies (684,108)
- * (291,147) (211,210); props (795,438) (148,585) (720,591).
+ * (291,147) (211,210); props (148,585) (720,591).
+ *
+ * RE-MEASURED after the map was repainted to thin the jungle. The `bird_left`
+ * prop that stood at (795,438) was painted over in that edit: those pixels now
+ * read rgb(114,130,17), and there is no marker-yellow anywhere near them. The
+ * two surviving prop glyphs still read exactly rgb(255,220,0), and the avatar
+ * and enemy glyphs are untouched at their original centroids. Checked by
+ * decoding map.png directly rather than by reading the importer's output, which
+ * is the whole point of this file.
  *
  * Positions come from GLYPH GEOMETRY ONLY. The legend supplies prop *identity*,
  * never position — a legend that could move a spawn would let hand-authored
@@ -31,7 +39,7 @@ const EXPECTED = {
   size: { w: 57, h: 45 },
   avatars: [{ x: 29, y: 39 }, { x: 31, y: 41 }],
   enemies: [{ x: 42, y: 6 }, { x: 18, y: 9 }, { x: 13, y: 13 }],
-  props: [{ x: 49, y: 27 }, { x: 9, y: 36 }, { x: 45, y: 36 }],
+  props: [{ x: 9, y: 36 }, { x: 45, y: 36 }],
 }
 
 const LEGEND = {
@@ -43,7 +51,6 @@ const LEGEND = {
     '255,220,0': 'props',
   },
   labels: [
-    { at: [804, 437], type: 'bird_left' },
     { at: [154, 584], type: 'shrub' },
     { at: [720, 591], type: 'tree' },
   ],
@@ -83,14 +90,14 @@ describe('level1.png imports correctly', () => {
     expect(sortPoints(result.level.spawns.enemies)).toEqual(sortPoints(EXPECTED.enemies))
   })
 
-  it('finds exactly 3 scenery props at the measured tiles', () => {
-    expect(result.level.spawns.props).toHaveLength(3)
+  it('finds exactly 2 scenery props at the measured tiles', () => {
+    expect(result.level.spawns.props).toHaveLength(2)
     expect(sortPoints(result.level.spawns.props)).toEqual(sortPoints(EXPECTED.props))
   })
 
   it('assigns the prop identities supplied by the legend', () => {
     const types = result.level.spawns.props.map((p) => p.type).sort()
-    expect(types).toEqual(['bird_left', 'shrub', 'tree'])
+    expect(types).toEqual(['shrub', 'tree'])
   })
 
   it('does not mistake the red terrain flowers for enemy markers', () => {
@@ -104,7 +111,9 @@ describe('level1.png imports correctly', () => {
       result.level.spawns.avatars.length +
       result.level.spawns.enemies.length +
       result.level.spawns.props.length
-    expect(totalSpawns).toBe(8)
+    // 2 avatars + 3 enemies + 2 props. Was 8 before the `bird_left` prop was
+    // painted out of the map.
+    expect(totalSpawns).toBe(7)
     expect(result.report.discardedClusters.length).toBeGreaterThanOrEqual(8)
   })
 
