@@ -159,6 +159,15 @@ export const WEAPONS: Readonly<Record<Weapon, WeaponSpec>> = {
  */
 export const WEAPON_BY_KIND: Readonly<Record<string, Weapon>> = {
   rifleman: RIFLE,
+  // THE SAME RIFLE, DELIBERATELY. The sniper archetype (ticket 018,
+  // `core/ai/archetypes.ts`) differs in what he NOTICES, not in what he fires:
+  // a longer-ranged weapon would be a new row in `WEAPONS` and a retune of the
+  // firefight, which is a decision for a ticket that is about weapons. He is
+  // here at all because an archetype whose kind cannot hold a weapon is a
+  // soldier who sees, alerts and pursues and then cannot shoot — and a test in
+  // `core/ai/__tests__/archetypes.test.ts` asserts this table and that one name
+  // the same kinds, precisely so this row cannot be forgotten.
+  sniper: RIFLE,
 }
 
 /** The spec an entity of this kind fires with, or `null` if it is unarmed. */
