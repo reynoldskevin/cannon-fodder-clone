@@ -64,6 +64,34 @@ describe('the rifle is untouched', () => {
     expect(events.filter((e) => e.type === 'ShotFired').length).toBeGreaterThan(10)
   })
 
+  it('spends not one round of anything, however long it fires', () => {
+    /**
+     * THE ACCEPTANCE CRITERION, ACTUALLY ASSERTED. Every other rifle case here
+     * counts `ShotFired`, `Explosion` and `FireRejected` — and a rifle branch
+     * that quietly called `consume('grenade')` on every order would leave all
+     * three counts untouched and the whole suite green. Adversarial review made
+     * exactly that change and nothing failed.
+     *
+     * A squad that suppresses for ten seconds and finds its grenades gone is a
+     * bug the player would experience as the pouch leaking.
+     */
+    const s = createSession(alone())
+    const id = s.selection()[0]!
+    const before = { grenade: s.armoury.count('grenade'), rocket: s.armoury.count('rocket') }
+    s.queue.push({ type: 'fire', unitIds: [id], ordnance: RIFLE_ORDNANCE, target: { x: 12, y: 7 } })
+    play(s, 600)
+    expect({ grenade: s.armoury.count('grenade'), rocket: s.armoury.count('rocket') }).toEqual(
+      before,
+    )
+  })
+
+  it('reports itself as unlimited rather than as empty', () => {
+    // `count` is the documented way to ask, and answering 0 for the rifle would
+    // make any caller that checks before firing refuse the one weapon that can
+    // never run out.
+    expect(createSession(alone()).armoury.count(RIFLE_ORDNANCE)).toBe(Number.POSITIVE_INFINITY)
+  })
+
   it('throws no ordnance while it is what is selected', () => {
     const s = createSession(alone())
     const id = s.selection()[0]!
@@ -120,15 +148,48 @@ describe('a grenade is a single round, and it reaches the world', () => {
      * whole squad's supply before the player let go.
      *
      * The ordnance cooldown from ticket 015 is what bounds it.
+     *
+     * ORDERED WITH THE WHOLE SQUAD, WHICH IS WHAT A CLICK ACTUALLY SENDS. The
+     * first version of this case named a single man, and so could not see the
+     * bug it was written for: an implementation that walked the selection until
+     * it found somebody off cooldown empties a five-man squad's supply in five
+     * frames of one press, and with one man named there is nobody to walk to.
+     * Adversarial review made that change and this test stayed green.
      */
-    const s = createSession(alone())
-    const id = s.selection()[0]!
+    const level = makeLevel({
+      avatars: [
+        { x: 4, y: 7 },
+        { x: 5, y: 7 },
+        { x: 6, y: 7 },
+        { x: 4, y: 8 },
+        { x: 5, y: 8 },
+      ],
+      enemies: [],
+    })
+    const s = createSession(level)
+    const squad = [...s.selection()]
+    expect(squad.length).toBe(5)
     const before = s.armoury.count('grenade')
     for (let f = 0; f < 30; f += 1) {
-      s.queue.push({ type: 'fire', unitIds: [id], ordnance: 'grenade', target: { x: 10, y: 7 } })
+      s.queue.push({ type: 'fire', unitIds: squad, ordnance: 'grenade', target: { x: 12, y: 7 } })
       s.advance(1 / 60)
     }
     expect(s.armoury.count('grenade')).toBe(before - 1)
+  })
+
+  it('and reports no rejection while the weapon is merely reloading', () => {
+    // A cooldown refusal happens sixty times a second while the button is held
+    // and the weapon is working exactly as designed. On the bus that is noise,
+    // and it would train the HUD to cry empty at a full pouch.
+    const s = createSession(alone())
+    const id = s.selection()[0]!
+    const events: SimEvent[] = []
+    for (let f = 0; f < 60; f += 1) {
+      s.queue.push({ type: 'fire', unitIds: [id], ordnance: 'grenade', target: { x: 10, y: 7 } })
+      s.advance(1 / 60)
+      events.push(...s.events())
+    }
+    expect(events.filter((e) => e.type === 'FireRejected')).toHaveLength(0)
   })
 
   it('does not put the man on a standing order he then has to cancel', () => {
