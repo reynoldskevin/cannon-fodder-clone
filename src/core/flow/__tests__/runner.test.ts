@@ -1231,3 +1231,123 @@ describe('the router can always draw what the runner reports (ticket 022b)', () 
     expect(viewFor(runner.screen())).not.toBeNull()
   })
 })
+
+describe('starting again WIPES, and only when asked in so many words (ticket 024)', () => {
+  /**
+   * `runner.ts` says twice that this belongs to ticket 024, and says why:
+   * `startCampaign` is a REPLAY, not a wipe, because doing it by accident would
+   * delete Boot Hill — the one screen the campaign exists to fill.
+   *
+   * So there are TWO VERBS, and that is the whole design. A player who meant
+   * "play again" must not be able to reach "delete twelve gravestones" by
+   * pressing the same button. The confirmation itself is the Menu's and is DOM,
+   * so it is untested by construction; what IS testable, and is asserted here,
+   * is that nothing else in the runner ever clears the save.
+   */
+
+  /** A campaign that has been played: two levels beaten, one man buried. */
+  function played(): { runner: CampaignRunner; port: FakePort; deadName: string } {
+    const { runner, port } = runnerFor(THREE_LEVELS)
+    runner.startCampaign()
+    runner.assignSquad(offered(runner, 3))
+    runner.deploy()
+    const squad = runner.squad()
+    runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
+    runner.recordCasualties()
+    runner.advanceFromBootHill()
+    const deadName = runner.campaign().dead[0]?.name ?? ''
+    expect(deadName).not.toBe('')
+    return { runner, port, deadName }
+  }
+
+  it('a restart clears the dead', () => {
+    const { runner } = played()
+    expect(runner.campaign().dead).toHaveLength(1)
+    expect(runner.restartCampaign().ok).toBe(true)
+    expect(runner.campaign().dead).toEqual([])
+    expect(runner.campaign().unlockedLevels).toBe(1)
+  })
+
+  it('and writes the wipe to the store THERE AND THEN', () => {
+    /**
+     * NOT AT THE NEXT MISSION END. A wipe that only reached the disk later would
+     * come back from the dead on a reload — which is the worst possible moment
+     * to discover it, because the player has already been told his campaign was
+     * cleared and has started making new men.
+     */
+    const { runner, port } = played()
+    const before = port.writes()
+    runner.restartCampaign()
+    expect(port.writes()).toBeGreaterThan(before)
+    const reloaded = runnerFor(THREE_LEVELS, { port: fakePort(port.last()) })
+    expect(reloaded.runner.campaign().dead).toEqual([])
+  })
+
+  it('but `startCampaign` on a finished campaign keeps every gravestone', () => {
+    /**
+     * The distinction the two verbs exist for, stated as an assertion. This is
+     * the case ticket 022a pinned and it must survive: a replay is not a wipe.
+     */
+    const { runner, deadName } = played()
+    expect(runner.startCampaign().ok).toBe(true)
+    expect(runner.campaign().dead.map((d) => d.name)).toEqual([deadName])
+  })
+
+  it('and NOTHING else in the runner ever clears the save', () => {
+    /**
+     * The sweep. Every other command, run in turn against a played campaign,
+     * must leave the dead where they are — because "which button wipes my
+     * campaign" is a question a player should never have to have an opinion
+     * about.
+     */
+    const { runner, deadName } = played()
+    const commands: (() => unknown)[] = [
+      () => runner.startCampaign(),
+      () => runner.demoShortcut(0),
+      () => runner.assignSquad(offered(runner, 3)),
+      () => runner.deploy(),
+      () => runner.finishMission([], new Map()),
+      () => runner.recordCasualties(),
+      () => runner.advanceFromBootHill(),
+    ]
+    for (const run of commands) {
+      run()
+      expect(runner.campaign().dead.map((d) => d.name)).toEqual([deadName])
+    }
+  })
+
+  it('a restarted campaign is playable from the first level again', () => {
+    // A wipe that left the runner on a screen with no way forward, or pointing
+    // at a level the fresh campaign has not unlocked, would be a dead end
+    // dressed as a fresh start.
+    const { runner } = played()
+    runner.restartCampaign()
+    expect(runner.levelIndex()).toBe(0)
+    expect(runner.startCampaign().ok).toBe(true)
+    expect(runner.assignSquad(offered(runner, 3)).ok).toBe(true)
+    expect(runner.deploy().ok).toBe(true)
+    expect(runner.screen()).toBe('Mission')
+  })
+
+  it('takes a seed, so the shell can decide whether the same men come back', () => {
+    /**
+     * `core` has no clock and no unseeded random, so a restart with no seed
+     * produces the SAME roster as a first run — the same names, deterministic
+     * and a little sad. `app/` may read a clock and pass one. The default stays
+     * the fixed constant so nothing in `core` has to.
+     */
+    const a = runnerFor(THREE_LEVELS)
+    a.runner.restartCampaign(101)
+    const b = runnerFor(THREE_LEVELS)
+    b.runner.restartCampaign(101)
+    expect(a.runner.campaign().recruits.map((r) => r.name)).toEqual(
+      b.runner.campaign().recruits.map((r) => r.name),
+    )
+
+    const c = runnerFor(THREE_LEVELS)
+    c.runner.restartCampaign(202)
+    expect(c.runner.campaign().recruits.map((r) => r.name)).not.toEqual(
+      a.runner.campaign().recruits.map((r) => r.name),
+    )
+  })
+})
