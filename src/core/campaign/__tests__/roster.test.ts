@@ -10,7 +10,7 @@ import {
   RANKS,
   NAME_POOL,
 } from '../index'
-import type { CampaignState, MissionReport } from '../index'
+import type { CampaignState } from '../index'
 import type { SimEvent } from '../../world/events'
 
 /**
@@ -74,15 +74,39 @@ describe('a fresh campaign', () => {
     expect(new Set(names).size).toBe(names.length)
   })
 
-  it('starts everyone at the bottom of the ladder', () => {
+  it('starts everyone at the bottom of the ladder, alive', () => {
+    // `status` is a named field of the acceptance criterion and every other case
+    // here projects it away. Left unasserted, `recruitsAvailable` could report
+    // every living man as `dead` — or as `undefined` — and the suite stayed
+    // green, which adversarial review demonstrated twice.
     for (const r of recruitsAvailable(campaign())) {
-      expect({ id: r.id, rank: r.rank, missions: r.missionsSurvived, kills: r.kills }).toEqual({
+      expect({
+        id: r.id,
+        rank: r.rank,
+        missions: r.missionsSurvived,
+        kills: r.kills,
+        status: r.status,
+      }).toEqual({
         id: r.id,
         rank: RANKS[0]?.name,
         missions: 0,
         kills: 0,
+        status: 'active',
       })
     }
+  })
+
+  it('a survivor is still reported as active afterwards', () => {
+    // The other half: a status hardcoded to 'active' at generation would pass
+    // the case above and be wrong the moment anything happened.
+    let s = createCampaign({ seed: 8, recruits: 3 })
+    const man = recruitsAvailable(s)[0]!
+    s = applyMissionReport(s, {
+      levelId: 1,
+      outcome: 'complete',
+      entries: [{ recruitId: man.id, survived: true, kills: 1 }],
+    })
+    expect(recruitsAvailable(s).find((r) => r.id === man.id)?.status).toBe('active')
   })
 
   it('is reproducible from its seed', () => {
@@ -170,17 +194,48 @@ describe('death is permanent', () => {
   })
 
   it('records the level he fell on', () => {
-    // Boot Hill's gravestone says where. Without it every stone reads the same.
-    const { after, id } = killOne()
-    expect(after.dead.find((r) => r.id === id)?.diedOnLevel).toBe(1)
+    // Boot Hill's gravestone says where. Without it every stone reads the same —
+    // and a `diedOnLevel: 1` hardcoded produces exactly that while passing a test
+    // whose fixture only ever fights on level 1, which is what review found.
+    const s = createCampaign({ seed: 14, recruits: 3 })
+    const men = recruitsAvailable(s)
+    const after = applyMissionReport(s, {
+      levelId: 4,
+      outcome: 'complete',
+      entries: [{ recruitId: men[0]!.id, survived: false, kills: 0 }],
+    })
+    expect(after.dead.find((r) => r.id === men[0]!.id)?.diedOnLevel).toBe(4)
+  })
+
+  it('the dead of two levels each carry their own', () => {
+    let s = createCampaign({ seed: 15, recruits: 4 })
+    const men = recruitsAvailable(s)
+    s = applyMissionReport(s, {
+      levelId: 2,
+      outcome: 'complete',
+      entries: [{ recruitId: men[0]!.id, survived: false, kills: 0 }],
+    })
+    s = applyMissionReport(s, {
+      levelId: 5,
+      outcome: 'complete',
+      entries: [{ recruitId: men[1]!.id, survived: false, kills: 0 }],
+    })
+    expect(s.dead.map((r) => r.diedOnLevel).sort()).toEqual([2, 5])
   })
 
   it('records the rank he held when he fell, not one he never reached', () => {
     let s = createCampaign({ seed: 12, recruits: 3 })
     const man = recruitsAvailable(s)[0]
     if (man === undefined) throw new Error('no recruits')
-    // Two winning missions first, so he is no longer the bottom rank.
-    for (let i = 0; i < 2; i += 1) {
+    /**
+     * ONE MISSION SHORT OF THE SECOND RANK, deliberately. The first draft ran two
+     * victories, and with thresholds at 0 and 2 both `rankFor(2)` and
+     * `rankFor(3)` answer the same rank — so an implementation that recorded
+     * `rankFor(missionsSurvived + 1)` passed. Stopping just below a threshold is
+     * the only place a one-mission overshoot is visible.
+     */
+    const step = RANKS[1]?.missionsRequired ?? 1
+    for (let i = 0; i < step - 1; i += 1) {
       s = applyMissionReport(s, {
         levelId: 1,
         outcome: 'complete',
@@ -393,6 +448,55 @@ describe('kills are credited to the man who fired', () => {
         entries: [{ recruitId: 'nobody', survived: true, kills: 9 }],
       }),
     ).not.toThrow()
+  })
+})
+
+describe('hostile report data, because a report is assembled from a live mission', () => {
+  it('a negative kill count is ignored, not recorded', () => {
+    /**
+     * The asymmetry review found: the pure layer accepted `kills: -5` while the
+     * LOADER rejects any record with a negative count — so a campaign this
+     * module will happily produce cannot be read back, and the player's whole
+     * save is discarded as damaged on next launch. A state that cannot survive
+     * its own round trip is a bug wherever the guard is missing.
+     */
+    let s = createCampaign({ seed: 41, recruits: 2 })
+    const man = recruitsAvailable(s)[0]!
+    s = applyMissionReport(s, {
+      levelId: 1,
+      outcome: 'complete',
+      entries: [{ recruitId: man.id, survived: true, kills: -5 }],
+    })
+    expect(recruitsAvailable(s).find((r) => r.id === man.id)?.kills).toBe(0)
+  })
+
+  it('a non-finite kill count is ignored', () => {
+    let s = createCampaign({ seed: 42, recruits: 2 })
+    const man = recruitsAvailable(s)[0]!
+    for (const kills of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      s = applyMissionReport(s, {
+        levelId: 1,
+        outcome: 'complete',
+        entries: [{ recruitId: man.id, survived: true, kills }],
+      })
+    }
+    expect(Number.isFinite(recruitsAvailable(s).find((r) => r.id === man.id)?.kills)).toBe(true)
+  })
+
+  it('a nonsense level id does not unlock the whole campaign', () => {
+    // One report naming level 9999 must not hand the player every level there
+    // will ever be.
+    const s = applyMissionReport(campaign(), { levelId: 9999, outcome: 'complete', entries: [] })
+    expect(s.unlockedLevels).toBeLessThan(100)
+  })
+
+  it('recruiting an absurd number terminates rather than hanging', () => {
+    // `recruit(state, Infinity)` looped forever: `Math.floor(Infinity)` is
+    // `Infinity`, and the name issuer walked toward it. A hang is the one
+    // failure a test suite reports as a timeout rather than a defect.
+    for (const count of [Number.POSITIVE_INFINITY, Number.NaN, -1]) {
+      expect(() => recruit(createCampaign({ seed: 43, recruits: 2 }), count)).not.toThrow()
+    }
   })
 })
 

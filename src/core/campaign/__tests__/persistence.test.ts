@@ -121,7 +121,9 @@ describe('nothing is written unless the caller asks', () => {
   })
 
   it('applying a mission writes nothing', () => {
-    const { port, saves } = fakePort()
+    // `port` is deliberately not read: the claim is that nothing in the roster
+    // can reach one at all, so the observable is the empty write log.
+    const { saves } = fakePort()
     applyMissionReport(createCampaign({ seed: 1 }), {
       levelId: 1,
       outcome: 'complete',
@@ -236,6 +238,157 @@ function threwOnLoad(port: PersistencePort): boolean {
     return true
   }
 }
+
+describe('a gravestone keeps its inscription', () => {
+  /** A well-formed saved document, so the loader rejects it for no other reason. */
+  const document = (over: Record<string, unknown> = {}): unknown => ({
+    version: CAMPAIGN_SCHEMA_VERSION,
+    seed: 1,
+    recruitsIssued: 3,
+    unlockedLevels: 2,
+    recruits: [{ id: 'r1', name: 'Alive', missionsSurvived: 0, kills: 0 }],
+    dead: [
+      {
+        id: 'r2',
+        name: 'Fallen',
+        missionsSurvived: 4,
+        kills: 3,
+        rank: 'Sergeant',
+        rankAtDeath: 'Sergeant',
+        diedOnLevel: 2,
+      },
+    ],
+    ...over,
+  })
+
+  it('loads back the rank the stone was carved with', () => {
+    /**
+     * `DeadRecruit`'s own docstring says it: the ladder is a tuning surface, and
+     * "a stone that changed its inscription when a designer edited a table would
+     * be worse than no stone at all". The loader was rebuilding it from
+     * `missionsSurvived` instead — a man saved as a Sergeant came back a
+     * Corporal, silently, with no notice. The docstring's next paragraph then
+     * described the rebuilding, so the comment contradicted itself and the code
+     * followed the wrong half.
+     *
+     * A living man's rank is DERIVED, because his record is still changing. A
+     * dead man's is RECORDED, because his never will.
+     */
+    const { port } = fakePort(document())
+    const stone = loadCampaign(port).state.dead[0]
+    expect({ rankAtDeath: stone?.rankAtDeath, diedOnLevel: stone?.diedOnLevel }).toEqual({
+      rankAtDeath: 'Sergeant',
+      diedOnLevel: 2,
+    })
+  })
+
+  it('and a clean document like that loads with no notice at all', () => {
+    // Non-vacuity for the case above: if this document were being rejected, the
+    // rank would come from a fresh campaign and the assertion would mean nothing.
+    expect(loadCampaign(fakePort(document()).port).notice).toBeNull()
+  })
+
+  it('a well-formed save from an older version is still refused, and says why', () => {
+    /**
+     * THE VERSION CHECK, FINALLY EXERCISED. Every version case above is
+     * structurally invalid as well as mis-versioned, so the fallback fired on
+     * shape and the check itself was never reached — deleting it outright left
+     * the suite green. This document is valid in every respect except its
+     * version.
+     */
+    const { port } = fakePort(document({ version: CAMPAIGN_SCHEMA_VERSION - 1 }))
+    const { state, notice } = loadCampaign(port)
+    expect(notice).not.toBeNull()
+    expect(state.dead).toEqual([])
+  })
+
+  it('a well-formed save from a newer version is refused too', () => {
+    const { port } = fakePort(document({ version: CAMPAIGN_SCHEMA_VERSION + 1 }))
+    expect(loadCampaign(port).notice).not.toBeNull()
+  })
+
+  it('a well-formed save with no levels unlocked is refused', () => {
+    // Every campaign can play level 1. Zero is a corrupted counter, not a state.
+    const { port } = fakePort(document({ unlockedLevels: 0 }))
+    expect(loadCampaign(port).notice).not.toBeNull()
+  })
+})
+
+describe('through a port that can only store a string, like a real one', () => {
+  /**
+   * `fakePort` above hands the object straight back by reference, so the loader
+   * has never once seen a genuinely serialised campaign — the only strings it
+   * meets are the corrupt ones. The real adapter stores a string every time, so
+   * this is the path that actually ships.
+   */
+  function stringPort(): { port: PersistencePort; raw: () => string | null } {
+    let stored: string | null = null
+    return {
+      port: {
+        load: () => stored,
+        save: (state: unknown) => {
+          stored = JSON.stringify(state)
+        },
+      },
+      raw: () => stored,
+    }
+  }
+
+  it('survives a full campaign round trip', () => {
+    const { port, raw } = stringPort()
+    const before = played()
+    saveCampaign(port, before)
+    expect(typeof raw()).toBe('string')
+    expect(loadCampaign(port).state).toEqual(before)
+  })
+
+  it('with several missions and casualties behind it', () => {
+    const { port } = stringPort()
+    let s = createCampaign({ seed: 77, recruits: 6 })
+    for (let level = 1; level <= 4; level += 1) {
+      const men = recruitsAvailable(s)
+      s = applyMissionReport(s, {
+        levelId: level,
+        outcome: level === 3 ? 'failed' : 'complete',
+        entries: men.map((m, i) => ({ recruitId: m.id, survived: i > 0, kills: i })),
+      })
+    }
+    expect(s.dead.length).toBeGreaterThan(1)
+    saveCampaign(port, s)
+    expect(loadCampaign(port).state).toEqual(s)
+  })
+})
+
+describe('a save that could not be written says so', () => {
+  it('reports success on a port that works', () => {
+    const { port } = fakePort()
+    expect(saveCampaign(port, played())).toEqual({ saved: true, notice: null })
+  })
+
+  it('reports failure on a port that throws', () => {
+    /**
+     * THE ONE LOSS PATH THIS MODULE EXISTS TO PREVENT, and it was the only one
+     * left silent. A failed LOAD is announced; a failed SAVE was swallowed
+     * twice over — once in the adapter and once here — so in private browsing a
+     * player is told their campaign was damaged on every launch while every
+     * save is quietly dropped. That is exactly the "they will not find out
+     * until they go looking for men who no longer exist" outcome this file's
+     * header rails against, arriving through the write door instead.
+     *
+     * Still no throw: losing the save is bad, losing the session is worse.
+     */
+    const port: PersistencePort = {
+      load: () => null,
+      save: () => {
+        throw new Error('QuotaExceeded')
+      },
+    }
+    const result = saveCampaign(port, played())
+    expect(result.saved).toBe(false)
+    expect(typeof result.notice).toBe('string')
+    expect((result.notice ?? '').length).toBeGreaterThan(10)
+  })
+})
 
 describe('a fresh campaign from a fresh port is a real campaign', () => {
   it('can be played and saved immediately', () => {
