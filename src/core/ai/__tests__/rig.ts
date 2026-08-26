@@ -75,6 +75,15 @@ export interface Rig {
   readonly spy: Spy
   /** Spawn at a tile CENTRE. `health` defaults to the archetype's one hit point. */
   spawn(tileX: number, tileY: number, team: Team, health?: number): Entity
+  /**
+   * Spawn a NAMED archetype (ticket 018).
+   *
+   * Separate from `spawn` rather than a fifth parameter on it: `spawn` is used
+   * by every AI test written before archetypes existed, and threading an
+   * optional `kind` past an optional `health` is exactly the call-site ambiguity
+   * that gets the two swapped.
+   */
+  spawnKind(tileX: number, tileY: number, team: Team, kind: string, health?: number): Entity
   /** Run whole ticks, returning every event they emitted. */
   run(ticks: number): SimEvent[]
   /** Where this entity now stands, in tile space. */
@@ -134,6 +143,14 @@ export function rig(art = OPEN, options: Partial<AiOptions> = {}): Rig {
         health === undefined
           ? { kind: 'rifleman', team, x: p.x, z: p.z }
           : { kind: 'rifleman', team, x: p.x, z: p.z, health },
+      )
+    },
+    spawnKind(tileX, tileY, team, kind, health) {
+      const p = tileToWorld(tileX, tileY, level.size)
+      return world.spawn(
+        health === undefined
+          ? { kind, team, x: p.x, z: p.z }
+          : { kind, team, x: p.x, z: p.z, health },
       )
     },
     run(ticks) {
