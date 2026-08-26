@@ -3,7 +3,7 @@ import { World } from '../../world/world'
 import type { Entity } from '../../world/world'
 import { asciiLevel } from '../../pathing/__tests__/ascii'
 import { bakeNavGrid } from '../../pathing/navgrid'
-import { tileToWorld } from '../../view/projection'
+import { TILE_WORLD_SIZE, tileToWorld } from '../../view/projection'
 import { createCombatSystem, WEAPONS, RIFLE } from '../index'
 import type { CombatSystem } from '../index'
 import type { SimEvent } from '../../world/events'
@@ -238,18 +238,31 @@ describe('what a commanded shot hits', () => {
     expect(r.world.isAlive(enemy.id)).toBe(false)
   })
 
-  it('picks the enemy nearest the AIM POINT, not the one nearest the shooter', () => {
-    // The whole reason aim is carried on the order. Right-clicking one man in a
-    // crowd must shoot the one pointed at; picking by distance from the shooter
-    // would shoot whoever happened to be closest, which is not what was clicked.
+  it('shoots down the line it was given, not at whoever is nearest the shooter', () => {
+    /**
+     * The whole reason aim is carried on the order. Right-clicking one man in a
+     * crowd must shoot the man the line runs through; picking by distance from
+     * the shooter would shoot whoever happened to be closest, which is not what
+     * was clicked.
+     *
+     * REWRITTEN BY TICKET 011c, AND THE FIXTURE IS WHAT MOVED. This case used to
+     * put `aside` at (4,4) — ON the line and in front of the man clicked — and
+     * assert that the FAR one died, because selection ranked candidates by
+     * nearness to the aim POINT. Under 011c the round hits the first man along
+     * the ray, so that fixture is now the near man's death and is asserted as
+     * such in `line-of-fire.test.ts`. The claim THIS test makes is the one it
+     * always made — aim decides, proximity to the shooter does not — so `aside`
+     * moves off the line to keep making it, and stays the nearest man to the
+     * shooter (3.6 tiles against the target's 6) while the round ignores him.
+     */
     const r = rig(OPEN, COMMANDED)
     const me = r.spawn(2, 4, 'player', 1000)
-    const near = r.spawn(4, 4, 'enemy')
-    const far = r.spawn(8, 4, 'enemy')
+    const aside = r.spawn(4, 7, 'enemy')
+    const down = r.spawn(8, 4, 'enemy')
     r.combat.orderFire([me.id], r.aim(8, 4))
     r.run(10)
-    expect(r.world.isAlive(far.id)).toBe(false)
-    expect(r.world.isAlive(near.id)).toBe(true)
+    expect(r.world.isAlive(down.id)).toBe(false)
+    expect(r.world.isAlive(aside.id)).toBe(true)
   })
 
   it('fires at nothing rather than silently doing nothing', () => {
@@ -264,14 +277,41 @@ describe('what a commanded shot hits', () => {
     expect(fired[0]!.type === 'ShotFired' && fired[0]!.targetId).toBeNull()
   })
 
-  it('aims suppressing fire at the point it was given', () => {
+  it('aims suppressing fire in the direction it was given, out to the full reach', () => {
+    /**
+     * UPDATED BY TICKET 011c, DELIBERATELY. It used to assert that the reported
+     * endpoint WAS the clicked tile's centre — three-and-a-bit tiles from an
+     * eight-tile rifle — because 011a's clamp started at "the whole way to the
+     * aim point" and could only ever shorten it. So a short click fired short,
+     * and a man standing past the click was never on the round's line at all.
+     *
+     * The aim point is now a DIRECTION and the round always runs the weapon's
+     * full length down it, which is what lets a click short of a man reach him.
+     * THE DIRECTION IS STILL EXACTLY THE ONE POINTED AT, and that is what this
+     * test still has to pin: the endpoint is asserted as a precise point — the
+     * click's own unit vector scaled to `rangeTiles` — and not as "somewhere on
+     * the line", which would pass for a round fired anywhere along it.
+     */
     const r = rig(OPEN, COMMANDED)
     const me = r.spawn(4, 4, 'player', 1000)
     r.combat.orderFire([me.id], r.aim(7, 6))
     const fired = shots(r.run(5))[0]!
+    if (fired.type !== 'ShotFired') throw new Error('expected a shot')
     const where = tileToWorld(7, 6, { w: 20, h: 10 })
-    expect(fired.type === 'ShotFired' && fired.targetX).toBeCloseTo(where.x, 6)
-    expect(fired.type === 'ShotFired' && fired.targetZ).toBeCloseTo(where.z, 6)
+    // CONVERTED, not assumed. `TILE_WORLD_SIZE` is 1 today, so this multiply
+    // changes nothing — and omitting it is the half-applied-constant bug
+    // `system.ts` keeps a comment about, reintroduced in a test.
+    const reach = WEAPONS[RIFLE]!.rangeTiles * TILE_WORLD_SIZE
+    // The unit vector the player pointed along, from the muzzle.
+    const clicked = Math.hypot(where.x - fired.originX, where.z - fired.originZ)
+    expect(fired.targetX).toBeCloseTo(fired.originX + ((where.x - fired.originX) / clicked) * reach, 6)
+    expect(fired.targetZ).toBeCloseTo(fired.originZ + ((where.z - fired.originZ) / clicked) * reach, 6)
+    // Stated separately so a failure says WHICH half broke: the length, or the
+    // direction. The open map puts no cover on the line to shorten it.
+    expect(Math.hypot(fired.targetX - fired.originX, fired.targetZ - fired.originZ)).toBeCloseTo(
+      reach,
+      6,
+    )
   })
 
   it('cannot kill an enemy beyond the weapon`s range', () => {
@@ -409,16 +449,27 @@ describe('degenerate geometry', () => {
 
 describe('re-aiming', () => {
   it('takes the newest aim point', () => {
-    // Dragging the pointer while the button is held re-issues the order.
+    /**
+     * Dragging the pointer while the button is held re-issues the order.
+     *
+     * THE FIXTURE MOVED FOR TICKET 011c, AND THE CLAIM DID NOT. The two enemies
+     * used to stand at (4,4) and (6,4) — both on the same eastward line, one
+     * behind the other — and the test asserted the far one died because the aim
+     * had been dragged onto him. A drag along a line no longer changes anything:
+     * the round hits the first man on it either way, so that fixture could not
+     * tell a system that re-aims from one that ignores the second order. The
+     * enemies therefore stand in two different DIRECTIONS, which is the only
+     * thing an aim point now decides, and the drag is between them.
+     */
     const r = rig(OPEN, COMMANDED)
     const me = r.spawn(2, 4, 'player', 1000)
-    const first = r.spawn(4, 4, 'enemy')
-    const second = r.spawn(6, 4, 'enemy')
-    r.combat.orderFire([me.id], r.aim(4, 4))
+    const east = r.spawn(6, 4, 'enemy')
+    const south = r.spawn(2, 8, 'enemy')
     r.combat.orderFire([me.id], r.aim(6, 4))
+    r.combat.orderFire([me.id], r.aim(2, 8))
     r.run(10)
-    expect(r.world.isAlive(second.id)).toBe(false)
-    expect(r.world.isAlive(first.id)).toBe(true)
+    expect(r.world.isAlive(south.id)).toBe(false)
+    expect(r.world.isAlive(east.id)).toBe(true)
   })
 
   it('does not restart the cooldown, so dragging is not a rapid-fire exploit', () => {
