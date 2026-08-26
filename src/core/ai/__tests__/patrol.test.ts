@@ -273,6 +273,61 @@ describe('the leash bounds a chase, it does not forbid one', () => {
     // not-yet-stepped case failed; both did, so both are pinned.
     expect(chase([{ x: 2, y: 2 }, { x: 20, y: 2 }], true)).toBe('pursue')
   })
+
+  /**
+   * Lure him `steps` times toward the eastern edge with a target that stays just
+   * inside his sight, then take the target away, and report what he does.
+   *
+   * The lure is what puts real distance between him and his post: the leash is
+   * consulted on the PURSUIT of a target he can no longer see, never on the
+   * engagement of one in front of him — a man being shot at does not turn his
+   * back and walk home because he is off his beat.
+   */
+  function lureThenVanish(steps: number): { away: number; state: string } {
+    const r = rig(BIG)
+    const enemy = r.spawn(2, 2, 'enemy')
+    r.ai.assignPatrol(enemy.id, [{ x: 2, y: 2 }, { x: 20, y: 2 }])
+    const bait = r.spawn(9, 2, 'player', 10_000)
+    r.run(10)
+    for (let i = 0; i < steps; i += 1) {
+      // Tile space, not world. Feeding `entity.x` to a tile-space `place` is the
+      // units mix-up that made an earlier probe of this silently do nothing.
+      r.place(bait.id, Math.min(38, r.tileOf(enemy.id).x + 9), 2)
+      r.run(30)
+    }
+    const away = r.tileOf(enemy.id).x - 2
+    r.place(bait.id, 38, 38)
+    r.run(9)
+    return { away, state: String(r.ai.stateOf(enemy.id)) }
+  }
+
+  it('gives up on a chase that has taken him far from his post', () => {
+    /**
+     * `aggression` IS THE TICKET'S ONE GENUINELY NEW KNOB, and adversarial
+     * review found it had no behavioural test whatsoever — `offTheLeash` could be
+     * made to `return false` unconditionally and the whole suite stayed green.
+     * That is exactly how the anchor bug above survived to review.
+     *
+     * A leash that never bites is not a leash: a guard would ratchet across the
+     * map one contact at a time and never see his beat again.
+     */
+    const far = lureThenVanish(16)
+    expect(far.away).toBeGreaterThan(12)
+    expect(far.state).toBe('idle')
+  })
+
+  it('but not on one that has barely moved him', () => {
+    // The other side of the same number, and the half that stops "gives up" from
+    // being satisfied by a man who gives up always.
+    for (const steps of [0, 3, 6]) {
+      const near = lureThenVanish(steps)
+      expect({ steps, away: near.away < 12, state: near.state }).toEqual({
+        steps,
+        away: true,
+        state: 'pursue',
+      })
+    }
+  })
 })
 
 describe('determinism', () => {
