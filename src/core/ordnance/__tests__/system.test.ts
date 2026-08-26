@@ -1,0 +1,541 @@
+import { describe, it, expect } from 'vitest'
+import { World } from '../../world/world'
+import { asciiLevel } from '../../pathing/__tests__/ascii'
+import { bakeNavGrid } from '../../pathing/navgrid'
+import { tileToWorld } from '../../view/projection'
+import { createOrdnanceSystem } from '../system'
+import type { OrdnanceSpec } from '../table'
+import type { SimEvent } from '../../world/events'
+
+/**
+ * Ticket 015 — the per-tick ordnance pass.
+ *
+ * WHAT THIS OWNS that the two pure modules do not: the grid (so a rocket stops
+ * at cover), the world (so a blast damages somebody), the tick (so a fuse can
+ * expire), and the order everything happens in.
+ *
+ * PROJECTILES ARE NOT ENTITIES. They live in this system's own array and never
+ * enter `world.entities`. `World.spawnFromLevel` already draws that line for
+ * props and chests; here the reason is sharper, because an entity in the live
+ * array goes through `CombatSystem.pickTarget` and the AI every tick — so a
+ * thrown grenade would become a thing soldiers stop and shoot at.
+ */
+
+const OPEN = `
+  ....................
+  ....................
+  ....................
+  ....................
+  ....................
+  ....................
+  ....................
+  ....................
+  ....................
+  ....................
+`
+
+/** A wall down column 10. */
+const WALLED = `
+  ..........#.........
+  ..........#.........
+  ..........#.........
+  ..........#.........
+  ..........#.........
+  ..........#.........
+  ..........#.........
+  ..........#.........
+`
+
+const spec = (over: Partial<OrdnanceSpec>): OrdnanceSpec => ({
+  name: 'test',
+  arc: 'ballistic',
+  speedTilesPerTick: 0.5,
+  fuseTicks: 600,
+  blastRadiusTiles: 3,
+  peakDamage: 50,
+  falloff: 'linear',
+  cooldownTicks: 30,
+  ammoCost: 1,
+  damagesFriendlies: true,
+  ...over,
+})
+
+const TABLE = {
+  lob: spec({ name: 'lob', arc: 'ballistic' }),
+  dart: spec({ name: 'dart', arc: 'flat', speedTilesPerTick: 1 }),
+  /** Detonates in the air well before it could arrive. */
+  shortfuse: spec({ name: 'shortfuse', arc: 'ballistic', fuseTicks: 3 }),
+}
+
+function rig(art = OPEN, table: Record<string, OrdnanceSpec> = TABLE) {
+  const level = asciiLevel(art)
+  const world = new World(level, { seed: 1 })
+  const grid = bakeNavGrid(level)
+  const ordnance = createOrdnanceSystem(grid, { table })
+  world.addSystem(ordnance)
+  const events: SimEvent[] = []
+  return {
+    world,
+    grid,
+    ordnance,
+    level,
+    spawn(tileX: number, tileY: number, team: 'player' | 'enemy' = 'player', health = 1000) {
+      const p = tileToWorld(tileX, tileY, level.size)
+      return world.spawn({ kind: 'rifleman', team, x: p.x, z: p.z, health })
+    },
+    at(tileX: number, tileY: number) {
+      return tileToWorld(tileX, tileY, level.size)
+    },
+    /** Ticks, accumulating every event so a detonation is not drained away. */
+    run(ticks: number) {
+      for (let i = 0; i < ticks; i += 1) {
+        world.tick()
+        events.push(...world.drainEvents())
+      }
+    },
+    events,
+    explosions() {
+      return events.filter((e) => e.type === 'Explosion')
+    },
+  }
+}
+
+describe('launching', () => {
+  it('a launched projectile is in flight', () => {
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    expect(r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })).toBe(true)
+    expect(r.ordnance.inFlightCount).toBe(1)
+  })
+
+  it('refuses ordnance the table does not name', () => {
+    // An open enum reaching a table that has no row for it. Silently doing
+    // nothing is how a typo in level data becomes a weapon that never fires and
+    // nobody can explain.
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    expect(r.ordnance.launch(man.id, 'howitzer', { x: 9, y: 5 })).toBe(false)
+    expect(r.ordnance.inFlightCount).toBe(0)
+  })
+
+  it('refuses an id that names nothing living', () => {
+    const r = rig()
+    r.run(1)
+    expect(r.ordnance.launch(99_999, 'lob', { x: 9, y: 5 })).toBe(false)
+    expect(r.ordnance.inFlightCount).toBe(0)
+  })
+
+  it('refuses a dead launcher', () => {
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    r.world.despawn(man.id)
+    expect(r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })).toBe(false)
+  })
+
+  it('launches from where the launcher is standing', () => {
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })
+    const p = r.ordnance.inFlight()[0]
+    const from = r.at(3, 5)
+    expect(p?.x).toBeCloseTo(from.x, 6)
+    expect(p?.z).toBeCloseTo(from.z, 6)
+  })
+
+  it('honours the cooldown, so holding the button is not a barrage', () => {
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    expect(r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })).toBe(true)
+    expect(r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })).toBe(false)
+  })
+
+  it('lets him throw again once the cooldown has run', () => {
+    // Without this, "honours the cooldown" is satisfied by a system that lets
+    // every unit throw exactly one grenade per mission.
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    expect(r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })).toBe(true)
+    r.run(TABLE.lob.cooldownTicks + 1)
+    expect(r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })).toBe(true)
+  })
+
+  it('one man`s cooldown is not the whole squad`s', () => {
+    const r = rig()
+    const a = r.spawn(3, 5)
+    const b = r.spawn(3, 6)
+    r.run(1)
+    expect(r.ordnance.launch(a.id, 'lob', { x: 9, y: 5 })).toBe(true)
+    expect(r.ordnance.launch(b.id, 'lob', { x: 9, y: 6 })).toBe(true)
+  })
+
+  it('refuses a target that is not on the map', () => {
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    expect(r.ordnance.launch(man.id, 'lob', { x: 99, y: 5 })).toBe(false)
+    expect(r.ordnance.launch(man.id, 'lob', { x: -1, y: 5 })).toBe(false)
+  })
+})
+
+describe('flight and detonation', () => {
+  it('a grenade is in the air for a while, then gone', () => {
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })
+    r.run(1)
+    expect(r.ordnance.inFlightCount).toBe(1)
+    r.run(200)
+    expect(r.ordnance.inFlightCount).toBe(0)
+  })
+
+  it('it climbs and comes back down rather than sliding along the floor', () => {
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    r.ordnance.launch(man.id, 'lob', { x: 15, y: 5 })
+    let peak = 0
+    for (let i = 0; i < 60; i += 1) {
+      r.run(1)
+      const p = r.ordnance.inFlight()[0]
+      if (p !== undefined && p.y > peak) peak = p.y
+    }
+    expect(peak).toBeGreaterThan(0)
+  })
+
+  it('it explodes where it was aimed', () => {
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })
+    r.run(200)
+    const boom = r.explosions()[0]
+    const aim = r.at(9, 5)
+    expect(boom).toBeDefined()
+    if (boom?.type !== 'Explosion') throw new Error('not an explosion')
+    expect(boom.x).toBeCloseTo(aim.x, 6)
+    expect(boom.z).toBeCloseTo(aim.z, 6)
+  })
+
+  it('it explodes exactly once', () => {
+    // A detonation that fired on every tick after impact, or a projectile left
+    // in the array after it went off, both look identical until you count.
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })
+    r.run(300)
+    expect(r.explosions()).toHaveLength(1)
+  })
+
+  it('a short fuse detonates in the air, short of the target', () => {
+    // An airburst is a real outcome and it must be reported where it happened.
+    // Teleporting it to the aim point would hide the whole mechanic.
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    r.ordnance.launch(man.id, 'shortfuse', { x: 17, y: 5 })
+    r.run(40)
+    const boom = r.explosions()[0]
+    if (boom?.type !== 'Explosion') throw new Error('not an explosion')
+    const from = r.at(3, 5)
+    const aim = r.at(17, 5)
+    expect(Math.abs(boom.x - from.x)).toBeLessThan(Math.abs(aim.x - from.x))
+    expect(boom.y).toBeGreaterThan(0)
+  })
+
+  it('a fuse longer than the flight does not cut the throw short', () => {
+    // The control for the case above: `fuseTicks` is a deadline, not a duration
+    // the projectile always serves.
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })
+    r.run(200)
+    const boom = r.explosions()[0]
+    if (boom?.type !== 'Explosion') throw new Error('not an explosion')
+    expect(boom.y).toBeCloseTo(0, 6)
+  })
+
+  it('a flat projectile stops at the near face of a wall', () => {
+    /**
+     * The rocket's half of the arc distinction. A grenade arcs OVER cover — that
+     * is what it is for — and a rocket does not, so it must detonate on the wall
+     * rather than inside the room behind it. `clearFractionAlong` already
+     * computes exactly this stopping point for the rifle's tracer (ticket 011a),
+     * so this needs no new geometry.
+     */
+    const r = rig(WALLED)
+    const man = r.spawn(3, 5)
+    r.run(1)
+    r.ordnance.launch(man.id, 'dart', { x: 17, y: 5 })
+    r.run(200)
+    const boom = r.explosions()[0]
+    if (boom?.type !== 'Explosion') throw new Error('not an explosion')
+    const wall = r.at(10, 5)
+    const aim = r.at(17, 5)
+    expect(boom.x).toBeLessThan(wall.x)
+    expect(boom.x).toBeLessThan(aim.x)
+  })
+
+  it('a ballistic projectile clears the same wall and lands beyond it', () => {
+    // Side by side with the case above, from the same tile at the same target,
+    // differing only in the `arc` field. If that field were ignored these two
+    // would agree.
+    const r = rig(WALLED)
+    const man = r.spawn(3, 5)
+    r.run(1)
+    r.ordnance.launch(man.id, 'lob', { x: 17, y: 5 })
+    r.run(300)
+    const boom = r.explosions()[0]
+    if (boom?.type !== 'Explosion') throw new Error('not an explosion')
+    const wall = r.at(10, 5)
+    expect(boom.x).toBeGreaterThan(wall.x)
+  })
+})
+
+describe('the Explosion event', () => {
+  it('carries the position, the radius and the ordnance type', () => {
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })
+    r.run(200)
+    const boom = r.explosions()[0]
+    if (boom?.type !== 'Explosion') throw new Error('not an explosion')
+    expect({
+      ordnance: boom.ordnance,
+      radiusTiles: boom.radiusTiles,
+      source: boom.sourceId,
+    }).toEqual({ ordnance: 'lob', radiusTiles: TABLE.lob.blastRadiusTiles, source: man.id })
+  })
+
+  it('is stamped with the tick it went off on', () => {
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })
+    r.run(200)
+    const boom = r.explosions()[0]
+    if (boom?.type !== 'Explosion') throw new Error('not an explosion')
+    expect(boom.tick).toBeGreaterThan(1)
+  })
+
+  it('precedes the deaths it causes', () => {
+    /**
+     * The same ordering contract `ShotFired` holds against `UnitDied`, and for
+     * the same reason: FX plays the fireball from the explosion and the fall
+     * from the death. Reversed, the men drop before the grenade goes off.
+     */
+    const r = rig()
+    const thrower = r.spawn(3, 5)
+    r.spawn(9, 5, 'enemy', 1)
+    r.run(1)
+    r.ordnance.launch(thrower.id, 'lob', { x: 9, y: 5 })
+    r.run(200)
+    const boomAt = r.events.findIndex((e) => e.type === 'Explosion')
+    const diedAt = r.events.findIndex((e) => e.type === 'UnitDied')
+    expect(boomAt).toBeGreaterThanOrEqual(0)
+    expect(diedAt).toBeGreaterThan(boomAt)
+  })
+
+  it('goes off even when it catches nobody', () => {
+    // The event drives FX and sound, not just damage. A grenade thrown into an
+    // empty field must still make a noise.
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    r.ordnance.launch(man.id, 'lob', { x: 17, y: 9 })
+    r.run(300)
+    expect(r.explosions()).toHaveLength(1)
+  })
+})
+
+describe('the blast lands on the world', () => {
+  it('kills a man standing on the aim point', () => {
+    const r = rig()
+    const thrower = r.spawn(3, 5)
+    const victim = r.spawn(9, 5, 'enemy', 1)
+    r.run(1)
+    r.ordnance.launch(thrower.id, 'lob', { x: 9, y: 5 })
+    r.run(200)
+    expect(r.world.isAlive(victim.id)).toBe(false)
+  })
+
+  it('wounds a man at the fringe without killing him', () => {
+    // The falloff made visible in the world rather than in a returned number:
+    // radius 3, two tiles out, a third of the peak taken off a tough target.
+    const r = rig()
+    const thrower = r.spawn(3, 5)
+    const victim = r.spawn(11, 5, 'enemy', 1000)
+    r.run(1)
+    r.ordnance.launch(thrower.id, 'lob', { x: 9, y: 5 })
+    r.run(200)
+    const after = r.world.get(victim.id)
+    expect(after).toBeDefined()
+    expect(after?.health).toBeLessThan(1000)
+  })
+
+  it('leaves a man well clear of it untouched', () => {
+    const r = rig()
+    const thrower = r.spawn(3, 5)
+    const bystander = r.spawn(17, 9, 'enemy', 1000)
+    r.run(1)
+    r.ordnance.launch(thrower.id, 'lob', { x: 9, y: 5 })
+    r.run(200)
+    expect(r.world.get(bystander.id)?.health).toBe(1000)
+  })
+
+  it('can kill the man who threw it', () => {
+    // FRIENDLY FIRE, REACHABLE AT LAST. `combat/system.ts` notes that the rifle
+    // can never produce it because target selection skips your own team; this is
+    // the ticket where that stops being true, and dropping a grenade at your own
+    // feet is how a player discovers it.
+    const r = rig()
+    const fool = r.spawn(5, 5, 'player', 1)
+    r.run(1)
+    r.ordnance.launch(fool.id, 'lob', { x: 5, y: 5 })
+    r.run(200)
+    expect(r.world.isAlive(fool.id)).toBe(false)
+  })
+})
+
+describe('the in-flight view is the caller`s to keep', () => {
+  it('does not alias the system`s own array', () => {
+    /**
+     * THE OPTIMISATION SOMEONE WILL REACH FOR, and the tracer buffer already
+     * caught it once: handing back the live array avoids an allocation and means
+     * a renderer holding last frame's list watches its grenades teleport as the
+     * slots beneath them are reused by later launches.
+     */
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })
+    const held = r.ordnance.inFlight()
+    const first = held[0]
+    expect(first).toBeDefined()
+    const wasX = first?.x ?? 0
+    r.run(20)
+    expect(held[0]?.x).toBe(wasX)
+  })
+
+  it('hands back a different array each time', () => {
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })
+    expect(r.ordnance.inFlight()).not.toBe(r.ordnance.inFlight())
+  })
+
+  it('reports projectiles in launch order', () => {
+    const r = rig()
+    const a = r.spawn(3, 5)
+    const b = r.spawn(3, 6)
+    const c = r.spawn(3, 7)
+    r.run(1)
+    r.ordnance.launch(a.id, 'lob', { x: 9, y: 5 })
+    r.ordnance.launch(b.id, 'lob', { x: 9, y: 6 })
+    r.ordnance.launch(c.id, 'lob', { x: 9, y: 7 })
+    expect(r.ordnance.inFlight().map((p) => p.launcherId)).toEqual([a.id, b.id, c.id])
+  })
+
+  it('is empty before anything is thrown', () => {
+    const r = rig()
+    r.run(1)
+    expect(r.ordnance.inFlight()).toEqual([])
+    expect(r.ordnance.inFlightCount).toBe(0)
+  })
+
+  it('agrees with inFlightCount', () => {
+    const r = rig()
+    const a = r.spawn(3, 5)
+    const b = r.spawn(3, 6)
+    r.run(1)
+    r.ordnance.launch(a.id, 'lob', { x: 9, y: 5 })
+    r.ordnance.launch(b.id, 'lob', { x: 9, y: 6 })
+    expect(r.ordnance.inFlight()).toHaveLength(r.ordnance.inFlightCount)
+  })
+})
+
+describe('a projectile is not an entity', () => {
+  it('throwing one spawns nothing into the world', () => {
+    // The whole reason projectiles are the system's own bookkeeping: an entity
+    // in the live array is a thing the combat system's target scan and the AI
+    // both walk every tick, so a grenade in the air would be something soldiers
+    // stop to shoot at.
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    const before = r.world.entityCount
+    r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })
+    r.run(5)
+    expect(r.world.entityCount).toBe(before)
+  })
+
+  it('a launcher who dies mid-flight does not take his grenade with him', () => {
+    // The round is in the air. Recalling it because the thrower was shot is the
+    // same mistake `combat/system.ts` refuses to make in its second pass.
+    const r = rig()
+    const man = r.spawn(3, 5)
+    const victim = r.spawn(9, 5, 'enemy', 1)
+    r.run(1)
+    r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })
+    r.run(2)
+    r.world.despawn(man.id)
+    r.run(300)
+    expect(r.explosions()).toHaveLength(1)
+    expect(r.world.isAlive(victim.id)).toBe(false)
+  })
+})
+
+describe('determinism', () => {
+  it('two identical runs produce identical event streams', () => {
+    // Nothing here may draw from `rng` or depend on a `Map`'s iteration order.
+    // The event stream is a stronger check than `World.stateHash`, which does
+    // not see projectiles at all.
+    const play = () => {
+      const r = rig()
+      const a = r.spawn(3, 5)
+      const b = r.spawn(4, 8, 'enemy', 1000)
+      r.run(1)
+      r.ordnance.launch(a.id, 'lob', { x: 9, y: 5 })
+      r.ordnance.launch(b.id, 'dart', { x: 5, y: 5 })
+      r.run(400)
+      return JSON.stringify(r.events)
+    }
+    expect(play()).toBe(play())
+  })
+
+  it('simultaneous detonations resolve in launch order', () => {
+    const r = rig()
+    const a = r.spawn(3, 5)
+    const b = r.spawn(3, 6)
+    r.run(1)
+    r.ordnance.launch(a.id, 'lob', { x: 9, y: 5 })
+    r.ordnance.launch(b.id, 'lob', { x: 9, y: 6 })
+    r.run(300)
+    const sources = r
+      .explosions()
+      .map((e) => (e.type === 'Explosion' ? e.sourceId : -1))
+    expect(sources).toEqual([a.id, b.id])
+  })
+
+  it('draws nothing from the world`s PRNG', () => {
+    // A spread cone or a damage roll would be the natural place to reach for it,
+    // and it would make every mission with a grenade in it unreplayable.
+    const r = rig()
+    const man = r.spawn(3, 5)
+    r.run(1)
+    const before = r.world.rng.getState()
+    r.ordnance.launch(man.id, 'lob', { x: 9, y: 5 })
+    r.run(300)
+    expect(r.world.rng.getState()).toBe(before)
+  })
+})
