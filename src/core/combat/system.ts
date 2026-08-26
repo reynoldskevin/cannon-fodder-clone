@@ -26,7 +26,14 @@
  */
 
 import { clearFractionAlong, hasLineOfSight } from './los'
-import { applyDamage, createCooldowns, inRange, markFired, readyToFire } from './resolution'
+import {
+  applyDamage,
+  createCooldowns,
+  hitChanceAt,
+  inRange,
+  markFired,
+  readyToFire,
+} from './resolution'
 import { AIM_TOLERANCE_TILES, weaponForKind } from './weapons'
 import { INFANTRY } from '../pathing/navgrid'
 import { TILE_WORLD_SIZE, tileToWorld } from '../view/projection'
@@ -55,6 +62,27 @@ export interface CombatOptions {
    * order from `orderFire`.
    */
   readonly autoEngageTeams?: readonly Team[]
+  /**
+   * How a hit is decided (ticket 011b).
+   *
+   * `'certain'` IS THE DEFAULT, and that is what makes accuracy one ticket
+   * rather than a rewrite of the suite. Twenty-three test files and a hundred
+   * and thirty-odd assertion sites were written against a round that lands:
+   * range and line of sight decide, and the shot connects. Under `'certain'` no
+   * draw is taken from `world.rng` AT ALL — not "almost always hits", the same
+   * code path as before this option existed — so a test that asserts a death, a
+   * health drop or a shot count behaves exactly as it did.
+   *
+   * `'weapon'` reads `WeaponSpec.accuracy` and rolls. `createSession` passes it,
+   * the way it already passes `autoEngageTeams: []` over this file's both-teams
+   * default and for the same reason: ticket 011's contract is untouched, and the
+   * session is what changes its mind about the game it is running.
+   *
+   * THIS IS NOT A FLAG TO BE REMOVED LATER. It is the seam that lets a combat
+   * test say "a round that reaches him kills him" without also asserting a dice
+   * roll, which is a different claim and has its own tests.
+   */
+  readonly hitPolicy?: 'certain' | 'weapon'
 }
 
 /**
@@ -170,6 +198,7 @@ const worldToTileAxis = (world: number, tiles: number): number =>
 export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): CombatSystem {
   const sightMask = options.sightMask ?? INFANTRY
   const autoEngageTeams = options.autoEngageTeams ?? ALL_TEAMS
+  const hitPolicy = options.hitPolicy ?? 'certain'
   const cooldowns = createCooldowns()
 
   /**
@@ -233,6 +262,14 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
    * One `Map`, cleared each tick rather than reallocated. It is read by id
    * lookup and never iterated, so its iteration order — the one thing about a
    * `Map` that determinism cannot rely on — never influences a decision.
+   *
+   * IT STILL ASSUMES EVERY ROUND LANDS, AND THAT IS DELIBERATE (ticket 011b).
+   * The accuracy roll happens in pass 2, so this is a RECORD of what was aimed
+   * rather than a PREDICTION of what will connect: a volley aimed at one soldier
+   * may spread as though he were already dead, and then miss. That reads as a
+   * squad that concentrated sensibly and got unlucky, which is the thing
+   * accuracy exists to make possible. Do not "fix" it by rolling here — see the
+   * pass 2 comment for what rolling in pass 1 would cost.
    */
   const committed = new Map<number, number>()
 
@@ -519,10 +556,48 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
       const shot = decided[i]
       if (shot === undefined) continue
       markFired(cooldowns, shot.shooterId, tick, shot.spec)
+      /**
+       * THE ACCURACY ROLL, AND IT BELONGS HERE RATHER THAN IN PASS 1 (011b).
+       *
+       * Pass 1 decides WHO IS AIMED AT. Roll there and the rng starts deciding
+       * that too: a predicted miss would free the shooter to skip the man and
+       * pick somebody else, and target selection would become a function of the
+       * random stream — a far larger behavioural change than "the round
+       * sometimes goes wide", and one that would make `committed` a prediction
+       * instead of a record. Here, the target is already chosen and the only
+       * question left is whether the round connects.
+       *
+       * THE DRAW IS SPENT ONLY ON A SHOT THAT IS ACTUALLY RESOLVED, never
+       * speculatively and never per candidate considered. A draw taken on a tick
+       * where nobody fired advances the stream and desynchronises every later
+       * shot in the mission — invisible until two replays of one seed diverge
+       * minutes apart. `decided` is filled in `world.forEachEntity` order, which
+       * is spawn order with ties on the lower id, so the draws are ordered by a
+       * fact about the world rather than by `Map` iteration.
+       *
+       * A suppressing round draws nothing: there is no target to hit or miss, so
+       * there is no question to answer and no draw to spend answering it.
+       */
+      let hit = shot.targetId !== null
+      if (hit && hitPolicy === 'weapon') {
+        // Measured muzzle to victim. For a shot that found a target these are
+        // the target's own coordinates (see pass 1), so this is the distance
+        // `inRange` already admitted, converted to the tiles the curve is
+        // expressed in.
+        const dx = shot.targetX - shot.originX
+        const dz = shot.targetZ - shot.originZ
+        const distanceTiles = Math.hypot(dx, dz) / TILE_WORLD_SIZE
+        hit = world.rng.next() < hitChanceAt(shot.spec, distanceTiles)
+      }
       // `ShotFired` BEFORE the death it causes: FX plays the muzzle flash and
       // the tracer from this event and the fall from `UnitDied`. Reversed, the
       // soldier drops before the shot is fired. Both endpoints ride on the
       // event so FX never has to look up an entity that may already be gone.
+      //
+      // A MISS IS EMITTED TOO. The report, the tracer and every enemy's reaction
+      // to being shot at hang off this event, so a miss that stayed silent would
+      // be a soldier not shooting and a garrison that stopped investigating
+      // gunfire the moment rounds started going wide.
       world.emit({
         type: 'ShotFired',
         shooterId: shot.shooterId,
@@ -532,6 +607,7 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
         originZ: shot.originZ,
         targetX: shot.targetX,
         targetZ: shot.targetZ,
+        hit,
       })
       // Hitscan: the round lands the tick it is fired. Travel time is an FX
       // concern — the tracer is interpolated between the endpoints above — not a
@@ -541,8 +617,9 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
       // concentrated fire cannot produce two deaths from one soldier.
       //
       // A null target is suppressing fire: the round was aimed at a position,
-      // and there is nothing there to damage.
-      if (shot.targetId !== null) {
+      // and there is nothing there to damage. A missed round is the same story
+      // told by the roll above — it left the rifle and went somewhere else.
+      if (hit && shot.targetId !== null) {
         applyDamage(world, shot.targetId, shot.spec.damage, shot.shooterId)
       }
     }

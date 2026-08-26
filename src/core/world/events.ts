@@ -81,6 +81,32 @@ export interface ShotFiredEvent extends EventStamp {
   readonly originZ: number
   readonly targetX: number
   readonly targetZ: number
+  /**
+   * Whether the round connected — the accuracy roll's verdict (ticket 011b).
+   *
+   * THE ROLL, NOT THE OUTCOME. It is recorded before damage is applied, so
+   * `hit: true` does not promise health was removed: `applyDamage` is a no-op
+   * against a target an earlier round in the same volley already killed, and
+   * that round still connected. See `system.ts`.
+   *
+   * A MISS IS AN EVENT, NOT A NOTHING. The muzzle flash, the report, the tracer
+   * and every enemy's reaction to being shot at all hang off this event, so a
+   * missed round still fires it — a miss that emitted nothing would be a soldier
+   * silently not shooting, and the level would stop reacting to a firefight the
+   * moment the rounds started going wide. `alertRadiusTiles` hears this event
+   * and not a death, so it needs no change and must not grow one.
+   *
+   * REQUIRED, NOT OPTIONAL, and that is the point of putting it here rather than
+   * inferring it downstream. An absent flag read by a truthiness check is a miss,
+   * so a producer that forgot to set it would silently make its weapon useless;
+   * required makes the compiler the mechanism.
+   *
+   * `false` also covers suppressing fire — a round aimed at a patch of ground has
+   * a `null` `targetId` and nothing to connect with. That is what lets
+   * ticket 025's FX put an impact where the round actually went instead of in a
+   * man's chest.
+   */
+  readonly hit: boolean
 }
 
 /**

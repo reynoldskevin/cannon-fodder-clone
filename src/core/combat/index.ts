@@ -26,7 +26,14 @@ export type { WeaponSpec } from './weapons'
 export { hasLineOfSight, clearFractionAlong } from './los'
 export type { SightPoint } from './los'
 
-export { applyDamage, inRange, createCooldowns, readyToFire, markFired } from './resolution'
+export {
+  applyDamage,
+  inRange,
+  hitChanceAt,
+  createCooldowns,
+  readyToFire,
+  markFired,
+} from './resolution'
 export type { Cooldowns } from './resolution'
 
 export { createCombatSystem } from './system'

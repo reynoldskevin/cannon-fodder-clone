@@ -251,6 +251,24 @@ const DEFAULT_SEED = 1
  */
 const AUTO_ENGAGE_TEAMS: readonly Team[] = []
 
+/**
+ * How a hit is decided in the game the player actually plays (ticket 011b).
+ *
+ * THE WEAPON'S OWN CURVE, ROLLED. `CombatOptions.hitPolicy` defaults to
+ * `'certain'` — range and line of sight decide and the round lands — which is
+ * what every combat test written before accuracy existed describes, and it is
+ * the right default for a suite that wants to assert damage without also
+ * asserting a dice roll. It is the wrong behaviour for the MISSION: with
+ * `INFANTRY_HEALTH` at 1, a certain round turns every sightline into an
+ * execution, so an enemy who reaches eight tiles kills a man every thirty-two
+ * ticks and no cover, manoeuvre or reaction changes the outcome.
+ *
+ * Named here beside `AUTO_ENGAGE_TEAMS` because it is the same kind of decision
+ * made for the same reason: the combat system keeps its default, and this file
+ * is the one place that says which game is being run.
+ */
+const HIT_POLICY = 'weapon' as const
+
 /** The atlas source every simulated unit is drawn from. */
 const SOLDIER_SPRITE = 'soldier'
 
@@ -511,9 +529,18 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
   // `createCombatSystem`'s own `??` falling through to BOTH teams. The player
   // squad would auto-engage, which is the single behaviour this line exists to
   // prevent, on the strength of an argument that said nothing at all.
+  //
+  // AND THE ROLL IS SWITCHED ON HERE (ticket 011b), by the same argument and
+  // resolved the same way. `CombatOptions.hitPolicy` defaults to `'certain'` so
+  // that every combat test written before accuracy existed still describes a
+  // round that lands; the GAME is the thing that wants a shot to be a chance,
+  // because a certain round plus one point of infantry health makes any
+  // sightline an execution and no cover or manoeuvre changes it. This line is
+  // where the session says which of the two it is running.
   const combat = createCombatSystem(grid, {
     ...options.combat,
     autoEngageTeams: options.combat?.autoEngageTeams ?? AUTO_ENGAGE_TEAMS,
+    hitPolicy: options.combat?.hitPolicy ?? HIT_POLICY,
   })
   // The enemy's brain (ticket 012). It is handed the two systems it drives
   // rather than building any of its own: a pursuit is a `squad.order`, opening

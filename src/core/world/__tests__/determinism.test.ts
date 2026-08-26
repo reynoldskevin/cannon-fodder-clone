@@ -60,6 +60,9 @@ function turbulence(world: World): void {
         originZ: target.z,
         targetX: target.x + 1,
         targetZ: target.z,
+        // Required since ticket 011b. This event is noise on the bus, not a shot
+        // anything resolves, so the value is arbitrary and only has to be fixed.
+        hit: true,
       })
     }
   }
