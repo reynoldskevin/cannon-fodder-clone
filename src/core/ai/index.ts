@@ -21,6 +21,14 @@
 export { createAiSystem, AI_STATES } from './system'
 export type { AiOptions, AiState, AiSystem } from './system'
 
+/**
+ * The enemy cast list (ticket 018): per-kind stats, on the model of
+ * `combat/weapons.ts`. `tuning.ts` keeps the numbers an UNKNOWN kind falls back
+ * to; a kind named here overrides them for that unit alone.
+ */
+export { ARCHETYPES, archetypeFor, DEFAULT_ARCHETYPE_NAME } from './archetypes'
+export type { ArchetypeSpec } from './archetypes'
+
 export {
   DEFAULT_SIGHT_RANGE_TILES,
   DEFAULT_ALERT_RADIUS_TILES,

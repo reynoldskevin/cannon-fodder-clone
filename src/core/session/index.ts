@@ -330,6 +330,76 @@ function facingVector(facing: string | undefined): Direction | undefined {
   return FACING_VECTORS[facing.toUpperCase()]
 }
 
+/**
+ * A spawn point's `patrol` field as a route, or `null` if it is not one.
+ *
+ * `SpawnPoint` is open (`[field: string]: unknown`) and `core/level` copies
+ * fields it does not know about verbatim, which is exactly the extension point
+ * ticket 018 rides — and the price of riding it is that NOTHING HAS VALIDATED
+ * THIS. A level document is hand-authored (and `tools/mapgen` emits it), so the
+ * value arriving here may be a number, a string, or an array of half-written
+ * waypoints, and it reaches the sim untouched.
+ *
+ * A MALFORMED ROUTE IS NO ROUTE AT ALL, rather than the waypoints that happened
+ * to parse. A beat with a hole in it is a different beat: the guard would walk
+ * a line the author never drew, past ground the author meant him to cover, and
+ * the mission would look subtly wrong rather than obviously broken. Holding
+ * position is what every enemy in the game does today, so it is the failure the
+ * player cannot misread.
+ */
+function patrolRoute(patrol: unknown): TileCoord[] | null {
+  if (!Array.isArray(patrol)) return null
+  const route: TileCoord[] = []
+  for (const waypoint of patrol as readonly unknown[]) {
+    if (typeof waypoint !== 'object' || waypoint === null) return null
+    const { x, y } = waypoint as { x?: unknown; y?: unknown }
+    if (typeof x !== 'number' || typeof y !== 'number') return null
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+    route.push({ x, y })
+  }
+  // An authored empty array is not malformed, it is simply no route — and
+  // `assignPatrol` reads it that way too, so the two agree without either
+  // needing to know it.
+  return route
+}
+
+/**
+ * Hand every enemy spawn's authored beat to the AI (ticket 018).
+ *
+ * PAIRED BY POSITION IN THE ENEMY LIST, NOT BY ID ARITHMETIC.
+ * `World.spawnFromLevel` appends avatars then enemies, each in level order, so
+ * the nth enemy ENTITY is the nth enemy SPAWN POINT — but writing that as
+ * `entities[avatars.length + i]` would bake in a second fact (that every avatar
+ * spawn produced exactly one entity) that this file has no business asserting.
+ * Counting enemies as they come out of the entity list survives a level whose
+ * avatars are filtered, capped, or spawned some other way entirely; it depends
+ * only on ORDER WITHIN A TEAM, which is the guarantee `spawnFromLevel`
+ * documents. Nothing here assumes what ids `World` issues.
+ *
+ * Called once, at build time, before the first tick: routes are startup data,
+ * and a session that re-derived them per tick would be reading the level
+ * document sixty times a second to learn something that cannot change.
+ */
+function assignPatrolRoutes(world: World, level: LevelData, ai: AiSystem): void {
+  const points = level.spawns.enemies
+  const spawned = world.entities
+  let enemyIndex = 0
+  for (let i = 0; i < spawned.length; i += 1) {
+    const entity = spawned[i]
+    if (entity === undefined || entity.team !== 'enemy') continue
+    const point = points[enemyIndex]
+    enemyIndex += 1
+    if (point === undefined) continue
+    const route = patrolRoute(point['patrol'])
+    // `undefined` is the overwhelmingly common case — every enemy in every
+    // level shipped today — and it must not reach `assignPatrol` as an empty
+    // route, because "no beat" and "a beat that was withdrawn" are different
+    // things to say to a machine that keeps per-unit state.
+    if (route === null || route.length === 0) continue
+    ai.assignPatrol(entity.id, route)
+  }
+}
+
 /** A dead unit, still drawn until its death clip has played out. */
 interface Corpse {
   readonly id: number
@@ -382,6 +452,7 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
   // enemy round is therefore subject to exactly the range and sightline checks
   // a player's is.
   const ai = createAiSystem(grid, { squad, combat })
+  assignPatrolRoutes(world, level, ai)
   // The mission's judge (ticket 013). It is handed the level and reads the
   // world; it never drains the event bus, which is presentation's and
   // exactly-once — it peeks at it instead (`World.peekEvents`), for the same

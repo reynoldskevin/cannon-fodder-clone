@@ -60,6 +60,7 @@
 import { hasLineOfSight, inRange, weaponForKind } from '../combat'
 import { INFANTRY } from '../pathing/navgrid'
 import { TILE_WORLD_SIZE, tileToWorld, worldToTileX, worldToTileY } from '../view/projection'
+import { ARCHETYPES } from './archetypes'
 import {
   DEFAULT_ALERT_RADIUS_TILES,
   DEFAULT_ALERT_TIMEOUT_TICKS,
@@ -67,6 +68,7 @@ import {
   DEFAULT_PURSUE_TIMEOUT_TICKS,
   DEFAULT_SIGHT_RANGE_TILES,
 } from './tuning'
+import type { ArchetypeSpec } from './archetypes'
 import type { CombatSystem } from '../combat'
 import type { NavGrid, TraversalMask } from '../pathing/navgrid'
 import type { SquadSystem } from '../squad'
@@ -109,7 +111,39 @@ export interface AiOptions {
    * his men shoot — would be undone from a new file.
    */
   readonly team?: Team
-  /** Sight, hearing, patience and arrival. Defaults in `tuning.ts`. */
+  /**
+   * The archetype table these units' stats are resolved from, by `Entity.kind`.
+   * The shipped `ARCHETYPES` by default.
+   *
+   * IT REPLACES THE MODULE TABLE, IT DOES NOT MERGE OVER IT. A merge would make
+   * "adding an archetype is a table row" true only for rows this module already
+   * anticipated: a caller could add kinds but never take one away or reshape one
+   * the module ships, and a test that passed a two-row table would silently be
+   * testing a table of two plus everything else. A caller who wants the shipped
+   * rows in his table spreads them into it himself, where the decision is visible.
+   *
+   * PRECEDENCE IS THREE DEEP, AND THE TABLE IS IN THE MIDDLE: a value stated
+   * explicitly in these options wins, then this unit's archetype row, then
+   * `tuning.ts`. Ticket 018 originally said the row wins outright, and that is
+   * wrong in a way a shipped test catches — `states.test.ts`'s "gives up on the
+   * timeout even when it never arrives" passes `pursueTimeoutTicks: 30` and
+   * spawns riflemen, and a row saying 300 would quietly overrule it. The
+   * general rule behind the special case: an explicit option is a deliberate
+   * instruction about THIS session (a difficulty level, a test pinning one
+   * number), while the table is a DEFAULT PER KIND. A default that overrode the
+   * caller would leave those settings applying to exactly the kinds nobody had
+   * written a row for, which is the least predictable rule available.
+   */
+  readonly archetypes?: Readonly<Record<string, ArchetypeSpec>>
+  /**
+   * Sight, hearing, patience and arrival — THE FALLBACK FOR A KIND THE TABLE
+   * DOES NOT NAME, not the setting for everybody. Defaults in `tuning.ts`.
+   *
+   * That fallback is the whole compatibility story of ticket 018: every level
+   * authored before archetypes existed spawns kinds nobody has written a row for,
+   * and each of those units gets exactly the numbers it got when these were the
+   * only numbers there were.
+   */
   readonly sightRangeTiles?: number
   readonly alertRadiusTiles?: number
   readonly pursueTimeoutTicks?: number
@@ -167,6 +201,23 @@ export interface AiSystem extends SimSystem {
    * event heard twice cannot alert a man twice.
    */
   hear(events: readonly SimEvent[]): void
+  /**
+   * Give this unit a beat to walk (ticket 018). An empty route removes one.
+   *
+   * TOLD, NOT DISCOVERED. The machine is handed a grid, not a level, and entity
+   * ids do not exist until something spawns — so the session reads
+   * `level.spawns.enemies[i].patrol` and calls this after `spawnFromLevel`.
+   * Teaching `World` to remember which spawn point produced which entity would
+   * put level authoring into the world's core, and matching by spawn order in
+   * here would make the machine depend on an ordering it cannot see. It also
+   * makes every patrol case testable without a level document at all.
+   *
+   * An id naming nothing, or naming a unit on another team, is accepted and
+   * never acted on: the tick pass only ever visits this machine's own team, so
+   * a route assigned to a player avatar cannot take the squad out of the
+   * player's hands.
+   */
+  assignPatrol(unitId: number, route: readonly TileCoord[]): void
 }
 
 /**
@@ -183,6 +234,33 @@ export interface AiSystem extends SimSystem {
  */
 interface Memory {
   state: AiState
+  /**
+   * This unit's own stats, resolved ONCE from its `kind` when the machine first
+   * sees it (ticket 018).
+   *
+   * Resolved once because `Entity.kind` never changes — a man does not become a
+   * sniper mid-mission — and because the alternative is a table lookup and four
+   * multiplies per unit per tick, sixty times a second, to compute a constant.
+   * Held in WORLD units for the same reason the module-level ranges below are:
+   * this is where the two spaces meet, and converting at the comparison would
+   * scatter the tile-size assumption through the state machine.
+   */
+  sightRangeWorld: number
+  alertRadiusWorld: number
+  pursueTimeoutTicks: number
+  alertTimeoutTicks: number
+  /** How far this unit may be drawn off its beat, in world units. See `aggression`. */
+  leashWorld: number
+  /**
+   * Whether the errand below is a patrol waypoint rather than a pursuit or an
+   * investigation.
+   *
+   * Needed because all three share one set of goal fields, and the patrol has to
+   * know whether the goal it is looking at is its own — a man who resumed his
+   * beat by inheriting the last-known position of a man he was chasing would
+   * walk to a tile that is on nobody's route.
+   */
+  patrolling: boolean
   /** Destination of a `pursue` or `alert`, as a tile and as the world point of its centre. */
   hasGoal: boolean
   goalX: number
@@ -211,6 +289,53 @@ interface Memory {
   deadline: number
 }
 
+/**
+ * One unit's beat: the waypoints, which one he is walking to, and the post his
+ * chases are measured from.
+ *
+ * THE POST IS WHERE HE WAS STANDING WHEN SOMETHING TOOK HIM OFF HIS BEAT — not
+ * a waypoint at all. It is fixed at that moment and held for as long as the
+ * contact lasts.
+ *
+ * IT IS NOT THE WAYPOINT HE IS WALKING TO. That was the defect adversarial
+ * review rejected this ticket for: a man one tile into an eighteen-tile leg
+ * measured his leash from the far end of it, and so was seventeen tiles from
+ * "his post" while standing on his own route. He abandoned every pursuit the
+ * instant he lost sight, which made a patrolling guard strictly worse at his
+ * job than a static one.
+ *
+ * IT IS NOT THE NEAREST WAYPOINT EITHER, which was the first repair and left a
+ * quieter version of the same symptom: nothing says a waypoint is within the
+ * leash. Halfway along a leg longer than TWICE the leash — 24 tiles for a
+ * rifleman, 18 for a sniper — a man standing exactly where he was authored to
+ * stand is already outside it and will not fight. A 57x45 map clears that with
+ * one wall patrol. The alternative was a comment telling route authors to keep
+ * their legs short, which is a landmine with a label on it: the constraint
+ * would be rediscovered by a designer wondering why his guards run away.
+ *
+ * His own position removes the class at any leg length, needs no rule anybody
+ * has to remember, and is the truer reading of `aggression` besides: how far he
+ * strays from where he was when interrupted, rather than from a waypoint he may
+ * be nowhere near.
+ *
+ * Fixed at the interruption rather than tracking him, because a leash that
+ * followed the man could never be exceeded: he would ratchet across the map a
+ * chase at a time, which is the opposite failure and the harder one to see.
+ */
+interface Patrol {
+  readonly route: readonly TileCoord[]
+  index: number
+  /**
+   * False until a contact anchors the post, and false again the moment he is
+   * back on his beat. An unanchored post is never measured against: `{ 0, 0 }`
+   * is the MAP CENTRE, and treating it as a post is how the defect above put
+   * every routed enemy on a leash to the middle of the level.
+   */
+  hasPost: boolean
+  postWorldX: number
+  postWorldZ: number
+}
+
 /** A shot this machine has been told about and has not yet reacted to. */
 interface Rumour {
   x: number
@@ -231,11 +356,14 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
   const combat = options.combat
   const team = options.team ?? 'enemy'
   const mask = options.traversalMask ?? INFANTRY
-  const sightRangeTiles = options.sightRangeTiles ?? DEFAULT_SIGHT_RANGE_TILES
-  const alertRadiusTiles = options.alertRadiusTiles ?? DEFAULT_ALERT_RADIUS_TILES
-  const pursueTimeoutTicks = options.pursueTimeoutTicks ?? DEFAULT_PURSUE_TIMEOUT_TICKS
-  const alertTimeoutTicks = options.alertTimeoutTicks ?? DEFAULT_ALERT_TIMEOUT_TICKS
+  // Sight, hearing and the two timeouts are NOT resolved here any more: they are
+  // per unit as of ticket 018 and are settled once each in `memoryFor`, where
+  // the archetype is known. Resolving them here as well would leave two answers
+  // to the same question in one file, and the one at the top would be the one a
+  // reader believed.
   const arrivalTiles = options.arrivalTiles ?? DEFAULT_ARRIVAL_TILES
+  // REPLACES, never merges — see `AiOptions.archetypes`.
+  const archetypes = options.archetypes ?? ARCHETYPES
 
   /**
    * Tile distances converted to WORLD units once, here, at the one place the two
@@ -244,9 +372,11 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    * tile count as a world distance, and a later change to the tile size would
    * make every range in the machine silently wrong by exactly that factor.
    */
-  const sightRangeWorld = sightRangeTiles * TILE_WORLD_SIZE
-  const alertRadiusWorld = alertRadiusTiles * TILE_WORLD_SIZE
   const arrivalWorld = arrivalTiles * TILE_WORLD_SIZE
+  // Sight and hearing are converted the same way and for the same reason, but
+  // PER UNIT now (ticket 018) — see `Memory`. Arrival stays here because it
+  // describes the squad system's stopping distance, which is one fact about the
+  // engine rather than a fact about a man.
 
   /**
    * The level's extent, so destinations can be converted with the shared
@@ -264,6 +394,17 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    * only ever deletes entries and therefore decides nothing.
    */
   const memories = new Map<number, Memory>()
+
+  /**
+   * The beat each routed unit walks, by entity id.
+   *
+   * Read by KEYED LOOKUP ONLY and never iterated to reach a decision, which is
+   * the rule every system here follows: an iteration order that decided which
+   * man moved first would be a determinism failure that reproduces only in the
+   * test that happened to run second. It is walked once a tick alongside
+   * `memories` to drop the dead, and that loop only ever deletes.
+   */
+  const patrols = new Map<number, Patrol>()
 
   /**
    * Shots heard since the last tick, in the order they were reported.
@@ -313,12 +454,50 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    */
   const toTileAxis = (world: number, tiles: number): number => world / TILE_WORLD_SIZE + tiles / 2
 
-  /** This unit's memory, created the first time the machine sees it. */
-  function memoryFor(unitId: number): Memory {
+  /**
+   * This unit's memory, created — and its stats resolved — the first time the
+   * machine sees it.
+   *
+   * The lookup is by `kind` and misses on purpose for anything the table does
+   * not name: the system options are the fallback, and every enemy in every
+   * level authored before ticket 018 takes that path. See `AiOptions.archetypes`.
+   */
+  function memoryFor(unit: Entity): Memory {
+    const unitId = unit.id
     const existing = memories.get(unitId)
     if (existing !== undefined) return existing
+    /**
+     * PRECEDENCE, AND IT IS THREE DEEP: what the caller stated explicitly, then
+     * this unit's archetype, then `tuning.ts`.
+     *
+     * The caller's value outranks the table on purpose. `AiOptions` is a
+     * decision about THIS session — a test dialling the whole map's patience
+     * down to thirty ticks, a difficulty level slackening every enemy's eyes —
+     * and a table row that quietly overrode it would make those settings apply
+     * to exactly the kinds nobody had written a row for, which is the least
+     * predictable rule available. The table is the DEFAULT PER KIND, not an
+     * override of the operator.
+     */
+    const spec = archetypes[unit.kind]
+    const sight =
+      (options.sightRangeTiles ?? spec?.sightRangeTiles ?? DEFAULT_SIGHT_RANGE_TILES) *
+      TILE_WORLD_SIZE
     const created: Memory = {
       state: IDLE,
+      sightRangeWorld: sight,
+      alertRadiusWorld:
+        (options.alertRadiusTiles ?? spec?.alertRadiusTiles ?? DEFAULT_ALERT_RADIUS_TILES) *
+        TILE_WORLD_SIZE,
+      pursueTimeoutTicks:
+        options.pursueTimeoutTicks ?? spec?.pursueTimeoutTicks ?? DEFAULT_PURSUE_TIMEOUT_TICKS,
+      alertTimeoutTicks:
+        options.alertTimeoutTicks ?? spec?.alertTimeoutTicks ?? DEFAULT_ALERT_TIMEOUT_TICKS,
+      // A multiple of this unit's OWN sight, so a retune of the eyes moves the
+      // leash with them; a kind with no row has no post to be leashed to either,
+      // and `Infinity` is how "the timeout alone decides" is spelled without a
+      // second branch in the pursuit test below.
+      leashWorld: spec === undefined ? Infinity : spec.aggression * sight,
+      patrolling: false,
       hasGoal: false,
       goalX: 0,
       goalY: 0,
@@ -355,7 +534,7 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    * expensive test here; almost every candidate is eliminated by a subtraction
    * and a multiply instead.
    */
-  function acquire(world: World, hunter: Entity): Entity | null {
+  function acquire(world: World, hunter: Entity, sightRangeWorld: number): Entity | null {
     let best: Entity | null = null
     let bestDistanceSq = 0
     const candidates = world.entities
@@ -396,7 +575,7 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    * position for no reason the player can see. Ties go to the earlier report,
    * which is emission order and therefore a fact about the simulation.
    */
-  function nearestRumour(listener: Entity): Rumour | null {
+  function nearestRumour(listener: Entity, alertRadiusWorld: number): Rumour | null {
     let best: Rumour | null = null
     let bestDistanceSq = 0
     for (let i = 0; i < rumourCount; i += 1) {
@@ -433,8 +612,18 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
     // of helpers is `worldToTile`'s own arithmetic — it is defined in terms of
     // them — so this is the same rounding and the same clamp, not a second
     // spelling of the half-tile convention.
-    const tileX = worldToTileX(worldX, levelSize)
-    const tileY = worldToTileY(worldZ, levelSize)
+    setGoalTile(memory, worldToTileX(worldX, levelSize), worldToTileY(worldZ, levelSize))
+  }
+
+  /**
+   * Point this unit's errand at a TILE it was given directly.
+   *
+   * Split out of `aimErrandAt` for the patrol, whose waypoints are already tile
+   * indices: converting a waypoint to a world point only to have it converted
+   * straight back would round a route through the half-tile convention twice for
+   * no reason, and the two roundings are not each other's inverse at a boundary.
+   */
+  function setGoalTile(memory: Memory, tileX: number, tileY: number): void {
     if (memory.hasGoal && memory.goalX === tileX && memory.goalY === tileY) return
     // Only the change allocates.
     const point = tileToWorld(tileX, tileY, levelSize)
@@ -443,6 +632,46 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
     memory.goalY = tileY
     memory.goalWorldX = point.x
     memory.goalWorldZ = point.z
+  }
+
+  /**
+   * Whether this unit has been drawn further off its beat than its archetype
+   * will tolerate (ticket 018's `aggression`).
+   *
+   * ONLY A UNIT WITH A ROUTE HAS A BEAT. A routeless enemy — which is every
+   * enemy in the game today — has nothing to measure from, so it is bounded by
+   * `pursueTimeoutTicks` alone exactly as it was before archetypes existed, and
+   * this returns false without touching anything. `leashWorld` is `Infinity` for
+   * a kind the table does not name, so an unknown kind on a route is likewise
+   * unchanged.
+   *
+   * Measured from the WAYPOINT HE WAS WALKING TO, not from where he broke off:
+   * the post is the fixed thing, and a leash anchored to the point of
+   * interruption would let a man ratchet across the map one chase at a time.
+   */
+  function offTheLeash(unit: Entity, memory: Memory, patrol: Patrol | undefined): boolean {
+    if (patrol === undefined || !patrol.hasPost || memory.leashWorld === Infinity) return false
+    return !inRange(unit.x, unit.z, patrol.postWorldX, patrol.postWorldZ, memory.leashWorld)
+  }
+
+  /**
+   * Fix this unit's post at WHERE HE IS STANDING, right now.
+   *
+   * Called ONCE, on the tick a contact takes him off his beat, and never again
+   * until he is back on it — that is what stops the leash from following the man
+   * it is supposed to restrain. A man is therefore always zero tiles from his
+   * post at the moment a chase begins, whatever his route looks like, so nothing
+   * about a leash can stop him giving chase: `aggression` BOUNDS a pursuit, and
+   * a knob that forbade one would be a bug wearing a design's name. See `Patrol`
+   * for the two anchors this replaced and the symptom each one produced.
+   *
+   * Two field writes and no allocation, which is why it can sit on the decision
+   * path without a second thought.
+   */
+  function anchorPost(unit: Entity, patrol: Patrol): void {
+    patrol.hasPost = true
+    patrol.postWorldX = unit.x
+    patrol.postWorldZ = unit.z
   }
 
   /** Whether this unit is standing on the errand it was sent on. */
@@ -476,7 +705,76 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
   function stop(memory: Memory, unitId: number): void {
     memory.hasGoal = false
     memory.ordered = false
+    // A halted man is not on his beat any more, and the next idle tick has to
+    // choose a waypoint afresh rather than resume one he was already walking to
+    // — that choice is what makes an interrupted guard carry on from where he
+    // was standing instead of trudging back to the top of the list.
+    memory.patrolling = false
     squad.halt(just(unitId))
+  }
+
+  /**
+   * The waypoint this unit is nearest to, as an index into its route.
+   *
+   * RESUMING, NOT RESTARTING. A guard shot at three quarters of the way along a
+   * wall who went back to index 0 would walk the whole wall backwards before
+   * carrying on, and the player reads that as the AI forgetting what it was
+   * doing. Squared distance, so no square root; ties go to the LOWER INDEX,
+   * which is a fact about the route rather than about the scan order, and a
+   * route with two waypoints the same distance away must not resolve differently
+   * on two machines.
+   *
+   * The caller guarantees a non-empty route, so index 0 is always a real answer.
+   */
+  function nearestWaypoint(unit: Entity, route: readonly TileCoord[]): number {
+    let best = 0
+    let bestDistanceSq = Infinity
+    for (let i = 0; i < route.length; i += 1) {
+      const waypoint = route[i]
+      if (waypoint === undefined) continue
+      // The waypoint's CENTRE, through the shared conversion rather than a
+      // second spelling of the half-tile convention. It allocates, and that is
+      // affordable HERE and nowhere else in this file: choosing a waypoint
+      // happens when a man resumes his beat, not on the ticks he walks it.
+      const centre = tileToWorld(waypoint.x, waypoint.y, levelSize)
+      const dx = centre.x - unit.x
+      const dz = centre.z - unit.z
+      const distanceSq = dx * dx + dz * dz
+      if (distanceSq >= bestDistanceSq) continue
+      best = i
+      bestDistanceSq = distanceSq
+    }
+    return best
+  }
+
+  /** Send this unit to the waypoint its patrol is currently pointed at. */
+  function headForWaypoint(memory: Memory, patrol: Patrol): void {
+    const waypoint = patrol.route[patrol.index]
+    if (waypoint === undefined) return
+    memory.patrolling = true
+    setGoalTile(memory, waypoint.x, waypoint.y)
+  }
+
+  /**
+   * Walk the beat. Called only from `idle`, which is the whole of the design:
+   * an enemy who kept strolling his route while being shot at would read as an
+   * AI that had not noticed the player, which is worse than one that stands still.
+   */
+  function patrolStep(memory: Memory, unit: Entity, patrol: Patrol): void {
+    if (!memory.patrolling || !memory.hasGoal) {
+      patrol.index = nearestWaypoint(unit, patrol.route)
+      headForWaypoint(memory, patrol)
+    }
+    if (arrived(unit, memory)) {
+      // WRAPPING, so a beat is a beat and not a slow march to a new post. The
+      // advance happens in the same tick as the resume above on purpose: a man
+      // who resumes onto the waypoint he is already standing on would otherwise
+      // spend a tick ordering himself to where he is, which is a flow field
+      // replanned for nothing.
+      patrol.index = (patrol.index + 1) % patrol.route.length
+      headForWaypoint(memory, patrol)
+    }
+    march(memory, unit.id)
   }
 
   /**
@@ -521,9 +819,10 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    * rule scattered through the branches above it.
    */
   function step(world: World, unit: Entity, tick: number): void {
-    const memory = memoryFor(unit.id)
+    const memory = memoryFor(unit)
     const previous = memory.state
-    const target = acquire(world, unit)
+    const target = acquire(world, unit, memory.sightRangeWorld)
+    const patrol = patrols.get(unit.id)
     let next: AiState
 
     if (target !== null) {
@@ -551,7 +850,7 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
         // pursued, not from the start of the chase: a soldier who can still see
         // his target has not lost the trail, and retiring him on a timer while
         // the player is in plain view is the state names hiding a bug again.
-        memory.deadline = tick + pursueTimeoutTicks
+        memory.deadline = tick + memory.pursueTimeoutTicks
       }
     } else if (previous === ENGAGE && memory.hasTarget && !world.isAlive(memory.targetId)) {
       // GUARDED ON `previous === ENGAGE`, DELIBERATELY. A man already in
@@ -576,7 +875,7 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
       if (memory.hasLastKnown) {
         next = PURSUE
         aimErrandAt(memory, memory.lastKnownX, memory.lastKnownZ)
-        memory.deadline = tick + pursueTimeoutTicks
+        memory.deadline = tick + memory.pursueTimeoutTicks
       } else {
         next = IDLE
       }
@@ -584,22 +883,50 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
       // An errand in progress, with nothing in sight to outrank it. It ends on
       // arrival, or on the timeout that stops an unreachable destination from
       // being walked at for the rest of the mission.
-      next = !memory.hasGoal || tick >= memory.deadline || arrived(unit, memory) ? IDLE : previous
+      next =
+        !memory.hasGoal ||
+        tick >= memory.deadline ||
+        arrived(unit, memory) ||
+        offTheLeash(unit, memory, patrol)
+          ? IDLE
+          : previous
     } else {
       // Idle, and therefore available to be curious. Gunfire is the only thing
       // that reaches a man who can see nothing; `alert` deliberately cannot
       // interrupt anything, which is why this branch is last.
-      const rumour = nearestRumour(unit)
+      const rumour = nearestRumour(unit, memory.alertRadiusWorld)
       if (rumour === null) {
         next = IDLE
       } else {
         next = ALERT
         aimErrandAt(memory, rumour.x, rumour.z)
-        memory.deadline = tick + alertTimeoutTicks
+        memory.deadline = tick + memory.alertTimeoutTicks
       }
     }
 
     memory.state = next
+
+    /**
+     * The post is fixed HERE, on the tick his beat is interrupted, and released
+     * the tick he is back on it.
+     *
+     * Both halves matter. Anchoring on the transition is what makes it the place
+     * he actually broke off from rather than wherever the chase has since taken
+     * him; releasing it on the return is what makes the NEXT contact anchor
+     * afresh, so a guard cannot inherit a post from an hour ago at the far end
+     * of his route. `previous === IDLE` is the transition, and `!hasPost` covers
+     * a unit whose route was assigned while he was already in contact — a
+     * session hands out routes at build time, but nothing in the type forbids a
+     * later one.
+     *
+     * Costs a `Map` lookup and a branch per unit per tick, and the scan behind
+     * `anchorPost` only on the transition itself. A routeless enemy — which is
+     * every enemy in the shipped game — reaches the `undefined` and stops.
+     */
+    if (patrol !== undefined) {
+      if (next === IDLE) patrol.hasPost = false
+      else if (previous === IDLE || !patrol.hasPost) anchorPost(unit, patrol)
+    }
 
     if (next === ENGAGE) {
       // HALT ON ENTERING, NOT EVERY TICK. A man who walks into his own weapon's
@@ -619,8 +946,15 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
       // A man retired mid-march has to be stopped, or he finishes walking to a
       // destination the machine has already given up on.
       if (previous === PURSUE || previous === ALERT) stop(memory, unit.id)
+      // And only THEN, with the errand cancelled, may he pick his beat back up:
+      // patrol is what a man does with nothing better to do, so it is the last
+      // thing considered and the first thing anything else overrides.
+      if (patrol !== undefined) patrolStep(memory, unit, patrol)
       return
     }
+    // Off his beat: whatever he is walking to now, it is not a waypoint, and
+    // the next idle tick must choose one rather than inherit this goal.
+    memory.patrolling = false
     march(memory, unit.id)
   }
 
@@ -638,6 +972,14 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
     // depend on the order it happens to walk in.
     for (const id of memories.keys()) {
       if (!world.isAlive(id)) memories.delete(id)
+    }
+    // Routes go the same way, and for the same reason: a beat outliving the man
+    // walking it is a table that grows by one per casualty for the length of the
+    // mission. Deleting only, so the walk order still decides nothing. A route
+    // assigned to an id that has never lived is dropped on the first tick, which
+    // is the honest reading of "an unknown id is ignored".
+    for (const id of patrols.keys()) {
+      if (!world.isAlive(id)) patrols.delete(id)
     }
 
     // Spawn order, and nothing is added to or removed from the entity list by
@@ -678,6 +1020,56 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
     }
   }
 
+  /**
+   * See `AiSystem.assignPatrol`.
+   *
+   * THE ROUTE IS COPIED, not retained. The caller's array is a level document
+   * the session read, and a route shared with it would let a second
+   * `loadLevel` — or a `restart()` — edit the beat of a man already walking it.
+   * `TileCoord` is readonly, so the elements themselves cannot be written
+   * through, and this is a startup call rather than a per-tick one.
+   *
+   * Waypoints are CLAMPED to the grid rather than refused: a hand-authored
+   * level with a waypoint one tile past the edge should produce a guard walking
+   * to the edge, not a mission that will not start. A coordinate that is not a
+   * number at all is dropped, because there is no honest tile to clamp it to.
+   */
+  function assignPatrol(unitId: number, route: readonly TileCoord[]): void {
+    const copied: TileCoord[] = []
+    for (let i = 0; i < route.length; i += 1) {
+      const waypoint = route[i]
+      if (waypoint === undefined) continue
+      if (!Number.isFinite(waypoint.x) || !Number.isFinite(waypoint.y)) continue
+      copied.push({
+        x: Math.min(grid.w - 1, Math.max(0, Math.round(waypoint.x))),
+        y: Math.min(grid.h - 1, Math.max(0, Math.round(waypoint.y))),
+      })
+    }
+    // AN EMPTY ROUTE IS NO ROUTE, which is also how a route is taken away. Any
+    // beat in progress ends here rather than at the next waypoint: a man whose
+    // orders are withdrawn stands where he is.
+    if (copied.length === 0) {
+      patrols.delete(unitId)
+      const forgotten = memories.get(unitId)
+      if (forgotten !== undefined) forgotten.patrolling = false
+      return
+    }
+    // The index is deliberately NOT chosen here — the first idle tick picks the
+    // nearest waypoint, which is the same rule a resumption uses. Choosing at
+    // assignment would make a man's first waypoint depend on where he happened
+    // to spawn versus where he happened to be told, which are different moments.
+    // NEITHER THE INDEX NOR THE POST IS CHOSEN HERE, and `hasPost: false` is
+    // load-bearing rather than a lazy initialiser: this call has no entity to
+    // measure from — the AI is handed a grid, not a world — so any post written
+    // now would be a guess, and the guess this code shipped with was `{ 0, 0 }`,
+    // the map centre. The first idle tick picks the index by the same
+    // nearest-waypoint rule a resumption uses, and the first contact picks the
+    // post; both are decided where the man's own position is known.
+    patrols.set(unitId, { route: copied, index: 0, hasPost: false, postWorldX: 0, postWorldZ: 0 })
+    const memory = memories.get(unitId)
+    if (memory !== undefined) memory.patrolling = false
+  }
+
   const stateOf = (unitId: number): AiState | undefined => memories.get(unitId)?.state
 
   /**
@@ -696,5 +1088,5 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
     return memory.targetId
   }
 
-  return Object.assign(aiSystem, { stateOf, targetOf, hear })
+  return Object.assign(aiSystem, { stateOf, targetOf, hear, assignPatrol })
 }
