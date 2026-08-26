@@ -150,10 +150,24 @@ export const INFANTRY_HEALTH = 1
  * describing the wrong shape.
  *
  * A FEEL NUMBER, and it lives here for that reason: it decides who gets shot.
- * A soldier occupies about a tile, so 0.75 forgives a pointer that is off by
- * roughly a third of a man. RAISE IT and "vaguely forwards" becomes a guaranteed
- * hit and the rifle starts aiming itself; LOWER IT and a click a pixel off a
- * running man is suppressing fire into the dirt beside him.
+ * A soldier occupies about a tile, so a HALF-WIDTH of 0.75 forgives a pointer
+ * that is off by roughly three quarters of a man. RAISE IT and "vaguely
+ * forwards" becomes a guaranteed hit and the rifle starts aiming itself; LOWER
+ * IT and a click a pixel off a running man is suppressing fire into the dirt
+ * beside him.
+ *
+ * IT MUST STAY ABOVE HALF A TILE, AND THAT FLOOR IS NOT ABOUT THE POINTER AT
+ * ALL. `ai/system.ts`'s `shootAt` commands fire at the target's TILE, which
+ * `orderFire` turns into that tile's CENTRE — so the man the machine explicitly
+ * selected stands wherever he happens to be walking inside that tile, up to half
+ * a tile off its centre on each axis, and therefore that far or further
+ * perpendicular to the line the machine itself drew. Tune this below ~0.5 and
+ * every enemy in the game becomes unable to hit the man he chose: the
+ * auto-commanded path stops working on both sides of the firefight while the
+ * player's own pointer still feels fine, which is the kind of break that reads
+ * as "the AI got dumber" rather than as a tuning change. A test in
+ * `__tests__/line-of-fire.test.ts` asserts `> 0.5` with that reason attached, so
+ * a retune meets the constraint rather than discovering it.
  *
  * Not a `WeaponSpec` field: it describes the POINTER, not the rifle, and every
  * weapon in the game is aimed with the same one. It becomes per-weapon the day

@@ -424,9 +424,19 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
       if (best !== null) {
         if (along > bestAlong) continue
         // Two men abreast of each other across the corridor are exactly as far
-        // down the line as one another. Lower id wins — the tie-break the rest
-        // of the sim uses, and a fact about the world rather than about the
-        // order `world.entities` happened to reach them in.
+        // down the line as one another. LOWER ID WINS — the tie-break the rest
+        // of the sim uses.
+        //
+        // NOTHING TODAY CAN TELL THIS FROM "whichever the scan reached first",
+        // and claiming otherwise would be a fiction: ids are handed out
+        // monotonically and `World.despawn` compacts in place preserving order,
+        // so scan order IS id order and the two rules cannot disagree. Relaxing
+        // this to `>=`, which resolves ties by scan position instead, leaves the
+        // whole suite green. It is written out explicitly anyway, because that
+        // agreement is a property of `world.entities` and not of this loop: the
+        // day anything reorders that array — a spatial index, a sort, a pooled
+        // slot reused out of order — the comparison is what keeps the answer the
+        // id and not the array position.
         if (along === bestAlong && candidate.id >= best.id) continue
       }
 
