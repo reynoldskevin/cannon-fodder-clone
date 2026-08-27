@@ -40,6 +40,13 @@ import type { SquadMember } from '../campaign'
 import type { CombatOptions, CombatSystem } from '../combat'
 import type { CommandQueue } from '../command'
 import type { LevelData } from '../level'
+// THE SAME PREDICATE COMBAT GATES ON (ticket 042), not a second opinion about
+// what water is. The picture and the rule have to be unable to drift apart, and
+// two functions that agree today is how tickets 025 and 041 each shipped a
+// defect. Deliberately NOT derived from `submersionFor`: how deep a man is drawn
+// is a rendering depth and whether he may shoot is a rule, and they share an
+// answer today only by coincidence.
+import { canFireFromTerrain } from '../level'
 import type { MissionOutcome, ObjectiveSystem } from '../objectives'
 import type { NavGrid } from '../pathing'
 import type { PickupSystem } from '../pickups'
@@ -952,10 +959,44 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
    * and therefore no soldier who was ever NOT standing still.
    */
   function animationFor(entity: Entity): string {
-    if (combat.isFiring(entity.id)) return FIRE_ANIMATION
-    if (firingTicksAgo(entity.id) !== null) return FIRE_ANIMATION
+    // A MAN WHO CANNOT FIRE IS NOT DRAWN FIRING (ticket 042).
+    //
+    // Both fire arms answer to this, not just the first. `isFiring` is the
+    // standing ORDER and `firingTicksAgo` is the tail of a real shot, and a man
+    // who fires on the bank and steps into the river would otherwise flash the
+    // rest of that clip while chest-deep.
+    //
+    // `isFiring` ITSELF IS LEFT ALONE, deliberately. It is a truthful answer to
+    // its own question — does he hold an order — which ticket 007b keeps across
+    // the crossing on purpose so he resumes the instant he lands. It also drives
+    // the firing man's FACING a few branches below, and a wading man should
+    // still turn toward the point he is trying to shoot at: aiming and unable to
+    // fire is the readable version of this rule. Narrowing it here would have
+    // taken that away silently.
+    if (canFireFromHere(entity)) {
+      if (combat.isFiring(entity.id)) return FIRE_ANIMATION
+      if (firingTicksAgo(entity.id) !== null) return FIRE_ANIMATION
+    }
     if (entity.state === STATE_MOVING) return WALK_ANIMATION
     return IDLE_ANIMATION
+  }
+
+  /**
+   * Whether the terrain under this unit lets him shoot at all.
+   *
+   * THE TILE HE IS STANDING ON, never the one he is aiming at. Keying this on
+   * "is there water between him and the target" would disarm a man firing ACROSS
+   * the river from dry ground, and keying it on the column rather than the tile
+   * would disarm the bridge — undoing tickets 033 and 035 in one line.
+   *
+   * An off-map unit reads as `undefined` and MAY fire, the neutral answer that
+   * matches `canFireFromTerrain`'s own answer for a tile id this build cannot
+   * name, and matches the gate in `combat/system.ts` exactly.
+   */
+  function canFireFromHere(entity: Entity): boolean {
+    const tile = tileOf(entity.x, entity.z)
+    const id = level.terrain[tile.y]?.[tile.x]
+    return id === undefined || canFireFromTerrain(id)
   }
 
   /**
