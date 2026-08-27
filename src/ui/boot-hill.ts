@@ -38,7 +38,7 @@ import { DISPLAY_FONT, loadDisplayFont } from './display-font'
 import { INSIGNIA_STYLE, insigniaPosition } from './rank-insignia'
 import hillUrl from '../../assets/source/hill-path-background.webp?url'
 import crossUrl from '../../assets/source/sprites/cross.png?url'
-import type { BootHillModel, Grave, Promotion, Trooper } from '../core/campaign'
+import type { BootHillModel, Grave, Trooper } from '../core/campaign'
 
 export interface BootHillOptions {
   /**
@@ -67,7 +67,6 @@ export interface BootHillScreen {
 /** Matched to the HUD and `screen-chrome.ts`, so the game has one palette. */
 const TEXT = '#f2efe6'
 const MUTED = '#9fb3bd'
-const PROMOTED = '#8fd694'
 /** The colour of a fresh stone. The same warm one the lose screen uses. */
 const FRESH = '#ff8f6b'
 /** The original's panel headings are gold on black. These two are the only ones. */
@@ -153,11 +152,6 @@ function setText(node: HTMLElement, text: string): void {
 export function graveLine(grave: Grave): string {
   const kills = grave.kills === 1 ? '1 kill' : `${String(grave.kills)} kills`
   return `${grave.rankAtDeath} ${grave.name} — fell on level ${String(grave.diedOnLevel)}, ${kills}`
-}
-
-/** One promotion, with BOTH ranks: the change is the news, not the new title. */
-export function promotionLine(promotion: Promotion): string {
-  return `${promotion.name}: ${promotion.from} → ${promotion.to}`
 }
 
 /**
@@ -333,19 +327,16 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
   squadEmpty.textContent = 'No one left.'
   squadEmpty.style.cssText = `margin:0;font-size:0.8rem;color:${FRESH}`
 
-  const promotionsHeading = sectionHeading('PROMOTIONS')
-  const promotions = document.createElement('ul')
-  promotions.style.cssText = LIST_STYLE
-
-  roster.append(
-    heroesHeading,
-    graves,
-    squadHeading,
-    squad,
-    squadEmpty,
-    promotionsHeading,
-    promotions,
-  )
+  /**
+   * THERE IS NO PROMOTIONS SECTION ANY MORE (ticket 063). It listed one green
+   * line per man whose rank had risen — `JOOLS: Private → Corporal` — which was
+   * a reasonable panel while the six-rung ladder put promotions two, three and
+   * five missions apart. Ticket 062 made every survived mission a promotion, so
+   * it appeared after every win and named the whole squad: a paragraph of prose
+   * on a screen whose redesign was about being a scoreboard instead. Each man's
+   * rank and badge are on his own SQUAD row, which is where the news belongs.
+   */
+  roster.append(heroesHeading, graves, squadHeading, squad, squadEmpty)
 
   /** The hillside, and every cross standing on it. */
   const hill = document.createElement('div')
@@ -426,7 +417,6 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
    */
   const graveRows: HTMLElement[] = []
   const squadRows: HTMLElement[] = []
-  const promotionRows: HTMLElement[] = []
   /** The crosses, one per grave, in the same order and reused the same way. */
   const crosses: HTMLElement[] = []
 
@@ -491,8 +481,8 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
    * Hide the rows past `used` instead of removing them.
    *
    * A screen shown twice with different models must not leave the previous
-   * one's tail on display — a promotion from last mission still listed under
-   * this one's would be indistinguishable from a bug in `promotionsBetween`.
+   * one's tail on display — last mission's dead still listed under this one's
+   * would be indistinguishable from a bug in the campaign itself.
    */
   function trim(cache: readonly HTMLElement[], used: number): void {
     for (let i = used; i < cache.length; i += 1) {
@@ -562,14 +552,14 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
     const count = model.graves.length
     /**
      * THE WHOLE HEROES SECTION GOES WHEN THE HILL IS EMPTY (ticket 060), heading
-     * and all — the same bargain PROMOTIONS has always made below. A gold bar
-     * over nothing reads as a panel that failed to load its own contents, and on
-     * a first mission it is the first thing on the screen.
+     * and all. A gold bar over nothing reads as a panel that failed to load its
+     * own contents, and on a first mission it is the first thing on the screen.
+     * PROMOTIONS made the same bargain below until ticket 063 removed it, so
+     * this is now the only section on the screen that can hide itself.
      *
      * Restored to the EXPLICIT `display` each element was built with rather than
      * to `''`: clearing the property drops the inline `display:flex` the list's
-     * `cssText` set, and the column silently loses its gap. Same trap as the
-     * promotions block.
+     * `cssText` set, and the column silently loses its gap.
      */
     const heroesShown = count === 0 ? 'none' : 'flex'
     if (graves.style.display !== heroesShown) graves.style.display = heroesShown
@@ -642,37 +632,6 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
     // not the ordinary aftermath of a bad mission.
     const emptied = standing === 0 ? 'block' : 'none'
     if (squadEmpty.style.display !== emptied) squadEmpty.style.display = emptied
-
-    // Hidden outright when nobody was promoted, rather than left as a heading
-    // over nothing: an empty section reads as a screen that failed to load its
-    // own content.
-    const promoted = model.promotions.length
-    const shown = promoted === 0 ? 'none' : 'flex'
-    // Restored to the EXPLICIT display each element was built with, never to
-    // `''`: clearing the property drops the inline `display:flex` the list's
-    // `cssText` set, and the column silently loses its gap.
-    if (promotions.style.display !== shown) promotions.style.display = shown
-    const headingShown = promoted === 0 ? 'none' : 'block'
-    if (promotionsHeading.style.display !== headingShown) {
-      promotionsHeading.style.display = headingShown
-    }
-    for (let i = 0; i < promoted; i += 1) {
-      const promotion = model.promotions[i]
-      if (promotion === undefined) continue
-      const row = rowAt(promotionRows, promotions, i)
-      if (row.style.display !== 'flex') row.style.display = 'flex'
-      if (row.style.color !== PROMOTED) row.style.color = PROMOTED
-      /**
-       * NO BADGE ON A PROMOTION ROW, deliberately. This row's right-hand side is
-       * already `from → to` — two rank NAMES — so a single badge beside it would
-       * have to pick one of the two and would read as whichever the eye landed
-       * on. The man's current badge is on his SQUAD row a few lines down, which
-       * is where "what is he now" is answered.
-       */
-      setRow(row, null, promotion.name, `${promotion.from} → ${promotion.to}`)
-      row.title = promotionLine(promotion)
-    }
-    trim(promotionRows, promoted)
   }
 
   return { update, dispose }

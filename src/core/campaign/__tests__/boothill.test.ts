@@ -4,7 +4,6 @@ import {
   bootHillModel,
   createCampaign,
   loadCampaign,
-  recruit,
   recruitmentModel,
   recruitsAvailable,
   saveCampaign,
@@ -99,7 +98,7 @@ describe('the hill', () => {
     const before = createCampaign({ seed: 4, recruits: 3 })
     const doomed = recruitsAvailable(before)[0]!
     const after = fight(before, 1, [doomed.id])
-    expect(bootHillModel(after, []).graves[0]?.kills).toBeGreaterThan(0)
+    expect(bootHillModel(after).graves[0]?.kills).toBeGreaterThan(0)
   })
 
   it('GROWS across the campaign, oldest first', () => {
@@ -116,7 +115,7 @@ describe('the hill', () => {
       fallen.push(next.name)
       s = fight(s, level, [next.id])
     }
-    const graves = bootHillModel(s, []).graves
+    const graves = bootHillModel(s).graves
     expect(graves.map((g) => g.name)).toEqual(fallen)
     expect(graves.map((g) => g.diedOnLevel)).toEqual([1, 2, 3, 4])
   })
@@ -125,7 +124,7 @@ describe('the hill', () => {
     const before = createCampaign({ seed: 6, recruits: 5 })
     const men = recruitsAvailable(before).slice(0, 2)
     const after = fight(before, 2, men.map((m) => m.id))
-    expect(bootHillModel(after, []).graves).toHaveLength(2)
+    expect(bootHillModel(after).graves).toHaveLength(2)
   })
 
   it('marks the men who fell THIS mission, so the new stones stand out', () => {
@@ -160,7 +159,7 @@ describe('the hill', () => {
     const beforeRetry = s
     const secondAttempt = recruitsAvailable(s)[0]!
     s = fight(s, 3, [secondAttempt.id])
-    const model = bootHillModel(s, [], beforeRetry)
+    const model = bootHillModel(s, beforeRetry)
     expect(model.graves.map((g) => g.name)).toEqual([firstAttempt.name, secondAttempt.name])
     expect(model.fallenThisMission.map((g) => g.name)).toEqual([secondAttempt.name])
   })
@@ -171,7 +170,7 @@ describe('the hill', () => {
     // the player reopened the tab would be the same lie in the other direction.
     let s = createCampaign({ seed: 72, recruits: 4 })
     s = fight(s, 1, [recruitsAvailable(s)[0]!.id])
-    expect(bootHillModel(s, []).fallenThisMission).toEqual([])
+    expect(bootHillModel(s).fallenThisMission).toEqual([])
   })
 
   it('a mission nobody lost marks nobody', () => {
@@ -194,7 +193,7 @@ describe('the hill', () => {
   it('is a copy a screen can hold', () => {
     const before = createCampaign({ seed: 10, recruits: 3 })
     const after = fight(before, 1, [recruitsAvailable(before)[0]!.id])
-    const model = bootHillModel(after, [])
+    const model = bootHillModel(after)
     expect(model.graves).not.toBe(after.dead)
     expect(JSON.parse(JSON.stringify(model))).toEqual(model)
   })
@@ -209,7 +208,7 @@ describe('the hill', () => {
      */
     const before = createCampaign({ seed: 11, recruits: 3 })
     const after = fight(before, 2, [recruitsAvailable(before)[0]!.id])
-    const stone = bootHillModel(after, []).graves[0]
+    const stone = bootHillModel(after).graves[0]
     expect(Object.keys(stone ?? {}).sort()).toEqual([
       'diedOnLevel',
       'kills',
@@ -323,11 +322,11 @@ describe('the hill survives a reload', () => {
     for (let level = 1; level <= 3; level += 1) {
       s = fight(s, level, [recruitsAvailable(s)[0]!.id])
     }
-    const before = bootHillModel(s, [])
+    const before = bootHillModel(s)
     saveCampaign(port, s)
     const reloaded = loadCampaign(port)
     expect(reloaded.notice).toBeNull()
-    expect(bootHillModel(reloaded.state, [])).toEqual(before)
+    expect(bootHillModel(reloaded.state)).toEqual(before)
   })
 
   it('and the ranks on them are the ranks they were carved with', () => {
@@ -346,7 +345,7 @@ describe('the hill survives a reload', () => {
     expect(veteran.rank).toBe(RANKS[1]?.name)
     s = fight(s, 2, [veteran.id])
     saveCampaign(port, s)
-    const stone = bootHillModel(loadCampaign(port).state, []).graves[0]
+    const stone = bootHillModel(loadCampaign(port).state).graves[0]
     expect(stone?.rankAtDeath).toBe(RANKS[1]?.name)
   })
 })
@@ -501,7 +500,7 @@ describe('the scoreboard and the column beside the hill', () => {
     const before = createCampaign({ seed: 66, recruits: 2 })
     const men = recruitsAvailable(before)
     const after = fight(before, 1, [men[0]!.id, men[1]!.id])
-    expect(bootHillModel(after, [], before).squad).toEqual([])
+    expect(bootHillModel(after, before).squad).toEqual([])
   })
 
   it('the squad column is a copy, not a window onto the roster', () => {
@@ -509,7 +508,7 @@ describe('the scoreboard and the column beside the hill', () => {
     // able to reach into the campaign through the thing it was handed to draw.
     const s = createCampaign({ seed: 67, recruits: 3 })
     const roster = recruitsAvailable(s)
-    const model = bootHillModel(s, [])
+    const model = bootHillModel(s)
     expect(model.squad[0]).not.toBe(roster[0])
     expect(model.squad.map((m) => m.name)).toEqual(roster.map((m) => m.name))
   })
@@ -524,7 +523,7 @@ describe('the badge beside each name (ticket 062)', () => {
 
   it('a living man`s badge is derived, like his rank', () => {
     const s = createCampaign({ seed: 70, recruits: 4 })
-    const model = bootHillModel(s, [])
+    const model = bootHillModel(s)
     for (const man of model.squad) {
       expect({ rank: man.rank, badge: RANKS[man.rankIndex]?.name }).toEqual({
         rank: man.rank,
@@ -543,7 +542,7 @@ describe('the badge beside each name (ticket 062)', () => {
     let s = createCampaign({ seed: 71, recruits: 4 })
     const seen: number[] = []
     for (let mission = 0; mission < 5; mission += 1) {
-      const first = bootHillModel(s, []).squad[0]
+      const first = bootHillModel(s).squad[0]
       if (first !== undefined) seen.push(first.rankIndex)
       s = fight(s, 1, [])
     }
@@ -562,7 +561,7 @@ describe('the badge beside each name (ticket 062)', () => {
     for (let mission = 0; mission < 3; mission += 1) s = fight(s, 1, [])
     const veteran = recruitsAvailable(s)[0]!
     const after = fight(s, 2, [veteran.id])
-    const stone = bootHillModel(after, []).graves.find((g) => g.name === veteran.name)
+    const stone = bootHillModel(after).graves.find((g) => g.name === veteran.name)
     expect(stone?.rankAtDeath).toBe(veteran.rank)
     expect(RANKS[stone?.rankIndex ?? -1]?.name).toBe(veteran.rank)
   })
@@ -595,7 +594,7 @@ describe('the badge beside each name (ticket 062)', () => {
         },
       ],
     }
-    const stone = bootHillModel(legacy, []).graves[0]
+    const stone = bootHillModel(legacy).graves[0]
     // The words are untouched — the stone still says what it always said.
     expect(stone?.rankAtDeath).toBe('Field Marshal')
     // Only the badge is withheld.

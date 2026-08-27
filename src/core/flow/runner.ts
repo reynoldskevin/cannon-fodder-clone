@@ -38,7 +38,6 @@ import {
   loadCampaign,
   maxSquadFor,
   missionReport,
-  promotionsBetween,
   recruitsAvailable,
   saveCampaign,
   selectSquad,
@@ -211,12 +210,15 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
    * The campaign as it stood BEFORE the mission that just ended, and `null`
    * until one has.
    *
-   * THE STATE THE BOOT HILL MODEL CANNOT RECONSTRUCT.
-   * `promotionsBetween(before, after)` needs the PRE-application state: after
-   * `applyMissionReport` the dead are off the roster and the survivors already
-   * carry the mission they just survived, so a Boot Hill built from the
-   * after-state promotes everybody and carves no fresh stones. That failure
-   * raises nothing anywhere.
+   * THE STATE THE BOOT HILL MODEL CANNOT RECONSTRUCT. Which graves are NEW is a
+   * difference between two campaign states, and after `applyMissionReport` the
+   * only one still in hand is the after-state — in which this mission's dead are
+   * indistinguishable from every earlier casualty. A hill built without this
+   * marks nothing fresh, and that failure raises nothing anywhere.
+   *
+   * IT USED TO CARRY A SECOND JOB, `promotionsBetween(before, after)`, which
+   * needed the same pre-application state; ticket 063 removed the PROMOTIONS box
+   * and that function with it. The remaining reason is enough on its own.
    */
   let before: CampaignState | null = null
 
@@ -371,19 +373,21 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
       briefingModel(currentLevel(), squadRecords(), levelIndex(), recruitsAvailable(state)),
 
     bootHill: () =>
-      // NO BEFORE-STATE MEANS NO PROMOTIONS AND NO FRESH STONES, which is the
-      // right answer rather than a degraded one: the case it models is a reload,
-      // where nobody fell this session. `bootHillModel` makes the same argument
-      // about its optional third argument.
+      // NO BEFORE-STATE MEANS NO FRESH STONES, which is the right answer rather
+      // than a degraded one: the case it models is a reload, where nobody fell
+      // this session. `bootHillModel` makes the same argument about its optional
+      // second argument.
       //
       // THE SQUAD COLUMN IS NOT PASSED IN ANY MORE (ticket 056). It was
       // `squadRecords()` — the survivors of the mission just fought — and on
       // level 1, where two men deploy and both can die, that column was empty
       // while six recruits stood waiting. It is the living roster, which the
       // model reads off the state it already has.
-      before === null
-        ? bootHillModel(state, [])
-        : bootHillModel(state, promotionsBetween(before, state), before),
+      // TICKET 063 DROPPED THE PROMOTIONS ARGUMENT and the box it fed, so the
+      // two arms of this ternary became the same call with and without a
+      // before-state — which `?? undefined` says in one line. `before` still
+      // matters: it is what marks this mission's graves as fresh.
+      bootHillModel(state, before ?? undefined),
 
     summary: () => campaignSummary(state),
 

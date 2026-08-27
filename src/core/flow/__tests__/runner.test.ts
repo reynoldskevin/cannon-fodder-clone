@@ -821,3 +821,47 @@ describe('BACK TO BASE — the Briefing is no longer a one-way door (ticket 059)
     expect(runner.screen()).toBe('BootHill')
   })
 })
+
+describe('the memorial the runner hands over (ticket 063)', () => {
+  it('marks the men who fell THIS mission as fresh', () => {
+    /**
+     * THE GAP MUTATION TESTING FOUND, AND THE REASON THIS CASE EXISTS.
+     *
+     * Ticket 063 removed the PROMOTIONS box and with it `bootHillModel`'s middle
+     * argument, so `previous` shifted from the third position to the second.
+     * Every call site had to move, and the runner's is the only one that is not
+     * a test. Deleting `before` from that call — `bootHillModel(state)` — left
+     * the ENTIRE SUITE GREEN: `boothill.test.ts` passes its own before-state
+     * directly and never asks whether the runner passes one.
+     *
+     * What it breaks is quiet. The screen still renders, the graves are all
+     * there, and every stone is drawn weathered — the man who died a minute ago
+     * looks exactly like the man who died four missions back. Nothing raises.
+     */
+    const { runner } = runnerFor(THREE_LEVELS)
+    const squad = deploy(runner)
+    const doomed = squad[0]
+    if (doomed === undefined) throw new Error('no squad')
+    runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
+
+    const hill = runner.bootHill()
+    expect(hill.graves.length).toBeGreaterThan(0)
+    // The dead of the mission just fought are the FRESH ones. An empty list here
+    // is the whole defect: it means the before-state never reached the model.
+    expect(hill.fallenThisMission.map((g) => g.name)).toEqual([doomed.name])
+  })
+
+  it('and marks nothing fresh before any mission has been fought', () => {
+    // The reload case, from the other side: no before-state, no fresh stones,
+    // and that is the right answer rather than a degraded one.
+    const { runner } = runnerFor(THREE_LEVELS)
+    expect(runner.startCampaign().ok).toBe(true)
+    expect(runner.bootHill().fallenThisMission).toEqual([])
+  })
+
+  it('and the model it hands over carries no promotions field', () => {
+    // The box is gone from the screen; this is the seam it was fed through.
+    const { runner } = runnerFor(THREE_LEVELS)
+    expect(Object.keys(runner.bootHill())).not.toContain('promotions')
+  })
+})

@@ -22,23 +22,6 @@ import { recruitsAvailable } from './roster'
 import { insigniaIndexOf, rankIndexFor } from './ranks'
 import type { CampaignState } from './types'
 
-/**
- * One promotion, as the screen announces it.
- *
- * BOTH RANKS, never just the new one. "Corporal Hayes" is a fact about the
- * roster; "Hayes: Private → Corporal" is the thing that happened this mission,
- * and the screen exists to report the second.
- *
- * NO ID. A promotion is a line of prose, not a handle — nothing on this screen
- * is clickable, and carrying an id would invite a later screen to treat the
- * announcement as a selectable roster entry.
- */
-export interface Promotion {
-  readonly name: string
-  readonly from: string
-  readonly to: string
-}
-
 /** One gravestone, as the hill inscribes it. */
 export interface Grave {
   readonly name: string
@@ -125,8 +108,6 @@ export interface BootHillModel {
    */
   readonly enemyKilled: number
   readonly casualties: number
-  /** Earned by THIS mission only. Handed in — see `bootHillModel`. */
-  readonly promotions: readonly Promotion[]
   /**
    * The tail of `graves` added by this mission, so the new stones stand out.
    * Empty when the model was built without a before-state — see `fallenSince`.
@@ -135,57 +116,23 @@ export interface BootHillModel {
 }
 
 /**
- * The men whose rank rose across one mission.
- *
- * DERIVED BY COMPARING TWO STATES, NEVER RECORDED. Storing a "promoted this
- * mission" flag would be a second source of truth about a rank ticket 019
- * already derives from `missionsSurvived`, and the two would disagree the first
- * time somebody retuned `RANKS` — the flag would still be claiming a promotion
- * the ladder no longer grants. Comparing is exact and needs no new state.
- *
- * A DEAD MAN IS NEVER IN THE LIST, and it falls out of the shape rather than
- * out of a check: `recruitsAvailable` reads the LIVING roster, so a man who
- * fell this mission is simply absent from `after` and cannot be matched. That
- * matters because a posthumous promotion printed beside his own gravestone, on
- * the same screen, would read as a bug in the most conspicuous place the game
- * has — and `applyMissionReport` credits him no mission anyway.
- *
- * A MAN IN `after` WHO WAS NOT IN `before` IS NOT A PROMOTION. Auto-fill issues
- * men between missions (`selectSquad`), so the roster grows on its own; a naive
- * diff would announce every new recruit as having been promoted to Private.
- *
- * The comparison is by ID, not by name. Names are unique today, but ids are
- * unique BY CONSTRUCTION and never reused, which is the property this needs.
- */
-export function promotionsBetween(
-  before: CampaignState,
-  after: CampaignState,
-): readonly Promotion[] {
-  const was = new Map(recruitsAvailable(before).map((man) => [man.id, man.rank]))
-  const promotions: Promotion[] = []
-  for (const man of recruitsAvailable(after)) {
-    const from = was.get(man.id)
-    // Absent from `before`: a new recruit, not a promotion. See above.
-    if (from === undefined || from === man.rank) continue
-    // Any difference is a rise: `missionsSurvived` only ever increases and
-    // `rankFor` is monotonic in it, so there is no demotion to filter out. If
-    // that ever stops being true, this is the line that has to say so.
-    promotions.push({ name: man.name, from, to: man.rank })
-  }
-  return promotions
-}
-
-/**
  * What the Boot Hill screen draws.
  *
- * `promotions` IS PASSED IN RATHER THAN COMPUTED, and `previous` IS OPTIONAL.
- * Both are the same admission: what happened THIS MISSION is a difference
- * between two campaign states, and one state cannot answer it. Taking them as
- * arguments keeps the model memoryless — nothing stashed here to go stale — and
- * the caller that already holds the before-state (it is the same one that
- * called `applyMissionReport`) is the only one that needs to remember it. A
- * caller with no before-state, which is what a reload is, gets the answer that
- * case deserves: no promotions announced and no stone marked new.
+ * `previous` IS OPTIONAL, and is an admission: what happened THIS MISSION is a
+ * difference between two campaign states, and one state cannot answer it.
+ * Taking it as an argument keeps the model memoryless — nothing stashed here to
+ * go stale — and the caller that already holds the before-state (it is the same
+ * one that called `applyMissionReport`) is the only one that needs to remember
+ * it. A caller with no before-state, which is what a reload is, gets the answer
+ * that case deserves: no stone marked new.
+ *
+ * IT USED TO TAKE A LIST OF PROMOTIONS TOO, in the slot `previous` now sits
+ * beside (ticket 063). The PROMOTIONS box that consumed it is gone: it was
+ * tolerable while the six-rung ladder made a promotion rare, and ticket 062 —
+ * one rung per survived mission — turned it into a paragraph naming the whole
+ * squad after every win, on a screen redrawn to be a scoreboard rather than
+ * prose. The news is on each man's own SQUAD row anyway, as his rank and his
+ * badge. Promotion itself is untouched; only the announcement went.
  *
  * A COPY, NOT A WINDOW. `graves` is a fresh array of fresh rows carrying only
  * the four fields the screen was promised; handing back `state.dead` would let
@@ -194,7 +141,6 @@ export function promotionsBetween(
  */
 export function bootHillModel(
   state: CampaignState,
-  promotions: readonly Promotion[],
   previous?: CampaignState,
 ): BootHillModel {
   // Oldest first, which is `state.dead`'s own order: ticket 019's dead list is
@@ -229,7 +175,6 @@ export function bootHillModel(
     })),
     enemyKilled: totals.kills,
     casualties: totals.casualties,
-    promotions: [...promotions],
     fallenThisMission: fallenSince(graves, previous),
   }
 }
