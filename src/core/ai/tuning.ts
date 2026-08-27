@@ -136,3 +136,96 @@ export const DEFAULT_CLOSE_TO_FRACTION = 0.6
  * him.
  */
 export const DEFAULT_ARRIVAL_TILES = 0.75
+
+/**
+ * How wide an enemy's forward arc is, as the COSINE of its half-angle (ticket
+ * 038). 0.5 is 60° either side of where he is looking, so 120° in total.
+ *
+ * A COSINE AND NOT AN ANGLE, which is this file's first rule ("no derived
+ * fields") applied to trigonometry. The test in `system.ts` is a dot product
+ * between the unit facing and the normalised offset to a candidate, and that
+ * dot product IS the cosine of the angle between them — so a spec holding 60
+ * would need a `Math.cos` at read time, once per candidate per enemy per tick,
+ * to recover the number stored here. `weapons.ts` and `archetypes.ts` both
+ * forbid exactly that, and the value still survives a JSON round-trip so a
+ * later per-profile arc can come out of a level document unchanged.
+ *
+ * RAISE IT (toward 1) and the arc NARROWS: at 0.87 he sees 30° either side,
+ * which is a man peering down a corridor — easy to walk around, and the player
+ * stops treating garrisons as dangerous. LOWER IT (toward -1) and the arc
+ * WIDENS: at 0 he sees everything ahead of his shoulders, and at -1 the cone is
+ * gone entirely and the scan is the disc it was before this ticket. 120° is a
+ * front arc wide enough that an enemy is not comically oblivious while still
+ * leaving a back to be approached from.
+ *
+ * ONE ARC FOR EVERYBODY, deliberately: there is no per-archetype override,
+ * because the sniper's advantage is his range and not his neck. The day a
+ * design argues otherwise, this becomes a row in `archetypes.ts` and this value
+ * becomes its fallback, exactly as sight and hearing did in ticket 018.
+ */
+export const VISION_HALF_ANGLE_COS = 0.5
+
+/**
+ * How close somebody has to be before the arc above stops applying, in tiles
+ * (ticket 038). Inside this radius an enemy notices a living target in ANY
+ * direction, behind him included.
+ *
+ * WITHOUT IT THE MECHANIC READS AS A BUG. A soldier could stand pressed against
+ * an enemy's back indefinitely and never be noticed, and no player seeing that
+ * reads it as stealth — they read it as the AI being broken. A man notices
+ * someone at arm's length behind him.
+ *
+ * RAISE IT and the blind spot shrinks from the inside out; at the sight range
+ * the cone is deleted outright and every case this ticket added quietly goes
+ * back to the disc it replaced, with every arc test still green because they
+ * all stand further away than this. LOWER IT toward zero and the exception
+ * disappears, which brings the invisible-man-at-your-shoulder complaint
+ * straight back.
+ *
+ * TILES, LIKE EVERY OTHER RANGE HERE, and converted to world units once where
+ * the two spaces meet — never read as a world distance directly. It is NOT a
+ * weapon range and says nothing about how far anybody shoots; see the second
+ * rule at the top of this file.
+ */
+export const DEFAULT_AWARENESS_RADIUS_TILES = 2
+
+/**
+ * Which way an enemy is looking before anything has happened to him, as a UNIT
+ * VECTOR (ticket 038). `-z` is north, so this is SOUTH.
+ *
+ * COUNTED ON THE SHIPPED MAPS RATHER THAN PICKED — AND IT DOES NOT SUIT ALL OF
+ * THEM. Level 1's squad starts at `y = 39, 41` and all three of its enemies sit
+ * north of that, at `y = 6, 9, 13`: the default faces every one of them the way
+ * the player actually comes. Level 2's squad starts at `y = 44, 45` against
+ * enemies at `y = 8, 8, 8, 9, 14, 19, 24, 27, 40, 42, 59, 64, 65, 65, 69` — ten
+ * north of the squad and **FIVE SOUTH OF IT**, and those five face directly away
+ * from the approach.
+ *
+ * SAID PLAINLY BECAUSE AN EARLIER DRAFT OF THIS COMMENT CLAIMED "the squad
+ * arrives from the south on both", which is false, and adversarial review caught
+ * it by counting. Those five men are close to free kills at mission start. The
+ * fix is per-spawn (`SpawnPoint.facing`, below) or a different default policy —
+ * it is NOT a reason to move this number, because north would break the ten and
+ * level 1's three as well.
+ *
+ * A UNIT VECTOR, and it has to be: the arc test is a dot product against
+ * `VISION_HALF_ANGLE_COS`, so a default of any other length would scale that
+ * product and silently widen or narrow the arc for every enemy who had not
+ * moved yet. `AiSystem.face` normalises whatever it is handed for the same
+ * reason; this one is already normal so nothing has to.
+ *
+ * THE BLIND ARC IS THEREFORE PREDICTABLE, which is an accepted tradeoff rather
+ * than an oversight — a fixed default was taken over an idle scanning sweep
+ * because a predictable blind arc is legible to the player where a moving one is
+ * guesswork. `SpawnPoint.facing` has parsed since ticket 018 and the session
+ * seeds the AI from it, so a level that wants a guard looking the other way can
+ * say so today with no code change at all.
+ *
+ * CHANGE IT and every enemy in every level that authored no `facing` turns at
+ * once, which on the shipped maps means turning the garrison away from the
+ * approach.
+ */
+export const DEFAULT_ENEMY_FACING: { readonly dx: number; readonly dz: number } = {
+  dx: 0,
+  dz: 1,
+}

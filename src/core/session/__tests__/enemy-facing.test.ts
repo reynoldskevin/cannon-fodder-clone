@@ -123,3 +123,63 @@ describe('the player`s own squad is untouched by any of it', () => {
     expect(drawn.dz).toBeLessThan(0)
   })
 })
+
+describe('an authored facing is honoured, whatever spelling the level used', () => {
+  /**
+   * `core/level` validates `facing` only as a non-empty STRING, and
+   * `schema.test.ts` pins `'south'` as a value a level may carry — while
+   * `FACING_VECTORS` is keyed `N`, `NE`, `E`... and `facingVector` returns
+   * `undefined` for anything else. Before this ticket that mismatch cost a
+   * sprite its starting pose. Now it decides what a guard can SEE, silently, and
+   * the level author gets a garrison looking the wrong way with nothing to say
+   * so.
+   *
+   * Both spellings must work, or the vocabulary the schema accepts and the
+   * vocabulary the game understands are two different vocabularies.
+   */
+  const facedNorth = (facing: string): number => {
+    const s = createSession(
+      makeLevel({ avatars: [{ x: 2, y: 2 }], enemies: [{ x: 10, y: 5, facing }] }),
+    )
+    s.advance(1 / 60)
+    const drawn = enemyOf(s.renderEntities(FLAT), enemyId(s))
+    return angleOf(drawn, 0, -1)
+  }
+
+  it('accepts the compass abbreviation', () => {
+    expect(facedNorth('N')).toBeLessThan(1)
+  })
+
+  it('and the long name the level schema also accepts', () => {
+    expect(facedNorth('north')).toBeLessThan(1)
+  })
+
+  it('and an unrecognised spelling still falls back to the default, visibly', () => {
+    /**
+     * WHAT THIS ACTUALLY COVERS, stated honestly. An earlier draft of this case
+     * carried this name and then called `facedNorth('north')` — a RECOGNISED
+     * spelling — so it was a weaker duplicate of the case above it wearing a
+     * different title. Review caught it.
+     *
+     * Widening `FACING_VECTORS` fixes the eight spellings somebody thought of;
+     * it does not close the class. A typo still falls silently through to the
+     * southward default, and the author cannot tell that from the field being
+     * ignored. That is pinned here as the CURRENT behaviour rather than as the
+     * desired one — closing it properly means rejecting unknown facings at
+     * level-parse time, which changes `core/level`'s contract and belongs in its
+     * own ticket.
+     */
+    expect(facedNorth('nrth')).toBeCloseTo(180, 0)
+  })
+
+  it('and every diagonal round-trips too', () => {
+    for (const [name, abbrev] of [
+      ['northeast', 'NE'],
+      ['southeast', 'SE'],
+      ['southwest', 'SW'],
+      ['northwest', 'NW'],
+    ]) {
+      expect({ name, same: facedNorth(name!) }).toEqual({ name, same: facedNorth(abbrev!) })
+    }
+  })
+})

@@ -29,6 +29,23 @@
  * a pursuit would have a soldier walk onto a corpse; treating both as a kill
  * would have him forget a live player the moment a wall came between them.
  *
+ * SIGHT IS DIRECTIONAL, HEARING IS NOT (ticket 038). `acquire` tests a forward
+ * arc around the unit's facing on top of team, distance and the sightline — the
+ * arc JOINS those tests, it replaces none of them — so a man can be approached
+ * from behind. `nearestRumour` has no arc and never will: ears are not
+ * directional, and gunfire is the ONLY way a soldier shot in the back can ever
+ * find out he is being shot at. An arc on hearing would make the arc on sight
+ * unrecoverable, and a squad could dismantle a garrison one man at a time at no
+ * risk. The coupling that makes the pair work needs no special case: the `alert`
+ * errand already walks him at the noise, and "face where you are walking" turns
+ * him toward it, so on a later tick the shooter is inside the arc.
+ *
+ * FACING LIVES IN `Memory`, NOT ON `Entity`. `Entity`'s fields are readonly
+ * because nothing in the design changes them, and `World.stateHash` folds it —
+ * a per-tick-mutating heading there would put every unit's direction into the
+ * world hash for no gain, exactly the bargain `combat`'s cooldown table makes.
+ * `Memory` is already where per-unit AI state that outlives a tick lives.
+ *
  * HEARING IS PUSHED IN, NOT PULLED. `world.drainEvents()` empties the bus and
  * the session already drains it, so an AI that drained it too would silently
  * starve FX, audio and the HUD. `hear()` is called by the owner with the batch
@@ -65,10 +82,13 @@ import {
   DEFAULT_ALERT_RADIUS_TILES,
   DEFAULT_ALERT_TIMEOUT_TICKS,
   DEFAULT_ARRIVAL_TILES,
+  DEFAULT_AWARENESS_RADIUS_TILES,
   DEFAULT_CLOSE_TO_FRACTION,
+  DEFAULT_ENEMY_FACING,
   DEFAULT_PURSUE_TIMEOUT_TICKS,
   DEFAULT_REACTION_TICKS,
   DEFAULT_SIGHT_RANGE_TILES,
+  VISION_HALF_ANGLE_COS,
 } from './tuning'
 import type { ArchetypeSpec } from './archetypes'
 import type { CombatSystem } from '../combat'
@@ -89,6 +109,21 @@ export const AI_STATES = ['idle', 'alert', 'engage', 'pursue'] as const
 
 /** What a unit is currently doing. See the transition table in ticket 012. */
 export type AiState = (typeof AI_STATES)[number]
+
+/**
+ * Which way a unit is looking, as a UNIT VECTOR in world units — the same
+ * `dx`/`dz` convention `RenderEntity` carries, with `-z` north.
+ *
+ * ALWAYS NORMALISED, whatever produced it: the arc test is a dot product
+ * against `VISION_HALF_ANGLE_COS`, so any other length would scale that product
+ * and silently retune the arc for that one man. `face` normalises what it is
+ * given and the machine normalises what it derives; there is no path that
+ * writes an unnormalised one.
+ */
+export interface Facing {
+  readonly dx: number
+  readonly dz: number
+}
 
 const IDLE: AiState = 'idle'
 const ALERT: AiState = 'alert'
@@ -254,6 +289,50 @@ export interface AiSystem extends SimSystem {
    * player's hands.
    */
   assignPatrol(unitId: number, route: readonly TileCoord[]): void
+  /**
+   * Which way this unit is looking (ticket 038), or `undefined` for a unit this
+   * machine does not command — the whole player team, anything that never
+   * existed, and anyone who has died since the last tick. Exactly `stateOf`'s
+   * domain, because it is the same per-unit memory.
+   *
+   * EXPOSED SO THE RENDERER CAN DRAW IT, and that is the criterion that decides
+   * whether the arc is a mechanic at all. `renderEntities` derives a sprite
+   * facing from MOVEMENT, so after this ticket a stationary enemy would be drawn
+   * looking wherever he last walked while watching somewhere else entirely — a
+   * blind arc the player cannot see is not stealth, it is an invisible rule that
+   * kills them. The session asks the system that owns the fact rather than
+   * deriving a second answer, which is the rule `targetOf` and `isReacting`
+   * already follow.
+   *
+   * A FRESH OBJECT PER CALL, so a caller cannot be handed a live reference into
+   * the machine's memory and write a heading into it. The fields themselves are
+   * plain numbers on `Memory`, so nothing is allocated per tick — only per read,
+   * and the only per-frame reader already allocates a `RenderEntity` beside it.
+   */
+  facingOf(unitId: number): Facing | undefined
+  /**
+   * Point this unit somewhere (ticket 038). Called by the session with
+   * `SpawnPoint.facing` for an enemy whose level authored one.
+   *
+   * TOLD, NOT DISCOVERED, exactly like `assignPatrol` and for the same reason:
+   * the machine is handed a grid rather than a level, and entity ids do not
+   * exist until something spawns.
+   *
+   * THE VECTOR IS NORMALISED, not taken at whatever length it arrived: the arc
+   * test is a dot product, so a facing of length 5 would make that one guard
+   * see through walls of angle while a facing of length 0.1 would blind him.
+   * `FACING_VECTORS`'s diagonals are `(1, 1)`-shaped and would do exactly that.
+   *
+   * A DEGENERATE VECTOR IS REFUSED, leaving whatever valid facing was already
+   * there. A zero — or an infinite, or a NaN — has no direction to normalise and
+   * would store NaN, which LOSES EVERY COMPARISON: the dot product would never
+   * reach the threshold and that man would be blind in every direction at once,
+   * for the rest of the mission, with nothing on screen to say why.
+   *
+   * An id naming nothing, or naming a unit on another team, is accepted and
+   * never acted on — the tick pass only ever visits this machine's own team.
+   */
+  face(unitId: number, dx: number, dz: number): void
 }
 
 /**
@@ -395,6 +474,44 @@ interface Memory {
   targetId: number
   /** The tick at which the current errand is abandoned. See the tuning file. */
   deadline: number
+  /**
+   * Which way this man is looking, as a unit vector (ticket 038). See `Facing`
+   * for why it is always normalised, and the file header for why it lives here
+   * rather than on `Entity`.
+   *
+   * TWO PLAIN NUMBERS, not a `Facing` object, for the allocation reason this
+   * whole record is built on: it is rewritten on most ticks of a firefight, and
+   * a fresh object each time is the steady-state garbage ticket 005 rules out.
+   * `facingOf` builds the object, once per read.
+   */
+  facingDx: number
+  facingDz: number
+  /**
+   * Where he stood when the machine last looked at him — the baseline the
+   * DIRECTION OF TRAVEL is measured against while he is pursuing or alerted.
+   *
+   * HIS ACTUAL MOVEMENT, NOT THE BEARING OF HIS DESTINATION, and the difference
+   * is the whole reason this pair exists. A man walking around a wall to reach a
+   * last-known position is not looking through the wall at it; he is looking
+   * along the path his feet are taking, which is what the flow field decided and
+   * what the player watches him do. A facing derived from the goal would have
+   * him stare at his destination through whatever cover lay between, and it
+   * would be exactly the sprites-disagree-with-the-sim failure the renderer half
+   * of this ticket exists to delete.
+   *
+   * ONE TICK STALE, HONESTLY. This system runs BEFORE squad within a tick, so
+   * the difference read here is the step squad took LAST tick. Reading it after
+   * movement would need a second pass, and a tick of lag on a heading is not
+   * something an eye can see at 60 Hz.
+   *
+   * `hasTrack` is false until the first tick, when a man has not moved at all
+   * and there is no travel to face along; a zero difference is refused anyway
+   * (see `faceAlong`), so this only keeps the first tick from measuring against
+   * the origin.
+   */
+  hasTrack: boolean
+  trackX: number
+  trackZ: number
 }
 
 /**
@@ -481,6 +598,19 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    * make every range in the machine silently wrong by exactly that factor.
    */
   const arrivalWorld = arrivalTiles * TILE_WORLD_SIZE
+  /**
+   * The radius inside which the forward arc does not apply, converted once here
+   * for the reason above (ticket 038).
+   *
+   * HERE AND NOT PER UNIT, unlike sight and hearing. Those describe a man's
+   * senses and an archetype may reasonably differ on them; this describes the
+   * distance at which anybody notices anybody, which is a fact about bodies
+   * standing next to each other rather than about a kind of soldier. A
+   * per-archetype version would be a second knob nobody has asked for, and the
+   * first thing it would be used for is quietly deleting the cone for one kind.
+   */
+  const awarenessWorld = DEFAULT_AWARENESS_RADIUS_TILES * TILE_WORLD_SIZE
+  const awarenessWorldSq = awarenessWorld * awarenessWorld
   // Sight and hearing are converted the same way and for the same reason, but
   // PER UNIT now (ticket 018) — see `Memory`. Arrival stays here because it
   // describes the squad system's stopping distance, which is one fact about the
@@ -513,6 +643,24 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    * `memories` to drop the dead, and that loop only ever deletes.
    */
   const patrols = new Map<number, Patrol>()
+
+  /**
+   * Facings handed to `face` for a unit the machine has not met yet, by entity
+   * id (ticket 038).
+   *
+   * IT EXISTS BECAUSE OF WHEN THE SESSION CALLS. `SpawnPoint.facing` is seeded
+   * at build time, before the first tick, and a unit's `Memory` is not created
+   * until the tick pass first visits it — so there is nothing to write the
+   * authored direction into yet. The alternative is creating memories eagerly,
+   * which this system cannot do: it is handed a grid rather than a world, so it
+   * has no entity list to walk and no `kind` to resolve the stats from.
+   *
+   * CONSUMED ONCE, AT MEMORY CREATION, and deleted there — so it holds at most
+   * one entry per authored enemy and only until his first tick. Read by keyed
+   * lookup and keyed deletion only, never iterated, so its order cannot reach a
+   * decision.
+   */
+  const pendingFacings = new Map<number, Facing>()
 
   /**
    * Shots heard since the last tick, in the order they were reported.
@@ -587,6 +735,11 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
      * override of the operator.
      */
     const spec = archetypes[unit.kind]
+    // Whatever the session seeded before this man had a memory to seed into;
+    // taken now and dropped, so the map never outlives its one use. See
+    // `pendingFacings`.
+    const authoredFacing = pendingFacings.get(unitId)
+    pendingFacings.delete(unitId)
     const sight =
       (options.sightRangeTiles ?? spec?.sightRangeTiles ?? DEFAULT_SIGHT_RANGE_TILES) *
       TILE_WORLD_SIZE
@@ -634,6 +787,16 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
       hasTarget: false,
       targetId: 0,
       deadline: 0,
+      // The authored direction if the level gave him one, otherwise the default
+      // — which is the fourth and last rung of ticket 038's precedence ladder,
+      // reached by a man who has never moved and never made contact. Both are
+      // unit vectors by the time they land here: `DEFAULT_ENEMY_FACING` already
+      // is one, and `face` normalised the other before it was parked.
+      facingDx: authoredFacing?.dx ?? DEFAULT_ENEMY_FACING.dx,
+      facingDz: authoredFacing?.dz ?? DEFAULT_ENEMY_FACING.dz,
+      hasTrack: false,
+      trackX: 0,
+      trackZ: 0,
     }
     memories.set(unitId, created)
     return created
@@ -648,12 +811,22 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    * a target found here may still be out of range; that is the difference
    * between `engage` and `pursue`, and it is decided by the caller.
    *
-   * The sightline raycast is done LAST, after team and the distance comparison
-   * have both been passed. It walks a tile at a time and is by far the most
-   * expensive test here; almost every candidate is eliminated by a subtraction
-   * and a multiply instead.
+   * AND IT IS A FORWARD ARC, NOT A DISC (ticket 038). A candidate must lie
+   * within `VISION_HALF_ANGLE_COS` of the hunter's facing, OR inside
+   * `awarenessWorld` — nobody is invisible at arm's length. The arc JOINS team,
+   * distance and the sightline; it replaces none of them, so a man in front and
+   * behind a wall, or in front and beyond sight, is still not seen.
+   *
+   * The sightline raycast is done LAST, after team, the distance comparison and
+   * the arc have all been passed. It walks a tile at a time and is by far the
+   * most expensive test here; almost every candidate is eliminated by a
+   * subtraction and a multiply instead. The arc costs one square root and three
+   * multiplies and sits ahead of it deliberately: the whole point of this
+   * ticket is that a great many candidates are behind the man, and each one it
+   * rejects is a raycast not walked.
    */
-  function acquire(world: World, hunter: Entity, sightRangeWorld: number): Entity | null {
+  function acquire(world: World, hunter: Entity, memory: Memory): Entity | null {
+    const sightRangeWorld = memory.sightRangeWorld
     let best: Entity | null = null
     let bestDistanceSq = 0
     const candidates = world.entities
@@ -673,6 +846,31 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
         // first, which is stable today only by accident of spawn order. Lower id
         // wins, which is a fact about the world rather than about the loop.
         if (distanceSq === bestDistanceSq && candidate.id >= best.id) continue
+      }
+      /**
+       * THE ARC, and the close-range exception that keeps it from reading as a
+       * bug (ticket 038).
+       *
+       * The dot product of two unit vectors IS the cosine of the angle between
+       * them, which is why the threshold is stored as a cosine and no
+       * trigonometry runs here. `memory.facingDx/Dz` is a unit vector by
+       * construction, so only the offset needs normalising — one square root,
+       * and only for candidates that have already passed team, health, range and
+       * the tie-break.
+       *
+       * ABSOLUTE, NOT SIGNED. A comparison against the raw dot product is
+       * symmetric about the facing axis by construction: 50° to the left and 50°
+       * to the right give the same cosine. A signed test would see half the arc
+       * and leave a man who could only be flanked from one side.
+       *
+       * `distanceSq > awarenessWorldSq` also guarantees `distanceSq > 0`, so the
+       * division below cannot produce a NaN — a man standing exactly on top of
+       * another is inside the awareness radius and never reaches it.
+       */
+      if (distanceSq > awarenessWorldSq) {
+        const inverse = 1 / Math.sqrt(distanceSq)
+        const alignment = dx * inverse * memory.facingDx + dz * inverse * memory.facingDz
+        if (alignment < VISION_HALF_ANGLE_COS) continue
       }
       sightFrom.x = toTileAxis(hunter.x, grid.w)
       sightFrom.y = toTileAxis(hunter.z, grid.h)
@@ -931,6 +1129,95 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
   }
 
   /**
+   * Point a unit along a direction, normalising it, and say whether it took.
+   *
+   * REFUSING A DEGENERATE VECTOR IS THE WHOLE OF THE ERROR HANDLING, and it is
+   * load-bearing rather than defensive. Dividing by a zero length stores NaN,
+   * and NaN loses every comparison it appears in — the arc's dot product would
+   * never reach its threshold, so that man would be blind in all directions for
+   * the rest of the mission with nothing on screen to say why. Refusing leaves
+   * whatever valid unit vector was already there, which is always something
+   * sensible: the worst case is that he keeps looking where he was looking.
+   *
+   * A SQUARED LENGTH RATHER THAN `Math.hypot`, and the finiteness test is done
+   * on it: it is the cheaper multiply, and an infinite or NaN input fails
+   * `Number.isFinite` here just as surely.
+   */
+  function faceAlong(memory: Memory, dx: number, dz: number): boolean {
+    const lengthSq = dx * dx + dz * dz
+    if (!Number.isFinite(lengthSq) || lengthSq <= 0) return false
+    const length = Math.sqrt(lengthSq)
+    memory.facingDx = dx / length
+    memory.facingDz = dz / length
+    return true
+  }
+
+  /**
+   * Where this man is looking at the END of his tick, in precedence order
+   * (ticket 038):
+   *
+   *   1. ENGAGING — he faces his target. He has stopped walking and is shooting
+   *      at somebody; there is nothing else he could be looking at.
+   *   2. PURSUING OR ALERTED — he faces the DIRECTION OF TRAVEL, which is what
+   *      makes hearing work without a special case: the `alert` errand already
+   *      points him at the noise, so walking at a shot IS turning toward it, and
+   *      the man who fired it is then inside the arc on a later tick.
+   *   3. IDLE — he keeps the facing he had. A man who has stopped looking at
+   *      something does not snap back to a compass default, and this is also
+   *      what makes the mechanic legible: a guard the squad lured east stays
+   *      looking east, so the blind side stays where the player last saw it go.
+   *   4. NEVER MOVED, NEVER CONTACTED — the authored facing or the default, and
+   *      that rung is settled once in `memoryFor` rather than here, because it
+   *      is the value the other three start from.
+   *
+   * DETERMINISTIC BY CONSTRUCTION. It reads two positions and the previous
+   * facing, all of which are already deterministic, and it is written only here,
+   * inside the per-unit step. No `Map` iteration order reaches it and no rng
+   * draw is taken — a heading seeded from the rng would make a mission depend on
+   * how many men had been spawned before it, which is the trap `tuning.ts` names
+   * at the top.
+   *
+   * The track is refreshed on EVERY tick and in every state, not only the two
+   * that read it: a baseline updated only while pursuing would make the first
+   * pursuing tick after a spell of standing still measure travel from wherever
+   * he was when he last stopped.
+   */
+  function turn(unit: Entity, memory: Memory, next: AiState, target: Entity | null): void {
+    if (next === ENGAGE) {
+      // `target` is non-null on every path that reaches `ENGAGE` — it is the
+      // only branch that can produce it — and the guard is the type system's
+      // rather than a doubt about that.
+      if (target !== null) faceAlong(memory, target.x - unit.x, target.z - unit.z)
+    } else if (memory.hasTrack) {
+      /**
+       * ANY MOVEMENT AT ALL, NOT A LIST OF STATES — and the difference is a bug
+       * this ticket shipped in its first draft.
+       *
+       * Written as `next === PURSUE || next === ALERT` it skipped PATROL, because
+       * a patrol runs inside the IDLE branch: `patrolStep` is on the
+       * `next === IDLE` tail. So a routed guard kept whatever facing he spawned
+       * with and walked his whole beat looking somewhere else. Measured on that
+       * draft: a man routed due north crossed five and a half tiles with a player
+       * standing in plain sight directly ahead of him and never acquired him —
+       * he would notice only by tripping over him inside the awareness radius.
+       *
+       * And because the renderer now takes an enemy's sprite direction from this
+       * value, he was DRAWN facing south while marching north. That is worse than
+       * the movement-derived facing it replaced, which at least looked right.
+       *
+       * A man who did not move this tick has no travel to face along, and
+       * `faceAlong` refuses the zero vector, so he keeps his heading — which is
+       * the right answer both for a sentry standing his post and for a soldier
+       * halted against geometry.
+       */
+      faceAlong(memory, unit.x - memory.trackX, unit.z - memory.trackZ)
+    }
+    memory.hasTrack = true
+    memory.trackX = unit.x
+    memory.trackZ = unit.z
+  }
+
+  /**
    * One unit's tick: decide the state, then make it true of the world.
    *
    * The two halves are kept apart on purpose. The first reads the world and
@@ -941,7 +1228,11 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
   function step(world: World, unit: Entity, tick: number): void {
     const memory = memoryFor(unit)
     const previous = memory.state
-    const target = acquire(world, unit, memory.sightRangeWorld)
+    // WITH THE FACING HE ARRIVED WITH. The arc is tested against where he was
+    // looking at the START of the tick, and `turn` below is what he does about
+    // what he found — a scan against a heading this tick's contact had already
+    // moved would let a man notice somebody behind him and then justify it.
+    const target = acquire(world, unit, memory)
     const patrol = patrols.get(unit.id)
     let next: AiState
 
@@ -1079,6 +1370,10 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
     }
 
     memory.state = next
+    // BEFORE THE ORDERS BELOW, AND UNCONDITIONALLY, because the `engage` branch
+    // returns early — twice — and a heading updated after it would never be
+    // written for the men who are actually shooting at somebody.
+    turn(unit, memory, next, target)
 
     /**
      * The post is fixed HERE, on the tick his beat is interrupted, and released
@@ -1198,6 +1493,14 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
     // is the honest reading of "an unknown id is ignored".
     for (const id of patrols.keys()) {
       if (!world.isAlive(id)) patrols.delete(id)
+    }
+    // And any authored facing seeded for a man who never lived to be visited.
+    // Normally empty by the end of the first tick — `memoryFor` takes the entry
+    // — so this is only ever cleaning up after a `face` for an id that names
+    // nothing, which the contract accepts and never acts on. Deleting only, so
+    // the walk order still decides nothing.
+    for (const id of pendingFacings.keys()) {
+      if (!world.isAlive(id)) pendingFacings.delete(id)
     }
 
     // Spawn order, and nothing is added to or removed from the entity list by
@@ -1324,5 +1627,46 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
     return memory.state === ENGAGE && memory.reactionRemaining > 0
   }
 
-  return Object.assign(aiSystem, { stateOf, targetOf, isReacting, hear, assignPatrol })
+  /** See `AiSystem.facingOf`. A fresh object per read; see there for why. */
+  function facingOf(unitId: number): Facing | undefined {
+    const memory = memories.get(unitId)
+    if (memory === undefined) return undefined
+    return { dx: memory.facingDx, dz: memory.facingDz }
+  }
+
+  /**
+   * See `AiSystem.face`.
+   *
+   * NORMALISED THROUGH THE SAME `faceAlong` the machine's own decisions go
+   * through, rather than a second spelling of the division: one place decides
+   * what a valid facing is, so a caller's vector and a derived one cannot end up
+   * held to different rules.
+   *
+   * A unit the machine has not met yet is PARKED rather than dropped — the
+   * session seeds `SpawnPoint.facing` before the first tick, when no memory
+   * exists to write into. `memoryFor` takes it from there. The degenerate check
+   * is run BEFORE parking, so a refused vector is refused in both paths and
+   * never sits waiting to become a NaN on the first tick.
+   */
+  function face(unitId: number, dx: number, dz: number): void {
+    const memory = memories.get(unitId)
+    if (memory !== undefined) {
+      faceAlong(memory, dx, dz)
+      return
+    }
+    const lengthSq = dx * dx + dz * dz
+    if (!Number.isFinite(lengthSq) || lengthSq <= 0) return
+    const length = Math.sqrt(lengthSq)
+    pendingFacings.set(unitId, { dx: dx / length, dz: dz / length })
+  }
+
+  return Object.assign(aiSystem, {
+    stateOf,
+    targetOf,
+    isReacting,
+    hear,
+    assignPatrol,
+    facingOf,
+    face,
+  })
 }

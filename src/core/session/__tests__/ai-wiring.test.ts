@@ -4,6 +4,20 @@ import { makeLevel } from './fixture'
 import { tileToWorld, worldToTile } from '../../view/projection'
 
 /**
+ * THE ENEMIES ARE AUTHORED FACING WEST (ticket 038).
+ *
+ * Every fixture here stands its avatar WEST of its enemy on the same row — a
+ * readability choice from when sight was a disc. Against the shipped southward
+ * default that is 90 degrees off the 120-degree arc, so nothing is ever
+ * acquired and each case below silently becomes a test of the vision cone
+ * instead of a test of its own subject. `ai/__tests__/vision-cone.test.ts` is
+ * where the arc belongs, and it runs on the shipped default.
+ *
+ * Declared through `SpawnPoint.facing` rather than a test hook, so these suites
+ * take the same path a real level would.
+ */
+
+/**
  * Ticket 012 — the AI, wired into a real session.
  *
  * ASSERTED THROUGH `advance`, not by reading options back off the session. The
@@ -21,10 +35,10 @@ import { tileToWorld, worldToTile } from '../../view/projection'
  */
 
 /** Player and enemy in plain sight of one another, three tiles apart. */
-const facingOff = () => makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [{ x: 11, y: 7 }] })
+const facingOff = () => makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [{ x: 11, y: 7, facing: 'W' }] })
 
 /** Player and enemy on the same row, eleven tiles apart: seen, out of range. */
-const acrossTheField = () => makeLevel({ avatars: [{ x: 3, y: 7 }], enemies: [{ x: 14, y: 7 }] })
+const acrossTheField = () => makeLevel({ avatars: [{ x: 3, y: 7 }], enemies: [{ x: 14, y: 7, facing: 'W' }] })
 
 function fired(s: ReturnType<typeof createSession>, frames: number): number[] {
   const ids: number[] = []
@@ -110,7 +124,7 @@ describe('the enemy shoots because the machine said so', () => {
     for (let y = 0; y < 15; y += 1) blocked.add(`10,${y}`)
     const level = makeLevel({
       avatars: [{ x: 8, y: 7 }],
-      enemies: [{ x: 12, y: 7 }],
+      enemies: [{ x: 12, y: 7, facing: 'W' }],
       blocked,
     })
     const s = createSession(level)
@@ -180,7 +194,7 @@ describe('gunfire reaches the AI through the session', () => {
    * which this test means anything.
    */
   const outOfSightInEarshot = () =>
-    makeLevel({ avatars: [{ x: 3, y: 3 }], enemies: [{ x: 15, y: 8 }] })
+    makeLevel({ avatars: [{ x: 3, y: 3 }], enemies: [{ x: 15, y: 8, facing: 'W' }] })
 
   it('sits out of sight and does nothing while the map is quiet', () => {
     // The premise, as its own case: without it, an enemy that walked for some

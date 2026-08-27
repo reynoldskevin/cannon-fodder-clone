@@ -10,7 +10,17 @@ export interface SessionFixtureOptions {
   readonly w?: number
   readonly h?: number
   readonly avatars?: readonly { x: number; y: number }[]
-  readonly enemies?: readonly { x: number; y: number }[]
+  /**
+   * `facing` is passed straight through to `SpawnPoint.facing` (ticket 038).
+   *
+   * Every fixture in this directory lays its two sides out EAST-WEST, which was
+   * a readability choice back when sight was a disc. Against the shipped
+   * southward default that is 90 degrees off the arc, so a suite about anything
+   * other than vision has to say which way its garrison is looking — and saying
+   * it through the authored field, rather than through a test-only hook, means
+   * these suites exercise the same path a real level would.
+   */
+  readonly enemies?: readonly { x: number; y: number; facing?: string }[]
   readonly props?: readonly SpawnPoint[]
   /** Blocked tiles as `"x,y"`. */
   readonly blocked?: ReadonlySet<string>
@@ -62,6 +72,7 @@ export function makeLevel(options: SessionFixtureOptions = {}): LevelData {
         x: p.x,
         y: p.y,
         type: 'rifleman',
+        ...(p.facing === undefined ? {} : { facing: p.facing }),
       })),
       props: options.props ?? [],
       chests: [],

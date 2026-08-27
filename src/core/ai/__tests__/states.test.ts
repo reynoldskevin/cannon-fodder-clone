@@ -1,9 +1,22 @@
 import { describe, it, expect } from 'vitest'
-import { rig, OPEN, WALLED, shotsBy } from './rig'
+import { rig, OPEN, WALLED, shotsBy, WEST, EAST } from './rig'
+import type { AiOptions } from '../index'
 import { AI_STATES } from '../index'
 import { DEFAULT_ALERT_RADIUS_TILES, DEFAULT_PURSUE_TIMEOUT_TICKS } from '../tuning'
 import { weaponFor } from '../../combat'
 import { ARCHETYPES, DEFAULT_ARCHETYPE_NAME } from '../archetypes'
+
+/**
+ * Every enemy this suite spawns is faced at its own fixture (ticket 038).
+ *
+ * These cases were written when sight was a disc, so they park their player due
+ * east or west of the enemy — 90 degrees off the shipped southward default, at
+ * which nothing is acquired and every assertion here becomes a test of the
+ * vision cone instead of a test of its own subject. The arc has its own suite in
+ * `vision-cone.test.ts`, which runs on the shipped default.
+ */
+const arena = (art = OPEN, options: Partial<AiOptions> = {}) => rig(art, options, WEST)
+
 
 /**
  * Ticket 012 — the enemy state machine, one test per EDGE.
@@ -51,7 +64,7 @@ describe('the states are a closed, enumerable set', () => {
 
 describe('an enemy with nothing to do', () => {
   it('is idle, and stays idle', () => {
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(16, 5, 'enemy')
     r.spawn(1, 5, 'player') // 15 tiles: beyond the 12 of sight
     r.run(120)
@@ -59,7 +72,7 @@ describe('an enemy with nothing to do', () => {
   })
 
   it('does not move, and does not shoot', () => {
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(16, 5, 'enemy')
     r.spawn(1, 5, 'player')
     const before = { x: r.world.get(enemy.id)!.x, z: r.world.get(enemy.id)!.z }
@@ -72,7 +85,7 @@ describe('an enemy with nothing to do', () => {
 
 describe('idle → engage: a target in sight and in range', () => {
   it('enters engage', () => {
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(10, 5, 'enemy')
     // THREE tiles, not the four this used to be. Ticket 037 stopped the enemy
     // at `closeToFraction` of his range rather than at the edge of it, and at
@@ -84,7 +97,7 @@ describe('idle → engage: a target in sight and in range', () => {
   })
 
   it('fires on cooldown while it lasts', () => {
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(10, 5, 'enemy')
     r.spawn(7, 5, 'player', 1000) // inside the closing distance — see above
     const events = r.run(220)
@@ -104,7 +117,7 @@ describe('idle → engage: a target in sight and in range', () => {
   })
 
   it('halts where it stands rather than closing further', () => {
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(10, 5, 'enemy')
     r.spawn(7, 5, 'player', 1000) // inside the closing distance — see above
     const startX = r.world.get(enemy.id)!.x
@@ -118,7 +131,7 @@ describe('idle → engage: a target in sight and in range', () => {
 
 describe('idle → pursue: a target in sight but out of range', () => {
   const setup = () => {
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(16, 5, 'enemy')
     // 5 to 16 is 11 tiles: inside the 12 of sight, outside the rifle's 8.
     r.spawn(5, 5, 'player', 1000)
@@ -162,7 +175,9 @@ describe('engage → pursue: the target goes out of sight', () => {
    * two things failing into one assertion.
    */
   const setup = () => {
-    const r = rig(WALLED)
+    // EAST, against this suite's westward default: these blocks put their player
+    // on the other side of the enemy. See the note on `arena`.
+    const r = rig(WALLED, {}, EAST)
     const enemy = r.spawn(12, 5, 'enemy')
     const player = r.spawn(15, 5, 'player', 1000)
     r.run(4)
@@ -210,7 +225,7 @@ describe('engage → pursue: the target goes out of sight', () => {
      * second the walk takes ~220 ticks and the timeout is the ONLY thing that
      * can end it.
      */
-    const r = rig(OPEN, { pursueTimeoutTicks: 30 })
+    const r = arena(OPEN, { pursueTimeoutTicks: 30 })
     const enemy = r.spawn(16, 5, 'enemy')
     const player = r.spawn(5, 5, 'player', 1000)
     r.run(4)
@@ -242,7 +257,9 @@ describe('pursue → engage: acquisition outranks memory', () => {
     // The failure this guards against is a machine that walks its errand out
     // before looking up. Nothing about `pursue` should survive a live target
     // standing in front of the man.
-    const r = rig(WALLED)
+    // EAST, against this suite's westward default: these blocks put their player
+    // on the other side of the enemy. See the note on `arena`.
+    const r = rig(WALLED, {}, EAST)
     const enemy = r.spawn(12, 5, 'enemy')
     const player = r.spawn(15, 5, 'player', 1000)
     r.run(4)
@@ -266,7 +283,7 @@ describe('idle → alert: gunfire within earshot', () => {
    * can be probed on both sides without arranging a firefight to produce it.
    */
   const lonely = () => {
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(16, 5, 'enemy')
     return { r, enemy }
   }
@@ -319,7 +336,7 @@ describe('idle → alert: gunfire within earshot', () => {
   it('does not interrupt an engagement', () => {
     // `alert` is what a man does when he has nothing better to do. A shot from
     // across the map must not pull him off a target he can see.
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(10, 5, 'enemy')
     r.spawn(7, 5, 'player', 1000) // inside the closing distance — see above
     r.run(4)
@@ -332,7 +349,7 @@ describe('idle → alert: gunfire within earshot', () => {
 
 describe('what the machine never does', () => {
   it('holds no state for a unit that is dead', () => {
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(10, 5, 'enemy')
     r.spawn(7, 5, 'player', 1000) // inside the closing distance — see above
     r.run(4)
@@ -343,7 +360,7 @@ describe('what the machine never does', () => {
   })
 
   it('holds no state for a unit that never existed', () => {
-    const r = rig()
+    const r = arena()
     expect(r.ai.stateOf(99_999)).toBeUndefined()
   })
 
@@ -351,7 +368,7 @@ describe('what the machine never does', () => {
     // The AI shares one `SquadSystem` with the player's pointer. An `order` that
     // named a player id would take the squad off the march the owner gave it,
     // and it would look like the controls fighting back.
-    const r = rig()
+    const r = arena()
     r.spawn(10, 5, 'enemy')
     r.spawn(16, 8, 'enemy')
     const a = r.spawn(6, 5, 'player', 1000)
@@ -372,7 +389,7 @@ describe('what the machine never does', () => {
     // One `order` per tick per pursuing man is a flow-field lookup per tick per
     // man, and it rebuilds a detachment each time. Re-issued only when the
     // destination TILE changes.
-    const r = rig()
+    const r = arena()
     r.spawn(16, 5, 'enemy')
     r.spawn(5, 5, 'player', 1000)
     r.run(60)
@@ -386,7 +403,7 @@ describe('range is the rifle`s, not a number of its own', () => {
     // Two sessions differing only in one tile of separation, straddling the
     // range the rifle actually declares. If the machine ever hardcoded an eight,
     // a retune in `weapons.ts` would silently stop matching what the men do.
-    const near = rig()
+    const near = arena()
     const nearEnemy = near.spawn(10, 5, 'enemy')
     // ENTRY IS THE CLOSING DISTANCE SINCE TICKET 037, not the full range — but
     // both numbers still come out of the weapon table rather than out of this
@@ -394,7 +411,7 @@ describe('range is the rifle`s, not a number of its own', () => {
     near.spawn(Math.round(10 - (RANGE * CLOSE_TO - 1)), 5, 'player', 1000)
     near.run(4)
 
-    const far = rig()
+    const far = arena()
     const farEnemy = far.spawn(16, 5, 'enemy')
     far.spawn(Math.round(16 - (RANGE + 2)), 5, 'player', 1000)
     far.run(4)

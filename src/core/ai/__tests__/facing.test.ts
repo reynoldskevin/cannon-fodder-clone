@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { rig, OPEN } from './rig'
-import { DEFAULT_ENEMY_FACING } from '../tuning'
+import { DEFAULT_ENEMY_FACING, DEFAULT_AWARENESS_RADIUS_TILES } from '../tuning'
 
 /**
  * Ticket 038 — where an enemy is looking, as simulation state.
@@ -96,7 +96,7 @@ describe('what he looks at once something is happening', () => {
   it('a pursuing man faces where he is walking', () => {
     const r = rig(OPEN)
     const enemy = r.spawn(10, 1, 'enemy')
-    const player = r.spawn(10, 8, 'player', 10_000) // due south, seven tiles
+    r.spawn(10, 8, 'player', 10_000) // due south, seven tiles
     r.run(20)
     expect(r.ai.stateOf(enemy.id)).toBe('pursue')
     expect(angleTo(r.ai.facingOf(enemy.id)!, 0, 1)).toBeLessThan(20)
@@ -169,5 +169,162 @@ describe('facing is deterministic, like everything else the machine decides', ()
     b.run(1)
     expect(a.ai.facingOf(enemyA.id)).not.toEqual(b.ai.facingOf(enemyB.id))
     expect(a.world.stateHash()).toBe(b.world.stateHash())
+  })
+})
+
+describe('a man walking his beat looks where he is going', () => {
+  /**
+   * THE HOLE ADVERSARIAL REVIEW FOUND, and it is the ticket's own decisive
+   * criterion inverted.
+   *
+   * A patrol runs inside the machine's IDLE branch — `patrolStep` is on the
+   * `next === IDLE` tail — so a facing rule written as "engage, pursue or alert"
+   * skips it entirely. Measured on the first draft: a guard routed due north
+   * walked five and a half tiles with a player standing in plain sight three to
+   * eight tiles directly ahead, never acquired him, and would have noticed only
+   * at the two-tile awareness exception.
+   *
+   * And because the renderer now takes an enemy's sprite direction from the
+   * simulation, he was DRAWN facing south the whole way — walking backwards up
+   * the map. That is worse than the pre-038 behaviour it replaced, where
+   * movement drove the sprite and at least looked right.
+   *
+   * The rule is therefore about MOVEMENT, not about a list of states: if he took
+   * a step this tick, he is looking along it.
+   */
+  it('faces along his route rather than keeping his spawn facing', () => {
+    const r = rig(OPEN)
+    const enemy = r.spawn(10, 8, 'enemy')
+    r.ai.assignPatrol(enemy.id, [
+      { x: 10, y: 1 },
+      { x: 10, y: 8 },
+    ])
+    r.run(60)
+    const before = r.world.get(enemy.id)!.z
+    r.run(20)
+    // He really is walking north, or this asserts nothing.
+    expect(r.world.get(enemy.id)!.z).toBeLessThan(before)
+    expect(r.ai.facingOf(enemy.id)!.dz).toBeLessThan(0)
+  })
+
+  it('and therefore notices a man standing on his beat ahead of him', () => {
+    // The consequence that matters in play. A patrolling guard blind to his own
+    // route is strictly worse at his job than a static one — the same shape of
+    // failure `patrol.test.ts` records for the leash.
+    const r = rig(OPEN)
+    const enemy = r.spawn(10, 9, 'enemy')
+    r.ai.assignPatrol(enemy.id, [
+      { x: 10, y: 0 },
+      { x: 10, y: 9 },
+    ])
+    const player = r.spawn(10, 2, 'player', 10_000)
+    /**
+     * NOTICED BEFORE HE WALKS PAST HIM, which is the whole assertion.
+     *
+     * A weaker version of this case — "does he ever leave idle?" — PASSES on the
+     * broken build, and passes for a reason that is funnier than the bug: facing
+     * south while marching north, he strolls straight past the player and only
+     * then has him in his arc. He notices by overshooting. So the sampling stops
+     * the moment he is level with the man.
+     */
+    let gapWhenNoticed: number | null = null
+    for (let i = 0; i < 300 && gapWhenNoticed === null; i += 1) {
+      r.run(2)
+      const here = r.world.get(enemy.id)!
+      const there = r.world.get(player.id)!
+      if (r.ai.stateOf(enemy.id) !== 'idle') gapWhenNoticed = Math.hypot(here.x - there.x, here.z - there.z)
+    }
+    /**
+     * ASSERTED ON THE DISTANCE HE NOTICES AT, not on whether he ever does.
+     *
+     * Two weaker versions of this case both PASS on the broken build, and each
+     * for a reason worth writing down. "Does he ever leave idle?" passes because,
+     * facing south while marching north, he strolls straight past the man and
+     * only then has him in his arc — he notices by overshooting. "Does he notice
+     * before passing him?" passes too, because `DEFAULT_AWARENESS_RADIUS_TILES`
+     * catches anyone within two tiles regardless of the arc, so he trips over him
+     * at arm's length.
+     *
+     * Neither is sight. He is walking at a man in the open with a clear line, and
+     * a sentry who only finds him by collision is the bug. Four tiles is
+     * comfortably outside the awareness exception and comfortably inside his
+     * twelve of vision.
+     */
+    expect(gapWhenNoticed).not.toBeNull()
+    expect(gapWhenNoticed!).toBeGreaterThan(DEFAULT_AWARENESS_RADIUS_TILES + 2)
+  })
+
+  it('but a man standing still on his post keeps the facing he had', () => {
+    // The guard on the fix: "face where you moved" must not become "face
+    // nowhere when you stop", which would blank a stationary sentry's arc.
+    const r = rig(OPEN)
+    const enemy = r.spawn(10, 5, 'enemy')
+    r.ai.face(enemy.id, 1, 0)
+    r.run(90)
+    expect(angleTo(r.ai.facingOf(enemy.id)!, 1, 0)).toBeLessThan(1)
+  })
+})
+
+describe('the small guarantees the code claims out loud', () => {
+  it('`face` works on a man the machine already knows, not only before his first tick', () => {
+    /**
+     * HALF THE PUBLIC API WAS UNEXERCISED. Every caller in the codebase — the
+     * session's spawn seeding, this rig — calls `face` BEFORE the first tick,
+     * when no `Memory` exists yet and the value lands in the pending map. Making
+     * `face` a no-op for a unit that already has a memory survived the whole
+     * suite, which review demonstrated by doing exactly that.
+     */
+    const r = rig(OPEN)
+    const enemy = r.spawn(10, 5, 'enemy')
+    r.run(30)
+    r.ai.face(enemy.id, -1, 0)
+    r.run(2)
+    expect(angleTo(r.ai.facingOf(enemy.id)!, -1, 0)).toBeLessThan(1)
+  })
+
+  it('`facingOf` hands back a copy, not a live reference into the machine', () => {
+    // The comment on `facingOf` promises this; nothing checked it. A shared
+    // mutable object makes two reads compare equal forever, so any test that
+    // sampled a facing before and after would silently stop being able to see a
+    // change — including several in this file.
+    const r = rig(OPEN)
+    const enemy = r.spawn(10, 2, 'enemy')
+    r.spawn(10, 8, 'player', 10_000)
+    // One tick first: a unit has no `Memory` — and therefore no facing — until
+    // the machine has stepped it once, which is why `facingOf` is optional.
+    r.run(1)
+    const before = r.ai.facingOf(enemy.id)!
+    r.run(60)
+    const after = r.ai.facingOf(enemy.id)!
+    expect(before).not.toBe(after)
+    // And the first read was not retroactively rewritten by the second.
+    expect(Math.hypot(before.dx, before.dz)).toBeCloseTo(1, 6)
+  })
+
+  it('the movement baseline is refreshed in every state, including `engage`', () => {
+    /**
+     * `turn` refreshes the track on EVERY tick rather than only in the states
+     * that read it, and says so — but review moved the refresh inside the branch
+     * and all 2099 tests stayed green.
+     *
+     * The failure it guards: a man who stands still through a firefight has a
+     * baseline frozen where he entered `engage`. The first tick he drops back to
+     * `pursue`, his "travel since last tick" is measured from there instead of
+     * from where he actually is, so he snaps to a heading he never walked. Here
+     * he engages a man to the south, then has to pursue one to the WEST — a
+     * stale baseline points him somewhere neither man is.
+     */
+    const r = rig(OPEN)
+    const enemy = r.spawn(10, 5, 'enemy')
+    const south = r.spawn(10, 8, 'player', 10_000)
+    r.run(60)
+    expect(r.ai.stateOf(enemy.id)).toBe('engage')
+    r.world.despawn(south.id)
+    r.spawn(2, 5, 'player', 10_000) // due west, well outside the closing distance
+    r.ai.face(enemy.id, -1, 0) // he turns to the noise; the arc lets him see it
+    r.run(40)
+    expect(r.ai.stateOf(enemy.id)).toBe('pursue')
+    // He is walking west, so that is where he must be looking.
+    expect(r.ai.facingOf(enemy.id)!.dx).toBeLessThan(0)
   })
 })

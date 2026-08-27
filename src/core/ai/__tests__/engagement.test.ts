@@ -1,6 +1,19 @@
 import { describe, it, expect } from 'vitest'
-import { rig, OPEN, WALLED, shots, shotsBy } from './rig'
+import { rig, OPEN, WALLED, shots, shotsBy, WEST, EAST } from './rig'
+import type { AiOptions } from '../index'
 import { RIFLE, WEAPONS } from '../../combat'
+
+/**
+ * Every enemy this suite spawns is faced at its own fixture (ticket 038).
+ *
+ * These cases were written when sight was a disc, so they park their player due
+ * east or west of the enemy — 90 degrees off the shipped southward default, at
+ * which nothing is acquired and every assertion here becomes a test of the
+ * vision cone instead of a test of its own subject. The arc has its own suite in
+ * `vision-cone.test.ts`, which runs on the shipped default.
+ */
+const arena = (art = OPEN, options: Partial<AiOptions> = {}) => rig(art, options, WEST)
+
 
 /**
  * Ticket 012 — what the machine's decisions actually DO to the world.
@@ -22,7 +35,7 @@ const RANGE = WEAPONS[RIFLE]!.rangeTiles
 
 describe('a round the machine fires is a real round', () => {
   it('damages the man it was aimed at', () => {
-    const r = rig()
+    const r = arena()
     r.spawn(10, 5, 'enemy')
     const player = r.spawn(6, 5, 'player', 1000)
     r.run(120)
@@ -32,7 +45,7 @@ describe('a round the machine fires is a real round', () => {
   it('kills an ordinary soldier outright', () => {
     // One hit point, one round. The whole tension of the game is in this line,
     // and it must be as true of an enemy's round as of the player's.
-    const r = rig()
+    const r = arena()
     r.spawn(10, 5, 'enemy')
     const player = r.spawn(6, 5, 'player')
     const events = r.run(120)
@@ -41,7 +54,7 @@ describe('a round the machine fires is a real round', () => {
   })
 
   it('reports the shooter as the enemy that decided to fire', () => {
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(10, 5, 'enemy')
     r.spawn(6, 5, 'player', 1000)
     const events = r.run(120)
@@ -51,7 +64,7 @@ describe('a round the machine fires is a real round', () => {
 
 describe('never through a wall', () => {
   it('does not fire at a target it cannot see', () => {
-    const r = rig(WALLED)
+    const r = arena(WALLED)
     const enemy = r.spawn(10, 5, 'enemy')
     // Three tiles apart and the wall at x=8 between them. Well inside both the
     // rifle's range and the machine's sight; the ONLY thing stopping this shot
@@ -62,7 +75,7 @@ describe('never through a wall', () => {
   })
 
   it('leaves that target unharmed', () => {
-    const r = rig(WALLED)
+    const r = arena(WALLED)
     r.spawn(10, 5, 'enemy')
     const player = r.spawn(7, 5, 'player', 1000)
     r.run(300)
@@ -76,7 +89,7 @@ describe('never through a wall', () => {
      * above pass for reasons that have nothing to do with line of sight — which
      * is the most common way a negative assertion rots.
      */
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawn(10, 5, 'enemy')
     r.spawn(7, 5, 'player', 1000)
     const events = r.run(300)
@@ -86,7 +99,7 @@ describe('never through a wall', () => {
 
 describe('never beyond the weapon', () => {
   it('does not fire at a target further away than the rifle reaches', () => {
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(16, 5, 'enemy')
     // Two tiles beyond the rifle, inside the machine's sight. He will close the
     // distance — that is what `pursue` is for — so the window is short enough
@@ -97,7 +110,7 @@ describe('never beyond the weapon', () => {
   })
 
   it('does not fire at a target beyond sight at all', () => {
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(18, 5, 'enemy')
     r.spawn(1, 5, 'player', 1000)
     const events = r.run(300)
@@ -110,7 +123,7 @@ describe('who it shoots at when there is a choice', () => {
     // The same rule `CombatSystem` uses for auto-engage, deliberately: two
     // target-choice rules in one codebase disagree eventually, and the
     // disagreement is invisible because the man fires either way.
-    const r = rig()
+    const r = arena()
     r.spawn(10, 5, 'enemy')
     const near = r.spawn(7, 5, 'player', 1000)
     const far = r.spawn(4, 5, 'player', 1000)
@@ -124,7 +137,7 @@ describe('who it shoots at when there is a choice', () => {
 
 describe('death is cleaned up, not leaked', () => {
   it('a killed enemy stops issuing orders', () => {
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(10, 5, 'enemy')
     r.spawn(6, 5, 'player', 1000)
     // PAST THE REACTION BEAT (ticket 012a), which is what makes `before` a real
@@ -141,7 +154,7 @@ describe('death is cleaned up, not leaked', () => {
   })
 
   it('a killed enemy fires no further rounds', () => {
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(10, 5, 'enemy')
     r.spawn(6, 5, 'player', 1000)
     // Past the beat, for the reason the case above gives: killed mid-beat he
@@ -157,7 +170,7 @@ describe('death is cleaned up, not leaked', () => {
     // One entry per unit, and killing one must not disturb the other. A machine
     // keyed on anything shakier than the entity id — an index into the entity
     // array, say, which `despawn` compacts — fails exactly here.
-    const r = rig()
+    const r = arena()
     const a = r.spawn(10, 5, 'enemy')
     const b = r.spawn(10, 8, 'enemy')
     r.spawn(6, 5, 'player', 1000)
@@ -181,7 +194,7 @@ describe('the player team is not driven by this system', () => {
     // The AI commands one team. If it ever grew a second, the player's squad
     // would start fighting on its own and ticket 011a's whole decision — that
     // the owner chooses when his men shoot — would be undone from a new file.
-    const r = rig()
+    const r = arena()
     r.spawn(10, 5, 'enemy', 1000)
     const player = r.spawn(6, 5, 'player', 1000)
     const events = r.run(200)
@@ -190,7 +203,7 @@ describe('the player team is not driven by this system', () => {
   })
 
   it('and does not walk anywhere on its own', () => {
-    const r = rig()
+    const r = arena()
     r.spawn(16, 5, 'enemy', 1000)
     const player = r.spawn(6, 5, 'player', 1000)
     const before = { x: r.world.get(player.id)!.x, z: r.world.get(player.id)!.z }
@@ -224,7 +237,7 @@ describe('the half-tile convention', () => {
    * man three tiles in front of him and never fires a round all mission.
    */
   it('a soldier hugging a wall can still see along it', () => {
-    const r = rig(WALLED)
+    const r = rig(WALLED, {}, EAST)
     const enemy = r.spawn(10, 5, 'enemy')
     // Pressed against the east face of the wall at x=8 — inside tile 9, six
     // tenths of a tile west of its centre. A man who has just taken cover.
@@ -238,7 +251,7 @@ describe('the half-tile convention', () => {
   it('and the wall on his other side still blocks him', () => {
     // The control. Without it, a conversion that had collapsed to "everything is
     // visible" would sail through the case above.
-    const r = rig(WALLED)
+    const r = arena(WALLED)
     const enemy = r.spawn(10, 5, 'enemy')
     r.place(enemy.id, 8.7, 5)
     r.spawn(6, 5, 'player', 1000) // the far side of the wall
@@ -258,7 +271,7 @@ describe('a target that dies is not a target that got away', () => {
    * ground, and both are things the player watches happen and reads as broken.
    */
   const setup = () => {
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(10, 5, 'enemy')
     /**
      * THREE tiles, inside the shipped closing distance of 3.84 (ticket 037), so
@@ -296,7 +309,7 @@ describe('a target that dies is not a target that got away', () => {
   })
 
   it('but picks up the next man immediately, because sight outranks memory', () => {
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(10, 5, 'enemy')
     r.spawn(6, 5, 'player')
     const second = r.spawn(7, 6, 'player', 1000)
@@ -313,7 +326,7 @@ describe('a tie is broken on the lower id, not on iteration order', () => {
     // never reaches it: that case uses strictly unequal distances, so the
     // tie-break can be deleted outright and it still passes. Two men exactly
     // three tiles either side is the only shape that tests it.
-    const r = rig()
+    const r = arena()
     const enemy = r.spawn(10, 5, 'enemy')
     const first = r.spawn(7, 5, 'player', 1000)
     const second = r.spawn(13, 5, 'player', 1000)

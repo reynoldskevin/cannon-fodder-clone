@@ -103,7 +103,39 @@ export interface Rig {
   shotAt(tileX: number, tileY: number, shooterId?: number): SimEvent
 }
 
-export function rig(art = OPEN, options: Partial<AiOptions> = {}): Rig {
+/**
+ * Which way every enemy this rig spawns is looking (ticket 038).
+ *
+ * WHY A FIXTURE KNOB AND NOT A PRODUCTION ONE. Before 038 sight was a disc, so
+ * almost every AI fixture ever written parks its player DUE EAST OR WEST of the
+ * enemy on the same row — a geometry chosen for readability, back when direction
+ * could not matter. It is exactly 90 degrees off the shipped southward default,
+ * so those suites stopped acquiring anything at all.
+ *
+ * Handing them a facing that points at their own fixture is an experimental
+ * CONTROL, the same device `reaction.test.ts` and `patrol.test.ts` use for
+ * `closeToFraction`: it holds the variable those suites are not about, so a
+ * reaction-beat test goes on measuring the beat instead of quietly becoming a
+ * second, worse test of the vision cone.
+ *
+ * `vision-cone.test.ts` never passes this. It is the suite the arc belongs to,
+ * and it runs on the shipped default.
+ */
+export interface Facing {
+  readonly dx: number
+  readonly dz: number
+}
+
+/** Pointing at a fixture whose player stands west of its enemy. */
+export const WEST: Facing = { dx: -1, dz: 0 }
+/** ...and east of it. */
+export const EAST: Facing = { dx: 1, dz: 0 }
+
+export function rig(
+  art = OPEN,
+  options: Partial<AiOptions> = {},
+  enemyFacing?: Facing,
+): Rig {
   const level = asciiLevel(art)
   const world = new World(level, { seed: 1 })
   const grid = bakeNavGrid(level)
@@ -139,19 +171,27 @@ export function rig(art = OPEN, options: Partial<AiOptions> = {}): Rig {
     spy,
     spawn(tileX, tileY, team, health) {
       const p = tileToWorld(tileX, tileY, level.size)
-      return world.spawn(
+      const entity = world.spawn(
         health === undefined
           ? { kind: 'rifleman', team, x: p.x, z: p.z }
           : { kind: 'rifleman', team, x: p.x, z: p.z, health },
       )
+      if (team === 'enemy' && enemyFacing !== undefined) {
+        ai.face(entity.id, enemyFacing.dx, enemyFacing.dz)
+      }
+      return entity
     },
     spawnKind(tileX, tileY, team, kind, health) {
       const p = tileToWorld(tileX, tileY, level.size)
-      return world.spawn(
+      const entity = world.spawn(
         health === undefined
           ? { kind, team, x: p.x, z: p.z }
           : { kind, team, x: p.x, z: p.z, health },
       )
+      if (team === 'enemy' && enemyFacing !== undefined) {
+        ai.face(entity.id, enemyFacing.dx, enemyFacing.dz)
+      }
+      return entity
     },
     run(ticks) {
       const events: SimEvent[] = []

@@ -9,13 +9,12 @@ import { VISION_HALF_ANGLE_COS, DEFAULT_AWARENESS_RADIUS_TILES, DEFAULT_ENEMY_FA
  * about direction: the scan was a disc, so a man could be noticed from directly
  * behind. This gives it a forward arc.
  *
- * THE DEFAULT FACING IS SOUTH, and it is read off the shipped maps rather than
- * picked. Level 1 spawns its avatars at y = 39, 41 against enemies at y = 6, 9,
- * 13; level 2 spawns avatars at y = 44, 45 against enemies from y = 8. The squad
- * arrives from the south on both, so a garrison facing south is one facing the
- * way the player actually comes. A default of north would leave every enemy in
- * the game staring away from the fight, which is not a stealth mechanic but a
- * broken one.
+ * THE DEFAULT FACING IS SOUTH, counted off the shipped maps rather than picked —
+ * and it suits most of them, not all. All three of level 1's enemies sit north
+ * of its squad start. Ten of level 2's fifteen do; FIVE DO NOT, and those five
+ * face away from the approach. An earlier draft of this comment said "the squad
+ * arrives from the south on both maps", which is simply false; review caught it
+ * by counting. `tuning.ts` carries the numbers and the consequence.
  *
  * In this grid `+z` is south and `+x` is east, matching `session/index.ts`'s
  * `-z is north` convention.
@@ -199,7 +198,7 @@ describe('the arc does not replace anything the scan already did', () => {
 })
 
 describe('the default facing', () => {
-  it('is south, which is the way the squad arrives on both shipped maps', () => {
+  it('is south, which is the way most of the shipped garrison is approached', () => {
     expect(DEFAULT_ENEMY_FACING.dz).toBeGreaterThan(0)
     expect(DEFAULT_ENEMY_FACING.dx).toBe(0)
   })
