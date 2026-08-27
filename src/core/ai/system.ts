@@ -57,7 +57,7 @@
  * `projection`'s and this file never spells one itself.
  */
 
-import { hasLineOfSight, inRange, weaponForKind } from '../combat'
+import { hasLineOfSight, inRange, weaponFor } from '../combat'
 import { INFANTRY } from '../pathing/navgrid'
 import { TILE_WORLD_SIZE, tileToWorld, worldToTileX, worldToTileY } from '../view/projection'
 import { ARCHETYPES } from './archetypes'
@@ -934,7 +934,12 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
       // kind has no range at all and therefore never engages — it closes and
       // keeps closing, which is the honest behaviour for something that cannot
       // shoot back.
-      const spec = weaponForKind(unit.kind)
+      // ASKED BY TEAM AS WELL AS KIND (ticket 036), for the same reason the
+      // range is asked of the table at all: the enemy's rifle is shorter than
+      // the squad's, so a lookup by kind alone would halt him at the PLAYER'S
+      // eight tiles and leave him shooting from 1.6 tiles outside his own
+      // envelope — closing to a distance at which he cannot hit anything.
+      const spec = weaponFor(unit.kind, unit.team)
       const rangeWorld = spec === null ? 0 : spec.rangeTiles * TILE_WORLD_SIZE
       if (spec !== null && inRange(unit.x, unit.z, target.x, target.z, rangeWorld)) {
         next = ENGAGE

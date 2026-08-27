@@ -330,6 +330,23 @@ describe('the corridor is what gives a ray width', () => {
     expect(AIM_CORRIDOR_TILES).toBeLessThanOrEqual(1.5)
   })
 
+  it('and ticket 036 widened it to that declared ceiling, on purpose', () => {
+    /**
+     * WHY IT MOVED. The corridor is a cost ONE SIDE PAYS. A candidate outside it
+     * is discarded by `pickAlongRay` — no shot, no roll, a round that never
+     * existed — while `ai/system.ts`'s `shootAt` commands fire at the target's
+     * TILE CENTRE, so the machine is always perfectly on-line and never pays it.
+     * `autoEngageTeams` is `['enemy']`, so the enemy also fires without being
+     * pointed at all. At 0.75 the player's angular tolerance was ±5.4° at eight
+     * tiles, and "my squad doesn't hit anything" was the reported symptom.
+     *
+     * IT LANDS EXACTLY ON THE BOUND THE TEST ABOVE ALREADY DECLARED, which is
+     * why that assertion is unedited. The next widening has to move it and argue
+     * with the reason written there — that is where the argument belongs.
+     */
+    expect(AIM_CORRIDOR_TILES).toBe(1.5)
+  })
+
   it('and it cannot go below half a tile, because the AI aims at tile CENTRES', () => {
     /**
      * THE REAL FLOOR, AND IT IS NOT ABOUT THE PLAYER'S POINTER AT ALL.
@@ -344,6 +361,50 @@ describe('the corridor is what gives a ray width', () => {
      * which is the only place the constraint can do any good.
      */
     expect(AIM_CORRIDOR_TILES).toBeGreaterThan(0.5)
+  })
+
+  it('a shot ten degrees off a man at maximum range now connects', () => {
+    /**
+     * THE REPORTED SYMPTOM, AS A NUMBER. Ten degrees is about as well as anyone
+     * points at a running man across a jungle, and at eight tiles it puts him
+     * 1.41 tiles off the line — comfortably outside the old 0.75 half-width and
+     * inside the new 1.5. Before ticket 036 this shot produced a tracer and no
+     * casualty; the player saw his squad fire and nothing happen.
+     *
+     * Derived from the angle rather than typed as 1.41, so it stays ten degrees
+     * if the rifle's range is ever retuned.
+     */
+    const r = rig()
+    const shooter = r.spawn(4, 5, 'player')
+    const muzzle = r.at(4, 5)
+    // 95% of the reach, not 100%: placing him exactly ON `rangeTiles` makes the
+    // test turn on whether `along > reachWorld` is evaluated in floating point
+    // the way I expect, which is not what it is trying to assert.
+    const reach = rifle().rangeTiles * 0.95
+    const offset = reach * Math.tan((10 * Math.PI) / 180)
+    // Guards the fixture against a corridor retune, the way `BESIDE_OFFSET`
+    // does: if this ever stops being inside the corridor the test is asserting
+    // nothing, and it should fail here rather than pass vacuously.
+    expect(offset).toBeLessThan(AIM_CORRIDOR_TILES)
+    const off = r.spawnAt(muzzle.x + reach, muzzle.z + offset, 'enemy')
+    r.combat.orderFire([shooter.id], { x: 12, y: 5 })
+    expect(victimOf(r.run(4))).toBe(off.id)
+  })
+
+  it('but twenty degrees off still misses, so pointing is still a skill', () => {
+    // The upper half of the same claim. A corridor wide enough to forgive
+    // anything is a rifle that aims itself, and the ticket does not ask for one.
+    const r = rig()
+    const shooter = r.spawn(4, 5, 'player')
+    const muzzle = r.at(4, 5)
+    const reach = rifle().rangeTiles * 0.95
+    const offset = reach * Math.tan((20 * Math.PI) / 180)
+    expect(offset).toBeGreaterThan(AIM_CORRIDOR_TILES)
+    r.spawnAt(muzzle.x + reach, muzzle.z + offset, 'enemy')
+    r.combat.orderFire([shooter.id], { x: 12, y: 5 })
+    const shots = r.run(4)
+    expect(shots.length).toBeGreaterThan(0)
+    expect(victimOf(shots)).toBeNull()
   })
 })
 

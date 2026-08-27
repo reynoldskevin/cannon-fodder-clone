@@ -479,12 +479,15 @@ describe('a target on the weapon-range boundary', () => {
      * it has to survive — a probe that let him advance would have watched the
      * bug fix itself and reported success.
      *
-     * Tile 2 is eight tiles away and inside the rifle; tile 1 is nine and
-     * outside it.
+     * Tile 4 is six tiles away and inside the enemy's rifle; tile 3 is seven
+     * and outside it. Both moved in with ticket 036, which shortened that rifle
+     * to 6.4 — at the old tiles 2 and 1 he is out of range on BOTH, never
+     * engages at all, and the flicker this case exists to reproduce cannot
+     * happen.
      */
     for (let t = 0; t < 240; t += 1) {
       r.place(enemy.id, 10, 5)
-      r.place(player.id, Math.floor(t / 4) % 2 === 0 ? 2 : 1, 5)
+      r.place(player.id, Math.floor(t / 4) % 2 === 0 ? 4 : 3, 5)
       r.run(1)
     }
     expect(r.spy.fires.length).toBeGreaterThan(0)
@@ -499,7 +502,7 @@ describe('a target on the weapon-range boundary', () => {
     let everFinished = false
     for (let t = 0; t < 240; t += 1) {
       r.place(enemy.id, 10, 5)
-      r.place(player.id, Math.floor(t / 4) % 2 === 0 ? 2 : 1, 5)
+      r.place(player.id, Math.floor(t / 4) % 2 === 0 ? 4 : 3, 5)
       r.run(1)
       if (r.ai.stateOf(enemy.id) === 'engage' && !r.ai.isReacting(enemy.id)) everFinished = true
     }

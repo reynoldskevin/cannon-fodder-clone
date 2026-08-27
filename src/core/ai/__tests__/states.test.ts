@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { rig, OPEN, WALLED, shotsBy } from './rig'
 import { AI_STATES } from '../index'
 import { DEFAULT_ALERT_RADIUS_TILES, DEFAULT_PURSUE_TIMEOUT_TICKS } from '../tuning'
-import { RIFLE, WEAPONS } from '../../combat'
+import { weaponFor } from '../../combat'
 
 /**
  * Ticket 012 — the enemy state machine, one test per EDGE.
@@ -21,7 +21,15 @@ import { RIFLE, WEAPONS } from '../../combat'
  * consequences live; this file is where the labels do.
  */
 
-const RANGE = WEAPONS[RIFLE]!.rangeTiles
+/**
+ * The reach of the weapon THE HUNTER HOLDS. Every fixture in this file spawns
+ * its hunter on the enemy team, and since ticket 036 that is the shorter
+ * `ENEMY_RIFLE` — 6.4 tiles against the squad's 8. Read from the table rather
+ * than typed, which is the whole point of the assertion at the bottom of the
+ * file: if the machine ever hardcoded a range, a retune here would stop
+ * matching what the men do.
+ */
+const RANGE = weaponFor('rifleman', 'enemy')!.rangeTiles
 
 describe('the states are a closed, enumerable set', () => {
   it('is exactly idle, alert, engage and pursue', () => {
@@ -66,11 +74,19 @@ describe('idle → engage: a target in sight and in range', () => {
     const r = rig()
     const enemy = r.spawn(10, 5, 'enemy')
     r.spawn(6, 5, 'player', 1000)
-    const events = r.run(120)
-    // Two seconds at a 32-tick cooldown is three or four rounds. Asserted as a
-    // range rather than a number, because the exact count depends on which tick
-    // acquisition lands on and pinning it would make this a test of the
-    // scheduling rather than of the state.
+    const events = r.run(220)
+    /**
+     * Asserted as a floor rather than a number, because the exact count depends
+     * on which tick acquisition lands on and pinning it would make this a test
+     * of the scheduling rather than of the state.
+     *
+     * THE WINDOW GREW WITH TICKET 036 AND THE FLOOR DID NOT. The enemy's
+     * cooldown went 32 → 52, so 120 ticks — which used to hold three or four
+     * rounds — now holds two once the 45-tick reaction beat is paid, and this
+     * failed for exactly the reason the ticket intends. Widening the window
+     * keeps the assertion about "he keeps firing" instead of quietly converting
+     * it into an assertion about the rate, which `standoff.test.ts` owns.
+     */
     expect(shotsBy(events, enemy.id).length).toBeGreaterThanOrEqual(3)
   })
 
@@ -359,12 +375,12 @@ describe('range is the rifle`s, not a number of its own', () => {
     // a retune in `weapons.ts` would silently stop matching what the men do.
     const near = rig()
     const nearEnemy = near.spawn(10, 5, 'enemy')
-    near.spawn(10 - (RANGE - 1), 5, 'player', 1000)
+    near.spawn(Math.round(10 - (RANGE - 1)), 5, 'player', 1000)
     near.run(4)
 
     const far = rig()
     const farEnemy = far.spawn(16, 5, 'enemy')
-    far.spawn(16 - (RANGE + 2), 5, 'player', 1000)
+    far.spawn(Math.round(16 - (RANGE + 2)), 5, 'player', 1000)
     far.run(4)
 
     expect({ near: near.ai.stateOf(nearEnemy.id), far: far.ai.stateOf(farEnemy.id) }).toEqual({

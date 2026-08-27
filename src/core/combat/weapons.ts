@@ -28,6 +28,7 @@
  */
 
 import type { Weapon } from '../world/events'
+import type { Team } from '../world/world'
 
 /**
  * One weapon's complete tuning. Everything a shot needs to know, and nothing
@@ -110,8 +111,52 @@ export interface WeaponSpec {
   }
 }
 
-/** The standard rifle. Every soldier on both sides carries one. */
+/** The standard rifle. Every soldier in the PLAYER'S squad carries one. */
 export const RIFLE: Weapon = 'rifle'
+
+/**
+ * What the other side carries (ticket 036). The same rifle in silhouette — same
+ * damage, same accuracy curve — but slower to fire and shorter ranged.
+ *
+ * A SEPARATE ROW RATHER THAN A MODIFIER APPLIED TO `RIFLE`. `ShotFired.weapon`
+ * carries this identifier, so FX and audio COULD tell an incoming round from an
+ * outgoing one without being told which team fired it; a multiplier living in
+ * the shooting path would be invisible to them and would also be behaviour
+ * hiding in a file that promises to be data.
+ *
+ * Nothing reads `event.weapon` yet — tickets 025 and 027 are the first that
+ * will. Stated as a property this makes available, not as one anything uses.
+ */
+export const ENEMY_RIFLE: Weapon = 'enemy-rifle'
+
+/**
+ * How far the enemy's rifle reaches, as a fraction of the squad's.
+ *
+ * THE ENEMY'S RANGE IS DERIVED FROM THE PLAYER'S, NOT TYPED AS A SECOND NUMBER.
+ * A hardcoded 6.4 beside an 8 is two values that agree today and nothing that
+ * makes them agree tomorrow; expressed as a fraction, a later retune of
+ * `RIFLE_RANGE_TILES` carries the relationship with it.
+ *
+ * RAISE IT toward 1 and the standoff band closes: at 1 the two sides hold the
+ * same reach again and backing off stops being an answer to being engaged,
+ * which un-does most of this ticket. LOWER IT and the band widens until the
+ * squad can stand outside the envelope and kill a garrison that never gets to
+ * reply — free kills, and a level that stops asking anything of the player.
+ *
+ * 0.8 leaves 1.6 tiles of band at the current 8-tile rifle: wide enough that a
+ * step or two of retreat is a real decision, narrow enough that it takes
+ * deliberate movement rather than happening by accident.
+ */
+export const ENEMY_RANGE_FRACTION = 0.8
+
+/**
+ * The squad rifle's reach, in tiles, hoisted out of the row below so the enemy's
+ * row can be written as a multiple of it rather than as a literal.
+ *
+ * The reasoning about the VALUE lives on `WeaponSpec.rangeTiles` and on the row
+ * itself — this constant exists only so that the two rows read from one place.
+ */
+const RIFLE_RANGE_TILES = 8
 
 /**
  * Health an infantryman has.
@@ -150,11 +195,24 @@ export const INFANTRY_HEALTH = 1
  * describing the wrong shape.
  *
  * A FEEL NUMBER, and it lives here for that reason: it decides who gets shot.
- * A soldier occupies about a tile, so a HALF-WIDTH of 0.75 forgives a pointer
- * that is off by roughly three quarters of a man. RAISE IT and "vaguely
- * forwards" becomes a guaranteed hit and the rifle starts aiming itself; LOWER
- * IT and a click a pixel off a running man is suppressing fire into the dirt
- * beside him.
+ * A soldier occupies about a tile, so a HALF-WIDTH of 1.5 forgives a pointer
+ * that is off by about a man and a half. RAISE IT and "vaguely forwards"
+ * becomes a guaranteed hit and the rifle starts aiming itself; LOWER IT and a
+ * click a pixel off a running man is suppressing fire into the dirt beside him.
+ *
+ * WIDENED FROM 0.75 TO 1.5 BY TICKET 036, BECAUSE THE CORRIDOR IS A COST ONLY
+ * ONE SIDE PAYS. A candidate outside it is not a miss — it is a round that never
+ * existed, with no accuracy roll at all. `ai/system.ts`'s `shootAt` commands
+ * fire at the target's TILE CENTRE, so the machine is always exactly on-line and
+ * never pays this; the player's squad fires only where the player points and
+ * pays it on every order. At 0.75 that was an angular tolerance of ±5.4° at
+ * eight tiles, which is why the squad read as missing constantly while the enemy
+ * did not. 1.5 is ±10.6° at the same distance.
+ *
+ * 1.5 IS ALSO A DECLARED CEILING, not a value with room above it:
+ * `__tests__/line-of-fire.test.ts` asserts `<= 1.5` with the reason "narrow
+ * enough that vaguely forwards is not a guaranteed hit". A retune upward has to
+ * move that assertion and argue with it, which is where that argument belongs.
  *
  * IT MUST STAY ABOVE HALF A TILE, AND THAT FLOOR IS NOT ABOUT THE POINTER AT
  * ALL. `ai/system.ts`'s `shootAt` commands fire at the target's TILE, which
@@ -175,7 +233,7 @@ export const INFANTRY_HEALTH = 1
  * moving it into the spec then is a one-line change with this comment as the
  * reason it was ever outside.
  */
-export const AIM_CORRIDOR_TILES = 0.75
+export const AIM_CORRIDOR_TILES = 1.5
 
 /**
  * Every weapon in the game, keyed by the identifier `ShotFired` carries.
@@ -196,8 +254,9 @@ export const WEAPONS: Readonly<Record<Weapon, WeaponSpec>> = {
     // a sightline is survivable — which is what makes flanking worth doing.
     cooldownTicks: 32,
     // Eight tiles. The camera shows appreciably more than this, so a soldier
-    // who kills you was on screen when he did it.
-    rangeTiles: 8,
+    // who kills you was on screen when he did it. Named, because the enemy row
+    // below is written as a fraction of it.
+    rangeTiles: RIFLE_RANGE_TILES,
     accuracy: {
       // NINE IN TEN AT ARM'S LENGTH. An enemy who has walked into your squad's
       // faces must still be lethal — the original's tension is that one careless
@@ -211,6 +270,45 @@ export const WEAPONS: Readonly<Record<Weapon, WeaponSpec>> = {
       // it much past a third and
       // reaching maximum range stops being a survivable answer to being engaged;
       // drop it toward zero and enemies at range become scenery.
+      maxRange: 0.25,
+    },
+  },
+  [ENEMY_RIFLE]: {
+    name: ENEMY_RIFLE,
+    // IDENTICAL TO THE SQUAD'S. Lethality is not the lever this ticket pulls —
+    // one careless step still ends a man on either side, and dropping it below
+    // `INFANTRY_HEALTH` would make enemy fire something the player can stand in.
+    damage: INFANTRY_HEALTH,
+    // ~1.15 rounds a second against the squad's ~1.9, a 38% reduction, and the
+    // larger half of this ticket's difficulty swing. RAISE IT further and the
+    // enemy becomes a target rather than a threat; LOWER IT back toward 32 and
+    // three converging enemies again kill a four-man squad faster than the
+    // player can react to the first shot.
+    //
+    // 52 AND NOT 48 OR 50, and that is not a style point. See
+    // `WeaponSpec.cooldownTicks`: the rate assertion in `resolution.test.ts` is
+    // `floor(3600 / cooldownTicks) + 1`, which overcounts by one for any value
+    // dividing 3600 exactly. Both 48 and 50 — the obvious choices either side —
+    // divide it. 52 does not.
+    cooldownTicks: 52,
+    // 6.4 tiles, DERIVED and never typed: 8 × 0.8. The 1.6 tiles this leaves
+    // between the two reaches is the standoff band — the distance at which the
+    // squad can fire and the enemy cannot — and it exists only because the two
+    // sides now hold different weapons.
+    //
+    // The multiplication happens ONCE, here, at module construction. What lands
+    // in the table is a plain number, so the row still survives the JSON round
+    // trip this file promises; a getter would not, and is what the "specs are
+    // data" rule at the top forbids.
+    rangeTiles: RIFLE_RANGE_TILES * ENEMY_RANGE_FRACTION,
+    accuracy: {
+      // THE SAME CURVE AS THE SQUAD'S, DELIBERATELY UNCHANGED. The endpoints are
+      // relative to each weapon's OWN `rangeTiles`, so shortening the range has
+      // already steepened the falloff in real terms: at 6.4 tiles this man is
+      // now at his worst instead of partway down the curve. Moving the endpoints
+      // as well would be two changes explaining one outcome, and nothing could
+      // then say which of them produced it.
+      pointBlank: 0.9,
       maxRange: 0.25,
     },
   },
@@ -238,9 +336,55 @@ export const WEAPON_BY_KIND: Readonly<Record<string, Weapon>> = {
   sniper: RIFLE,
 }
 
+/**
+ * Where a team disagrees with `WEAPON_BY_KIND` about what a kind carries
+ * (ticket 036). A team with no entry here, or a kind absent from its entry,
+ * falls through to `WEAPON_BY_KIND` — so this table states DIFFERENCES only and
+ * the default arming keeps its meaning for everyone.
+ *
+ * ARMED BY TEAM AND NOT BY A NEW KIND, and that was the decision. Levels 1 and 2
+ * spawn eighteen enemies between them and not one names a `type`, so a
+ * kind-based split would mean re-authoring every level — including 3–5, which
+ * are not imported yet — and a level that forgot would silently arm its garrison
+ * with the player's rifle. Team is the one property every spawn in the game
+ * already carries and cannot omit.
+ *
+ * EVERY ARMED KIND MUST APPEAR IN THE ENEMY ROW. `sniper` is here for the same
+ * reason it is in `WEAPON_BY_KIND`: an override that listed `rifleman` alone
+ * would leave enemy snipers holding the PLAYER'S rifle, outranging and
+ * outshooting the line infantry standing beside them, and nothing would say so.
+ */
+export const WEAPON_BY_TEAM: Readonly<Record<Team, Readonly<Record<string, Weapon>>>> = {
+  player: {},
+  enemy: {
+    rifleman: ENEMY_RIFLE,
+    sniper: ENEMY_RIFLE,
+  },
+}
+
 /** The spec an entity of this kind fires with, or `null` if it is unarmed. */
 export function weaponForKind(kind: string): WeaponSpec | null {
   const name = WEAPON_BY_KIND[kind]
   if (name === undefined) return null
   return WEAPONS[name] ?? null
+}
+
+/**
+ * The spec an entity of this kind, on this team, fires with — or `null` if it is
+ * unarmed (ticket 036).
+ *
+ * THE SEAM THE WHOLE TICKET NEEDED. Both sides spawn as `kind: 'rifleman'`, so
+ * before this there was no property by which the enemy could be given a worse
+ * weapon at all.
+ *
+ * A kind the team does not override falls through to `weaponForKind`, and a kind
+ * neither table names is UNARMED on both teams — the default that stops a parked
+ * jeep returning fire, preserved here because an override table that fell
+ * through to SOMETHING rather than to nothing would arm every piece of scenery
+ * on one side of the map.
+ */
+export function weaponFor(kind: string, team: Team): WeaponSpec | null {
+  const override = WEAPON_BY_TEAM[team][kind]
+  if (override === undefined) return weaponForKind(kind)
+  return WEAPONS[override] ?? null
 }

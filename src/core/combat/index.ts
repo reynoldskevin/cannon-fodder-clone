@@ -18,9 +18,12 @@ export {
   WEAPONS,
   WEAPON_BY_KIND,
   RIFLE,
+  ENEMY_RIFLE,
+  ENEMY_RANGE_FRACTION,
   INFANTRY_HEALTH,
   AIM_CORRIDOR_TILES,
   weaponForKind,
+  weaponFor,
 } from './weapons'
 export type { WeaponSpec } from './weapons'
 
