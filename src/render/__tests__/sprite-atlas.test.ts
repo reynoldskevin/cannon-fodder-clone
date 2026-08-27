@@ -299,3 +299,67 @@ describe('unknown things', () => {
     expect(visual.clip('soldier', 'moonwalk').frameCount).toBe(1)
   })
 })
+
+describe('the explosion clip (ticket 064)', () => {
+  /**
+   * Against the REAL manifest, like everything else in this file. An effect is
+   * the pipeline's third category — N frames and no facings, which is neither a
+   * unit nor a prop — so the question these cases answer is whether the runtime
+   * reader understands what the packer wrote.
+   */
+
+  it('is three frames long', () => {
+    expect(visual.clip('explosion', 'burst').frameCount).toBe(3)
+  })
+
+  it('and does NOT loop', () => {
+    /**
+     * A LOOPING BLAST IS A CAMPFIRE. `core/session` drops the drawable once the
+     * clip has run, so a looping clip would only be visible for the frames it is
+     * alive — but the two would then be disagreeing about what "over" means, and
+     * the day the lifetime is retuned the explosion would restart before dying.
+     */
+    expect(visual.clip('explosion', 'burst').loop).toBe(false)
+  })
+
+  it('and plays at the rate the manifest says', () => {
+    // Read from the manifest rather than written down here: the number is
+    // spritegen's, and `blast-drawn.test.ts` is what ties it to the session's
+    // lifetime.
+    expect(visual.clip('explosion', 'burst').fps).toBe(manifest.effects.explosion.fps)
+  })
+
+  it('and every frame resolves to its OWN quad', () => {
+    /**
+     * THE CASE THAT CATCHES A DEAD ANIMATION. `frame()` falls back to frame 0
+     * and then to the static frame when it cannot find what was asked for, which
+     * is right for a soldier mid-clip and would here quietly turn three frames
+     * into one drawn three times. Comparing the UVs is what tells them apart.
+     */
+    const uvs = [0, 1, 2].map((index) => {
+      const f = visual.frame('explosion', 'burst', 'S', index)
+      expect(f).not.toBeNull()
+      return `${String(f?.u0)},${String(f?.v0)}`
+    })
+    expect(new Set(uvs).size).toBe(3)
+  })
+
+  it('and the frames get bigger, because the blast grows', () => {
+    // The sheet is painted as an expanding fireball. A reader that sorted or
+    // reversed the frames would play the explosion backwards.
+    const widths = [0, 1, 2].map((i) => visual.frame('explosion', 'burst', 'S', i)?.width ?? 0)
+    expect(widths[1]).toBeGreaterThan(Number(widths[0]))
+    expect(widths[2]).toBeGreaterThan(Number(widths[1]))
+  })
+
+  it('and it is sized against the soldier rather than left at the default', () => {
+    /**
+     * The default cell height is 2 world units and a soldier stands about 1.5.
+     * An explosion left at the default would be a fireball the size of a man,
+     * which for a grenade with a two-tile blast radius reads as a spark.
+     */
+    const soldier = visual.frame('soldier', 'walk', 'S', 0)?.height ?? 0
+    const blast = visual.frame('explosion', 'burst', 'S', 2)?.height ?? 0
+    expect(blast).toBeGreaterThan(soldier)
+  })
+})
