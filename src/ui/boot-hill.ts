@@ -36,6 +36,7 @@
 import { createChrome } from './screen-chrome'
 import { DISPLAY_FONT, loadDisplayFont } from './display-font'
 import { INSIGNIA_STYLE, insigniaPosition } from './rank-insignia'
+import { ROSTER_COLUMN_WIDTH } from './roster-column'
 import hillUrl from '../../assets/source/hill-path-background.webp?url'
 import crossUrl from '../../assets/source/sprites/cross.png?url'
 import type { BootHillModel, Grave, Trooper } from '../core/campaign'
@@ -293,7 +294,10 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
     'display:flex',
     'flex-direction:column',
     'gap:0.35rem',
-    'width:clamp(11rem, 22vw, 16rem)',
+    // SHARED WITH THE LEVEL'S SQUAD RAIL (ticket 065), not re-spelled here: the
+    // two columns are meant to be the same column, and the day they were two
+    // literals is the day one of them could be widened alone.
+    `width:${ROSTER_COLUMN_WIDTH}`,
     'flex:none',
     'padding:0.5rem 0.6rem 1rem',
     'overflow-y:auto',

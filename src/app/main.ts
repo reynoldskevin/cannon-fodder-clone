@@ -28,6 +28,7 @@ import { cueFor, firingCue, type CueRequest } from '../core/audio-events'
 import { createAudioBus } from '../audio'
 import { createCampaignRunner, viewFor } from '../core/flow'
 import type { AdvanceResult, MissionHost, ViewId } from '../core/flow'
+import { insigniaIndexOf } from '../core/campaign'
 import type { SquadMember } from '../core/campaign'
 import type { SimEvent } from '../core/world'
 import type { RenderEntity } from '../core/render-state/entity'
@@ -51,6 +52,7 @@ import { ZoomController } from '../input/zoom-controller'
 import { showControlHint, type ControlHint } from '../ui/control-hint'
 import { showFatalError, type FatalErrorReport } from '../ui/error-overlay'
 import { createHud, type RosterMember } from '../ui/hud'
+import { createSquadPanel, type SquadPanelMember } from '../ui/squad-panel'
 import { createMissionBanner } from '../ui/mission-banner'
 import { createBootHill } from '../ui/boot-hill'
 import { createMenu } from '../ui/menu'
@@ -629,6 +631,21 @@ async function boot(): Promise<void> {
   const hud = createHud(mount)
 
   /**
+   * The roll of the men, down the left of the level (ticket 065).
+   *
+   * BESIDE THE HUD AND NOT INSIDE IT, because they answer two different
+   * questions. The HUD's pips say how many of the squad are still standing and
+   * are redrawn every frame off the world; this rail says WHO deployed, which is
+   * settled the moment the mission starts and cannot change until the next one.
+   * Folding it into the HUD would put a list that never moves inside the one
+   * object in this file that is rewritten sixty times a second.
+   *
+   * It exposes the same `update`/`setVisible`/`isVisible`/`dispose` the HUD does,
+   * so the router below drives both with the same lines.
+   */
+  const squadPanel = createSquadPanel(mount)
+
+  /**
    * MISSION COMPLETE / MISSION FAILED, and the three seconds it stays up
    * (ticket 058).
    *
@@ -924,6 +941,30 @@ async function boot(): Promise<void> {
     // is the map `missionReport` takes verbatim — it is the only place the sim's
     // entity ids and the campaign's recruit ids ever meet.
     session = createSession(next, { squad })
+    /**
+     * THE ROLL, FED ONCE PER MISSION AND NOT PER FRAME. Who deployed is decided
+     * here and nowhere else — men die during the mission but nobody joins it —
+     * so there is nothing for the render loop to re-ask. `insigniaIndexOf` maps
+     * the rank to its badge in `core/campaign`, where Vitest can see it; a table
+     * in `src/ui` would be a second, untested copy of the ladder.
+     */
+    squadPanel.update({
+      squad: squad.map(
+        (man): SquadPanelMember => ({
+          name: man.name,
+          /**
+           * `?? 0` FOR A RANK THE LADDER DOES NOT KNOW, which is unreachable
+           * rather than merely unlikely: every man here came off the campaign
+           * roster, and the roster's ranks ARE the ladder. Boot Hill answers the
+           * same `null` by drawing no badge at all, because a grave can outlive
+           * the ladder it was carved under; a man standing in front of you
+           * cannot, and dropping him off the roll of the living would be the
+           * worse failure of the two.
+           */
+          rankIndex: insigniaIndexOf(man.rank) ?? 0,
+        }),
+      ),
+    })
     // WITH THE SESSION, NOT AFTER IT. The new world's tick count starts at 0 and
     // the animation clock is keyed to sim time — see the invariant where it is
     // declared. `previous` goes with them so the first frame of the new mission
@@ -998,6 +1039,9 @@ async function boot(): Promise<void> {
     // from outside it.
     debug?.dispose()
     hud.dispose()
+    // With the HUD, because it is the same screen: a rail left on the page would
+    // be a roster of the dead session's men over the fatal-error overlay.
+    squadPanel.dispose()
     // The banner is a `div` on `mount` and nothing else; the hold it is driven
     // by has no timer to cancel, which is the reason it takes `now` as an
     // argument rather than reading a clock.
@@ -1207,6 +1251,10 @@ async function boot(): Promise<void> {
     // ABOVE THE EARLY RETURN, so it runs on every call — including the ones
     // where the mounted screen is already right.
     hud.setVisible(view === null)
+    // ON EXACTLY THE SAME ANSWER AS THE HUD, and on the line below it so the two
+    // cannot drift. Both are the mission's chrome; a rail that outlived the
+    // mission would list a squad down the side of Boot Hill.
+    squadPanel.setVisible(view === null)
     if (view === null) showHintOnce()
     // The hint is a one-shot and its own file removes it on a timer or a click;
     // dismissing it here only covers the case where the mission ends before
