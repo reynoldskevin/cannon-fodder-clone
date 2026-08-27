@@ -35,7 +35,7 @@
 
 import { createChrome } from './screen-chrome'
 import { DISPLAY_FONT, loadDisplayFont } from './display-font'
-import hillUrl from '../../assets/source/sprites/boot-hill.png?url'
+import hillUrl from '../../assets/source/hill-path-background.webp?url'
 import type { BootHillModel, Grave, Promotion, Trooper } from '../core/campaign'
 
 export interface BootHillOptions {
@@ -76,6 +76,10 @@ const HEADING = '#f2c14e'
  *
  * THE PAINTED ONE AT LAST. Ticket 054 shipped a CSS sky and two radial mounds
  * because no such asset existed; this is that placeholder retired.
+ *
+ * WEBP, NOT THE PNG CUT IT ARRIVED AS (ticket 058). Same picture, 144 KB rather
+ * than 1.2 MB — which on a screen the player meets between missions is most of
+ * the reason it appears at all rather than a frame later.
  *
  * `cover` AND BOTTOM-ANCHORED, which is the whole reason it is not `center`: the
  * art is a horizon in its top third and a foreground of grass and poppies along
