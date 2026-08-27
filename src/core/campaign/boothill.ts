@@ -19,6 +19,7 @@
  */
 
 import { recruitsAvailable } from './roster'
+import { insigniaIndexOf, rankIndexFor } from './ranks'
 import type { CampaignState } from './types'
 
 /**
@@ -43,6 +44,19 @@ export interface Grave {
   readonly name: string
   /** What he was WHEN HE FELL. Read back as written, never recomputed. */
   readonly rankAtDeath: string
+  /**
+   * Which badge to draw, or `null` for a rank this ladder no longer has.
+   *
+   * FOUND FROM `rankAtDeath`, NOT FROM HIS RECORD (ticket 062). The rest of this
+   * interface's contract is that a stone is read back as carved; a badge
+   * recomputed from `missionsSurvived` would be the one part of the inscription
+   * that changed when a designer edited the table.
+   *
+   * `null` IS A REAL ANSWER AND THE SCREEN MUST DRAW NOTHING FOR IT. A save
+   * written under the six-rung ladder can name a rank that no longer exists, and
+   * a confident wrong badge on a memorial is worse than no badge at all.
+   */
+  readonly rankIndex: number | null
   /** Where he fell. Without it every stone on the hill reads the same. */
   readonly diedOnLevel: number
   /** How many he took with him — the difference between a casualty and a man. */
@@ -61,6 +75,15 @@ export interface Grave {
 export interface Trooper {
   readonly name: string
   readonly rank: string
+  /**
+   * Which badge to draw (ticket 062).
+   *
+   * DERIVED, LIKE HIS RANK, AND FROM THE SAME CALL. A living man's record is
+   * still changing, so both come off `missionsSurvived` — and they come off it
+   * through one function rather than two, so the stripes and the title cannot
+   * disagree. Never `null`: `rankIndexFor` always lands on a real rung.
+   */
+  readonly rankIndex: number
   readonly kills: number
 }
 
@@ -200,6 +223,8 @@ export function bootHillModel(
     squad: recruitsAvailable(state).map((man) => ({
       name: man.name,
       rank: man.rank,
+      // OFF THE RECORD, like the rank beside it — see `Trooper.rankIndex`.
+      rankIndex: rankIndexFor(man.missionsSurvived),
       kills: man.kills,
     })),
     enemyKilled: totals.kills,
@@ -230,6 +255,8 @@ function gravesOf(state: CampaignState): Grave[] {
   return state.dead.map((fallen) => ({
     name: fallen.name,
     rankAtDeath: fallen.rankAtDeath,
+    // FROM THE INSCRIPTION, NOT FROM THE RECORD. See `Grave.rankIndex`.
+    rankIndex: insigniaIndexOf(fallen.rankAtDeath),
     diedOnLevel: fallen.diedOnLevel,
     kills: fallen.kills,
   }))
