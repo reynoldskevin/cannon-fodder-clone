@@ -66,8 +66,11 @@ export interface BootHillScreen {
 
 /** Matched to the HUD and `screen-chrome.ts`, so the game has one palette. */
 const TEXT = '#f2efe6'
-const MUTED = '#9fb3bd'
-/** The colour of a fresh stone. The same warm one the lose screen uses. */
+/**
+ * The warm one the lose screen uses. Since ticket 064 the ROSTER no longer takes
+ * it — every name on the hill is `TEXT` — and it is left carrying the one line
+ * that is genuinely bad news rather than merely recent: `squadEmpty`.
+ */
 const FRESH = '#ff8f6b'
 /** The original's panel headings are gold on black. These two are the only ones. */
 const HEADING = '#f2c14e'
@@ -137,7 +140,16 @@ const ROW_STYLE = [
   'background:rgba(58,62,44,0.85)',
   'border:1px solid rgba(242,193,78,0.22)',
   `font-family:${DISPLAY_FONT}`,
-  'font-size:clamp(0.85rem, 2vw, 1.05rem)',
+  /**
+   * 30% UP ON WHAT 058 SHIPPED (ticket 064), at all three stops — raising only
+   * the `vw` term would leave a phone on the old minimum and a wide monitor on
+   * the old maximum, which are the two windows that needed it most.
+   *
+   * THE BADGE COMES WITH IT AND MUST NOT BE TOUCHED SEPARATELY. `INSIGNIA_STYLE`
+   * is sized in `em` precisely so it tracks the row it sits in; scaling the sheet
+   * as well would compound the two and put the insignia at 169%.
+   */
+  'font-size:clamp(1.1rem, 2.6vw, 1.37rem)',
   'letter-spacing:0.06em',
 ].join(';')
 
@@ -590,18 +602,19 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
       // else, but the rest of the record is not worth losing — it is the same
       // prose line this screen used to print, moved to where it costs no width.
       row.title = graveLine(grave)
-      const state = fresh ? 'fresh' : 'old'
-      if (row.dataset.state !== state) {
-        row.dataset.state = state
-        // WITH THE PRINTED MARKERS GONE (ticket 058) THIS IS COLOUR AND WEIGHT
-        // ALONE, which is a real loss and a deliberate one: the bars carry no
-        // room for a glyph in front of the name. The distinction is a nicety —
-        // every man here is dead either way — and the border is a second,
-        // non-chromatic channel for a player who cannot see the warm tint.
-        row.style.color = fresh ? FRESH : MUTED
-        row.style.fontWeight = fresh ? '600' : '400'
-        row.style.borderColor = fresh ? 'rgba(255,143,107,0.7)' : 'rgba(242,193,78,0.22)'
-      }
+      /**
+       * ONE COLOUR FOR EVERY MAN ON THE HILL (ticket 064).
+       *
+       * The fresh graves used to be warm and bold and the older ones muted, so
+       * the column had three greys in it and the eye read the top of the list as
+       * faded rather than as older. EVERY MAN HERE IS DEAD EITHER WAY, and the
+       * distinction was a nicety costing the roll of the dead its evenness — a
+       * memorial should not rank its own names by recency.
+       *
+       * THE HILL STILL CARRIES IT, below: this mission's crosses are unweathered.
+       * That is the picture doing the job the column was doing badly.
+       */
+      if (row.style.color !== TEXT) row.style.color = TEXT
 
       const cross = crossAt(i)
       if (cross.style.display !== '') cross.style.display = ''
