@@ -307,37 +307,38 @@ describe('the mission card says what the player asked it to say (ticket 040)', (
     }
   })
 
-  it('and the reserve it names is the men who are NOT going (ticket 053)', () => {
+  it('and the count it names is EVERY living man, the landing party included (ticket 061)', () => {
     /**
-     * "13 RECRUITS REMAINING" on the mockup. The card has already said how many
-     * are going one line above, so the number underneath must be what is LEFT —
-     * a card that counted the living would count the landing party twice and
-     * tell a player with eight men and two in the boat that he has eight in
-     * reserve.
+     * TICKET 053 HAD THIS AS THE RESERVE and subtracted the squad, which made
+     * the number fall by the size of the landing party on the way into a
+     * briefing and climb back after it — losses the campaign never took. "n
+     * RECRUITS REMAINING" is the campaign's manpower: eight men alive, two of
+     * them in the boat, is EIGHT.
      */
     const state = createCampaign({ seed: 31, recruits: 8 })
     const model = briefingModel(level(), squadOf(state, 2), 0, recruitsAvailable(state))
-    expect(model.recruitsRemaining).toBe(6)
+    expect(model.recruitsRemaining).toBe(8)
   })
 
-  it('and the reserve is empty when the whole roster deploys', () => {
+  it('and a whole roster deploying does not empty it', () => {
     const state = createCampaign({ seed: 32, recruits: 4 })
     const everybody = recruitsAvailable(state)
-    expect(briefingModel(level(), everybody, 0, everybody).recruitsRemaining).toBe(0)
+    expect(briefingModel(level(), everybody, 0, everybody).recruitsRemaining).toBe(4)
   })
 
   it('and a squad carrying a man the roster does not cannot inflate it', () => {
     /**
-     * WHY IT IS COMPUTED BY IDENTITY AND NOT BY `roster.length - squad.length`.
-     * A stale assignment or a dead man in the boat makes the subtraction go
-     * NEGATIVE — or, with a smaller squad, report a reserve the campaign does
-     * not have. Counting the men the roster actually has left cannot.
+     * THE COUNT IS THE ROSTER'S AND THE SQUAD CANNOT REACH IT. A stale
+     * assignment or a dead man in the boat used to matter here, because the old
+     * spelling subtracted one list from the other; it still must not, and the
+     * cheapest way to keep that true is a test that puts a ghost in the squad
+     * and expects the roster's own size back.
      */
     const state = createCampaign({ seed: 33, recruits: 3 })
     const roster = recruitsAvailable(state)
     const ghost = { ...roster[0]!, id: 'soldier-ghost' }
     const model = briefingModel(level(), [...roster, ghost], 0, roster)
-    expect(model.recruitsRemaining).toBe(0)
+    expect(model.recruitsRemaining).toBe(3)
   })
 
   it('and still carries the objectives the card lists', () => {

@@ -17,7 +17,7 @@
  * count, the objectives in the author's own order and the size of the reserve
  * are all settled in `core/flow/screens.ts`. In particular BOTH COUNTS ARE THE
  * MODEL'S: `soldierCount` is built from the very list the model returns and
- * `recruitsRemaining` is computed against the campaign's living roster, so a
+ * `recruitsRemaining` is the campaign's whole living roster, so a
  * screen that derived either would be a second answer to a number the player is
  * about to risk men on.
  *
@@ -89,7 +89,9 @@ export function missionLine(soldierCount: number): string {
 }
 
 /**
- * The reserve, in the original's words.
+ * The campaign's living manpower, in the original's words. Since ticket 061 that
+ * is EVERY man still alive, the ones about to land included — not the reserve
+ * left behind, which fell and rose again as squads went out and came back.
  *
  * SINGULAR MATTERS MORE HERE THAN ANYWHERE ELSE ON THE SCREEN, because "1
  * RECRUITS REMAINING" is the line a player reads at the exact moment the
