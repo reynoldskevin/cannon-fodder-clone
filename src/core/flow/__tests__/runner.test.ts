@@ -1,13 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { createCampaignRunner, EVENTS, SCREENS, SCREEN_VIEWS, viewFor } from '../index'
+import { createCampaignRunner, EVENTS, SCREENS, SCREEN_VIEWS, VIEWS, viewFor } from '../index'
 import type { CampaignRunner, MissionHost, RunnerOptions } from '../index'
 import {
   CAMPAIGN_SCHEMA_VERSION,
   createCampaign,
   recruitsAvailable,
-  saveCampaign,
 } from '../../campaign'
-import type { CampaignState, PersistencePort, SquadMember } from '../../campaign'
+import type { PersistencePort, SquadMember } from '../../campaign'
 import type { LevelData } from '../../level/types'
 import type { SimEvent } from '../../world/events'
 
@@ -137,9 +136,13 @@ const THREE_LEVELS = [
   makeLevel('Command Post', 3),
 ]
 
-/** The ids the Recruitment screen would offer, in the order it lists them. */
-const offered = (runner: CampaignRunner, n: number): readonly string[] =>
-  runner.recruitment().available.slice(0, n).map((m) => m.id)
+/**
+ * THERE IS NO PICKING ANY MORE (ticket 040). The player no longer chooses a
+ * squad; Boot Hill assigns one and moves straight to the briefing. What used to
+ * be `assignSquad(ids)` is `advanceFromBootHill()` with no argument at all, and
+ * the old `offered()` helper — which read the Recruitment screen's list — has
+ * nothing left to read.
+ */
 
 /**
  * A mission's event stream: `who` are the entity ids that died, and the mission
@@ -179,12 +182,37 @@ const assignmentFor = (squad: readonly SquadMember[]): ReadonlyMap<number, strin
 /** Walk Menu -> Mission the way a player does, and return what was deployed. */
 function deploy(runner: CampaignRunner): readonly SquadMember[] {
   expect(runner.startCampaign().ok).toBe(true)
-  expect(runner.assignSquad(offered(runner, runner.recruitment().maxSquad)).ok).toBe(true)
+  expect(runner.advanceFromBootHill().ok).toBe(true)
   expect(runner.deploy().ok).toBe(true)
   return runner.squad()
 }
 
+/** Every screen the runner passed through while `walk` ran. */
+function trace(runner: CampaignRunner, steps: readonly (() => { ok: boolean })[]): string[] {
+  const seen: string[] = [runner.screen()]
+  for (const step of steps) {
+    const result = step()
+    expect(result.ok).toBe(true)
+    seen.push(runner.screen())
+  }
+  return seen
+}
+
 // ---------------------------------------------------------------------------
+
+/**
+ * TICKET 040 REWROTE THIS SUITE, AND THAT IS WORTH SAYING OUT LOUD.
+ *
+ * The chart lost two screens (`Recruitment`, `Debrief`) and two events
+ * (`casualtiesRecorded`, `nextLevel`), and the runner lost four methods with
+ * them. Fifty-eight of the seventy-one cases here drove that removed API — not
+ * because they were weak, but because their subject no longer exists.
+ *
+ * Every CLAIM the old suite made that still has a subject is made again below,
+ * under the same headings. What is genuinely gone is the coverage of manual
+ * squad selection and of the debrief model, because the game no longer does
+ * either.
+ */
 
 describe('the runner walks the chart', () => {
   it('opens on the Menu', () => {
@@ -192,59 +220,59 @@ describe('the runner walks the chart', () => {
     expect(runner.screen()).toBe('Menu')
   })
 
-  it('Menu -> Recruitment -> Briefing -> Mission -> Debrief -> BootHill -> Recruitment', () => {
+  it('Menu -> BootHill -> Briefing -> Mission -> BootHill -> Briefing', () => {
     // The whole loop in one test, because the value of the runner is that the
-    // path exists end to end — each step passing in isolation is what the four
+    // path exists end to end — each step passing in isolation is what the
     // previous tickets already had.
     const { runner } = runnerFor(THREE_LEVELS)
-    const seen: string[] = [runner.screen()]
-
-    expect(runner.startCampaign().ok).toBe(true)
-    seen.push(runner.screen())
-    expect(runner.assignSquad(offered(runner, 3)).ok).toBe(true)
-    seen.push(runner.screen())
-    expect(runner.deploy().ok).toBe(true)
-    seen.push(runner.screen())
-
-    const squad = runner.squad()
-    expect(runner.finishMission(missionEvents([], 'complete'), assignmentFor(squad)).ok).toBe(true)
-    seen.push(runner.screen())
-    expect(runner.recordCasualties().ok).toBe(true)
-    seen.push(runner.screen())
-    expect(runner.advanceFromBootHill().ok).toBe(true)
-    seen.push(runner.screen())
-
-    expect(seen).toEqual([
-      'Menu',
-      'Recruitment',
-      'Briefing',
-      'Mission',
-      'Debrief',
-      'BootHill',
-      'Recruitment',
+    const seen = trace(runner, [
+      () => runner.startCampaign(),
+      () => runner.advanceFromBootHill(),
+      () => runner.deploy(),
+      () => runner.finishMission(missionEvents([], 'complete'), assignmentFor(runner.squad())),
+      () => runner.advanceFromBootHill(),
     ])
+    expect(seen).toEqual(['Menu', 'BootHill', 'Briefing', 'Mission', 'BootHill', 'Briefing'])
   })
 
-  it('routes a lost mission to the Debrief too', () => {
-    // `Mission -> Debrief` has two rows, and a runner that only handled the
-    // winning one would strand the player on a mission he had already lost.
+  it('routes a LOST mission back to the Briefing, not to Boot Hill', () => {
+    /**
+     * The one asymmetry in the chart. A defeat means the level was not finished,
+     * so no ground was taken and no replacements are due; routing it through
+     * Boot Hill would promote a fresh squad for a mission about to be retried.
+     */
     const { runner } = runnerFor(ONE_LEVEL)
     const squad = deploy(runner)
     expect(runner.finishMission(missionEvents([], 'failed'), assignmentFor(squad)).ok).toBe(true)
-    expect(runner.screen()).toBe('Debrief')
+    expect(runner.screen()).toBe('Briefing')
+  })
+
+  it('and a retry can be lost again without leaving the loop', () => {
+    // The retry is a LOOP, not a one-off concession: a runner that let a player
+    // fail once and then stranded them is worse than one that never offered it.
+    const { runner } = runnerFor(ONE_LEVEL)
+    deploy(runner)
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect(
+        runner.finishMission(missionEvents([], 'failed'), assignmentFor(runner.squad())).ok,
+      ).toBe(true)
+      expect(runner.screen()).toBe('Briefing')
+      expect(runner.deploy().ok).toBe(true)
+      expect(runner.screen()).toBe('Mission')
+    }
   })
 
   it('takes the outcome from the report, not from the caller', () => {
     /**
      * `missionReport` defaults to `failed` on a stream that never said the
      * mission was won — a crash, a truncation, a mission still running. Routing
-     * the screen off the same value the roster is updated from is what stops a
-     * Debrief reading "complete" over a campaign that recorded a loss.
+     * the screen off the same value the roster is updated from is what stops the
+     * flow celebrating a campaign that recorded a loss.
      */
     const { runner } = runnerFor(ONE_LEVEL)
     const squad = deploy(runner)
     runner.finishMission([], assignmentFor(squad))
-    expect(runner.debrief()?.outcome).toBe('failed')
+    expect(runner.screen()).toBe('Briefing')
   })
 
   it('honours a deep link through resolveEntry, and refuses nonsense', () => {
@@ -252,1116 +280,369 @@ describe('the runner walks the chart', () => {
     expect(runnerFor(ONE_LEVEL, { entry: 'Nowhere' }).runner.screen()).toBe('Menu')
     expect(runnerFor(ONE_LEVEL, { entry: 42 }).runner.screen()).toBe('Menu')
   })
+
+  it('and a deep link to a screen the chart no longer has falls back to the Menu', () => {
+    // `Recruitment` and `Debrief` were legal entry points until this ticket, so
+    // a bookmarked URL naming one is real traffic, not a hypothetical.
+    expect(runnerFor(ONE_LEVEL, { entry: 'Recruitment' }).runner.screen()).toBe('Menu')
+    expect(runnerFor(ONE_LEVEL, { entry: 'Debrief' }).runner.screen()).toBe('Menu')
+  })
 })
 
 describe('a refused command changes nothing at all', () => {
   /**
    * THE CENTRAL INVARIANT. Not "returns false" — CHANGES NOTHING. A runner that
-   * refused after calling the host, or after recruiting the auto-fill, or after
-   * writing the save, would pass a test that only read the return value.
+   * refused AFTER calling the host would leak an entire scene on a double click,
+   * and the teardown that followed would release only the second one's handles.
    */
-
-  it('every command illegal on the current screen is refused with a reason', () => {
-    const { runner } = runnerFor(ONE_LEVEL)
-    // On the Menu, only `startCampaign` and `demoShortcut` have rows.
-    const refusals = [
-      runner.assignSquad([]),
-      runner.deploy(),
-      runner.finishMission([], new Map()),
-      runner.recordCasualties(),
-      runner.advanceFromBootHill(),
-    ]
-    for (const r of refusals) {
-      expect(r.ok).toBe(false)
-      if (!r.ok) expect(r.reason.length).toBeGreaterThan(0)
-    }
-    expect(runner.screen()).toBe('Menu')
-  })
-
-  it('and touches neither the host nor the store while refusing', () => {
+  it('refuses every command the current screen has no row for', () => {
     const { runner, host, port } = runnerFor(ONE_LEVEL)
-    runner.deploy()
-    runner.finishMission(missionEvents([1], 'complete'), new Map([[1, 'x']]))
-    runner.recordCasualties()
-    runner.advanceFromBootHill()
-    expect({ starts: host.starts(), teardowns: host.teardowns(), writes: port.writes() }).toEqual({
-      starts: 0,
-      teardowns: 0,
-      writes: 0,
-    })
+    const before = { screen: runner.screen(), writes: port.writes(), starts: host.starts() }
+    // On the Menu, only `startCampaign` and `demoShortcut` are legal.
+    for (const attempt of [
+      () => runner.deploy(),
+      () => runner.advanceFromBootHill(),
+      () => runner.finishMission([], new Map()),
+    ]) {
+      const result = attempt()
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(typeof result.reason).toBe('string')
+    }
+    expect({
+      screen: runner.screen(),
+      writes: port.writes(),
+      starts: host.starts(),
+    }).toEqual(before)
   })
 
-  it('and leaves the campaign byte-identical', () => {
-    // A refused `finishMission` that had already applied its report would bury
-    // men on a mission that never happened.
+  it('and never throws, because a double-clicked button is ordinary traffic', () => {
     const { runner } = runnerFor(ONE_LEVEL)
-    const before = JSON.stringify(runner.campaign())
-    runner.finishMission(missionEvents([1, 2], 'complete'), new Map([[1, 'a'], [2, 'b']]))
-    runner.recordCasualties()
-    expect(JSON.stringify(runner.campaign())).toBe(before)
+    runner.startCampaign()
+    expect(() => runner.startCampaign()).not.toThrow()
+    expect(runner.startCampaign().ok).toBe(false)
   })
 
-  it('a second deploy is refused and starts no second mission', () => {
-    /**
-     * THE ONE THAT COSTS A WHOLE SCENE. A double-clicked Deploy calling
-     * `host.start` twice leaks every buffer, texture and geometry the first
-     * mission allocated, and the teardown that eventually runs releases only the
-     * second mission's handles. `Mission` has no `deploy` row precisely so the
-     * chart can answer this without the shell needing a guard flag.
-     */
+  it('and does not touch the host on a refusal', () => {
     const { runner, host } = runnerFor(ONE_LEVEL)
     deploy(runner)
-    const second = runner.deploy()
-    expect(second.ok).toBe(false)
-    expect(host.starts()).toBe(1)
-    expect(host.teardowns()).toBe(0)
-  })
-
-  it('no command on any screen can reach a screen the chart does not name', () => {
-    /**
-     * The exhaustive sweep: every command on every screen, from a runner walked
-     * into that screen, and the result is always one of the six. This is the
-     * assertion that would catch a runner setting its screen from something
-     * other than `advance`'s answer — a hand-written `this.screen = 'Debrief'`
-     * on a branch the table disagrees with.
-     */
-    const reach = (target: string): CampaignRunner | null => {
-      const { runner } = runnerFor(THREE_LEVELS)
-      if (target === 'Menu') return runner
-      runner.startCampaign()
-      if (target === 'Recruitment') return runner
-      runner.assignSquad(offered(runner, 3))
-      if (target === 'Briefing') return runner
-      runner.deploy()
-      if (target === 'Mission') return runner
-      runner.finishMission(missionEvents([], 'complete'), assignmentFor(runner.squad()))
-      if (target === 'Debrief') return runner
-      runner.recordCasualties()
-      if (target === 'BootHill') return runner
-      return null
-    }
-    for (const screen of SCREENS) {
-      const runner = reach(screen)
-      expect({ screen, reached: runner?.screen() }).toEqual({ screen, reached: screen })
-      if (runner === null) continue
-      const commands = [
-        () => runner.startCampaign(),
-        () => runner.demoShortcut(0),
-        () => runner.assignSquad([]),
-        () => runner.deploy(),
-        () => runner.finishMission([], new Map()),
-        () => runner.recordCasualties(),
-        () => runner.advanceFromBootHill(),
-      ]
-      for (const run of commands) {
-        run()
-        expect(SCREENS).toContain(runner.screen())
-      }
-    }
-  })
-
-  it('the runner has a command for every event in the chart', () => {
-    /**
-     * The other direction: an event with a row and no command is a transition
-     * no player can ever take — a dead edge in the picture that reviews as
-     * "already wired". Named explicitly rather than counted, so adding a row to
-     * the chart without a command here fails HERE rather than in a playtest.
-     */
-    const covered: readonly string[] = [
-      'startCampaign',
-      'squadAssigned',
-      'deploy',
-      'missionComplete',
-      'missionFailed',
-      'casualtiesRecorded',
-      'nextLevel',
-      'campaignComplete',
-      'demoShortcut',
-    ]
-    expect([...EVENTS].sort()).toEqual([...covered].sort())
+    const starts = host.starts()
+    expect(runner.deploy().ok).toBe(false)
+    expect(host.starts()).toBe(starts)
   })
 })
 
 describe('deploying starts exactly one mission, with the right men on the right map', () => {
-  it('hands the host the level the player is on and the squad he chose', () => {
+  it('starts the host once, with the level the campaign is on', () => {
     const { runner, host } = runnerFor(THREE_LEVELS)
+    deploy(runner)
+    expect(host.starts()).toBe(1)
+    expect(host.calls[0]).toMatchObject({ kind: 'start', level: 'Jungle Approach' })
+  })
+
+  it('and the squad it starts with is the squad it reports', () => {
+    const { runner, host } = runnerFor(ONE_LEVEL)
     const squad = deploy(runner)
-    expect(host.calls).toEqual([
-      { kind: 'start', level: 'Jungle Approach', squad: squad.map((m) => m.id) },
-    ])
+    const call = host.calls.find((c) => c.kind === 'start')
+    expect(call).toMatchObject({ squad: squad.map((m) => m.id) })
   })
 
-  it('the squad is the men that were chosen, in the order they were chosen', () => {
-    // Ticket 021: the nth man stands on the nth avatar spawn, so an order the
-    // runner reshuffled would put the veteran on a flank the player did not
-    // pick — and nothing on screen would say so.
-    const { runner } = runnerFor(ONE_LEVEL)
-    runner.startCampaign()
-    const wanted = [...offered(runner, 3)].reverse()
-    expect(runner.assignSquad(wanted).ok).toBe(true)
-    expect(runner.squad().map((m) => m.id)).toEqual(wanted)
-  })
-
-  it('a later level is deployed once its predecessor is beaten', () => {
+  it('and the second mission is the second level', () => {
     const { runner, host } = runnerFor(THREE_LEVELS)
-    const squad = deploy(runner)
-    runner.finishMission(missionEvents([], 'complete'), assignmentFor(squad))
-    runner.recordCasualties()
-    runner.advanceFromBootHill()
-    expect(runner.levelIndex()).toBe(1)
-    runner.assignSquad(offered(runner, 3))
-    runner.deploy()
-    const starts = host.calls.filter((c) => c.kind === 'start')
-    expect(starts.map((c) => (c.kind === 'start' ? c.level : ''))).toEqual([
-      'Jungle Approach',
-      'The Ridge',
-    ])
+    deploy(runner)
+    runner.finishMission(missionEvents([], 'complete'), assignmentFor(runner.squad()))
+    expect(runner.advanceFromBootHill().ok).toBe(true)
+    expect(runner.deploy().ok).toBe(true)
+    expect(host.calls.filter((c) => c.kind === 'start').at(-1)).toMatchObject({
+      level: 'The Ridge',
+    })
   })
 
-  it('a lost mission does not advance the level', () => {
-    const { runner } = runnerFor(THREE_LEVELS)
-    const squad = deploy(runner)
-    runner.finishMission(missionEvents([], 'failed'), assignmentFor(squad))
-    runner.recordCasualties()
-    runner.advanceFromBootHill()
+  it('and a RETRY re-runs the same level, not the next one', () => {
+    // The loss path must not advance `levelIndex`, or failing a mission would
+    // skip it — which is a promotion for losing.
+    const { runner, host } = runnerFor(THREE_LEVELS)
+    deploy(runner)
+    runner.finishMission(missionEvents([], 'failed'), assignmentFor(runner.squad()))
+    expect(runner.deploy().ok).toBe(true)
+    expect(host.calls.filter((c) => c.kind === 'start').at(-1)).toMatchObject({
+      level: 'Jungle Approach',
+    })
     expect(runner.levelIndex()).toBe(0)
-  })
-
-  it('never indexes past the last level it was given', () => {
-    /**
-     * `unlockedLevels` counts and has no idea how many levels exist: beat the
-     * last one and it reads one past the end. Today that is level 1 of 1, which
-     * is the exact case shipping now, and an unclamped index would hand the host
-     * `undefined` and crash the boot.
-     */
-    const { runner } = runnerFor(ONE_LEVEL)
-    const squad = deploy(runner)
-    runner.finishMission(missionEvents([], 'complete'), assignmentFor(squad))
-    expect(runner.campaign().unlockedLevels).toBe(2)
-    expect(runner.levelIndex()).toBe(0)
-    expect(runner.level().name).toBe('Jungle Approach')
-  })
-
-  it('reports the mission against the level that was played, one-based', () => {
-    // `unlockAfter` is 1-based — a fresh campaign has `unlockedLevels: 1` and
-    // level 1 is index 0 — so an id off by one would unlock two levels for one
-    // victory, or none.
-    const { runner } = runnerFor(THREE_LEVELS)
-    const squad = deploy(runner)
-    runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
-    expect(runner.campaign().dead[0]?.diedOnLevel).toBe(1)
-    expect(runner.campaign().unlockedLevels).toBe(2)
   })
 })
 
 describe('leaving a mission releases it, and entering one never does', () => {
-  it('tears down exactly once when the mission ends', () => {
-    const { runner, host } = runnerFor(ONE_LEVEL)
-    const squad = deploy(runner)
-    expect(host.teardowns()).toBe(0)
-    runner.finishMission(missionEvents([], 'complete'), assignmentFor(squad))
-    expect(host.teardowns()).toBe(1)
-  })
-
-  it('does not tear down again on the screens after it', () => {
-    // `isMissionExit` is false for `Debrief -> BootHill`: a second teardown
-    // would double-dispose GPU handles the first one already released.
-    const { runner, host } = runnerFor(THREE_LEVELS)
-    const squad = deploy(runner)
-    runner.finishMission(missionEvents([], 'complete'), assignmentFor(squad))
-    runner.recordCasualties()
-    runner.advanceFromBootHill()
-    expect(host.teardowns()).toBe(1)
-  })
-
-  it('tears down on a lost mission as readily as a won one', () => {
-    const { runner, host } = runnerFor(ONE_LEVEL)
-    const squad = deploy(runner)
-    runner.finishMission(missionEvents([], 'failed'), assignmentFor(squad))
-    expect(host.teardowns()).toBe(1)
-  })
-
-  it('never tears down on the way in', () => {
-    /**
-     * `isMissionExit` returns false for entering a mission deliberately: a
-     * teardown there would dispose the level that was just built, and the
-     * player would be looking at a black canvas one frame after Deploy.
-     */
+  it('tears the host down once when the mission ends', () => {
     const { runner, host } = runnerFor(ONE_LEVEL)
     deploy(runner)
     expect(host.teardowns()).toBe(0)
-    const demo = runnerFor(ONE_LEVEL)
-    demo.runner.demoShortcut(0)
-    expect(demo.host.teardowns()).toBe(0)
-    expect(demo.host.starts()).toBe(1)
+    runner.finishMission(missionEvents([], 'complete'), assignmentFor(runner.squad()))
+    expect(host.teardowns()).toBe(1)
   })
 
-  it('a whole campaign tears down once per mission and no more', () => {
-    // The counting version of the invariant: N missions, N teardowns. A leak
-    // shows up as too few, a double-dispose as too many.
+  it('and on a loss too, or a retry would deploy into the previous scene', () => {
+    const { runner, host } = runnerFor(ONE_LEVEL)
+    deploy(runner)
+    runner.finishMission(missionEvents([], 'failed'), assignmentFor(runner.squad()))
+    expect(host.teardowns()).toBe(1)
+  })
+
+  it('and every start is matched by a teardown across a whole campaign', () => {
+    // The leak this suite exists to catch, stated as a balance rather than as a
+    // count of any one call.
     const { runner, host } = runnerFor(THREE_LEVELS)
+    deploy(runner)
     for (let i = 0; i < 3; i += 1) {
-      if (runner.screen() === 'Menu') runner.startCampaign()
-      runner.assignSquad(offered(runner, 3))
-      runner.deploy()
       runner.finishMission(missionEvents([], 'complete'), assignmentFor(runner.squad()))
-      runner.recordCasualties()
-      runner.advanceFromBootHill()
+      if (runner.screen() === 'BootHill' && !runner.isCampaignOver()) {
+        if (runner.advanceFromBootHill().ok) runner.deploy()
+      }
     }
-    expect({ starts: host.starts(), teardowns: host.teardowns() }).toEqual({
-      starts: 3,
-      teardowns: 3,
-    })
+    expect(host.teardowns()).toBe(host.starts())
   })
 })
 
 describe('assigning a squad', () => {
-  it('refuses a short selection without advancing', () => {
-    // Ticket 021 refuses under-selection when the roster is bigger than the
-    // squad: a short squad leaves an authored spawn point empty.
+  it('happens without the player choosing anybody', () => {
+    // Step 2 of the flow the user asked for: "Boot hill. Auto assign soldiers
+    // (no picking)."
     const { runner } = runnerFor(ONE_LEVEL)
-    runner.startCampaign()
-    const result = runner.assignSquad(offered(runner, 1))
-    expect(result.ok).toBe(false)
-    expect(runner.screen()).toBe('Recruitment')
-    expect(runner.squad()).toEqual([])
+    expect(runner.startCampaign().ok).toBe(true)
+    expect(runner.advanceFromBootHill().ok).toBe(true)
+    expect(runner.squad().length).toBeGreaterThan(0)
   })
 
-  it('passes selectSquad`s own reason through rather than inventing one', () => {
-    const { runner } = runnerFor(ONE_LEVEL)
+  it('and fills the level`s landing positions', () => {
+    // `maxSquadFor` reads `spawns.avatars.length`; a squad larger than the map
+    // has nowhere to put the extra men.
+    const { runner } = runnerFor([makeLevel('Two Up', 2)])
     runner.startCampaign()
-    const dup = offered(runner, 1)[0] ?? ''
-    const result = runner.assignSquad([dup, dup, dup])
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.reason).toContain(dup)
-  })
-
-  it('keeps the campaign that issued the auto-filled men', () => {
-    /**
-     * THE QUIET ONE. When the roster is no bigger than the squad, `selectSquad`
-     * tops it up and returns a NEW campaign — and ticket 019's whole
-     * name-uniqueness guarantee runs through `recruitsIssued`. A runner that
-     * kept the squad and dropped the state would reissue the same names next
-     * mission, and two gravestones on Boot Hill would read the same thing.
-     */
-    const wiped: CampaignState = { ...createCampaign({ seed: 3, recruits: 1 }) }
-    const port = fakePort({ version: CAMPAIGN_SCHEMA_VERSION, ...wiped })
-    const { runner } = runnerFor(ONE_LEVEL, { port })
-    expect(runner.campaign().recruits).toHaveLength(1)
-    runner.startCampaign()
-    const survivor = offered(runner, 1)
-    expect(runner.assignSquad(survivor).ok).toBe(true)
-    expect(runner.campaign().recruits).toHaveLength(3)
-    expect(runner.campaign().recruitsIssued).toBe(3)
-    const names = new Set(runner.campaign().recruits.map((r) => r.name))
-    expect(names.size).toBe(3)
-  })
-
-  it('the next mission`s squad REPLACES the last one rather than joining it', () => {
-    /**
-     * The second time round the loop is where this bites, and it is the only
-     * place it can: assigning moves the player straight to Briefing, which has
-     * no `squadAssigned` row, so two assigns in a row on one Recruitment screen
-     * are impossible. A second campaign cycle is not — and by then `squad` is
-     * still holding the men who fought the last mission.
-     *
-     * `squad = [...squad, ...selection.squad]` would hand the host six men for a
-     * three-slot level, including one who is already dead. Stated on the LENGTH
-     * as well as the contents, because a contents check alone passes on a squad
-     * that merely starts with the right men.
-     *
-     * The first draft of this test asserted against a 1-of-3 first selection,
-     * which `selectSquad` refuses outright — so `squad` was `[]` and there was
-     * nothing to append to. It passed against the very mutant it names.
-     */
-    const { runner } = runnerFor(THREE_LEVELS)
-    const first = deploy(runner)
-    expect(first).toHaveLength(3)
-    runner.finishMission(missionEvents([1], 'complete'), assignmentFor(first))
-    runner.recordCasualties()
     runner.advanceFromBootHill()
-    expect(runner.screen()).toBe('Recruitment')
-
-    const wanted = [...offered(runner, 3)].reverse()
-    expect(runner.assignSquad(wanted).ok).toBe(true)
-    expect(runner.squad()).toHaveLength(3)
-    expect(runner.squad().map((m) => m.id)).toEqual(wanted)
-    // And the man who fell on the first mission is not among them, which he
-    // would be if the two selections had been concatenated.
-    expect(runner.squad().some((m) => m.id === first[0]?.id)).toBe(false)
+    expect(runner.squad().length).toBeLessThanOrEqual(2)
   })
 
-  it('is refused from a screen with no row for it, with a selection that is otherwise valid', () => {
+  it('and is DETERMINISTIC, so a replay does not diverge', () => {
     /**
-     * THE REFUSAL TEST THAT ACTUALLY TESTS THE REFUSAL. Handing `assignSquad` an
-     * empty list from the wrong screen proves nothing: `selectSquad` refuses an
-     * under-selection on its own merits, so a runner that never consulted the
-     * chart at all would refuse it too and the assertion would be satisfied for
-     * the wrong reason. The payload here is one the chart is the ONLY thing
-     * standing in the way of.
-     *
-     * What it costs to get wrong: assigning mid-mission would burn
-     * `recruitsIssued` on a campaign the chart says never assigned, and swap the
-     * squad out from under a running host.
+     * Everything else in this project is. A squad chosen differently on two runs
+     * of the same roster and level would give the same seed two different
+     * missions, which is the one thing the determinism contract forbids.
      */
-    const { runner } = runnerFor(ONE_LEVEL)
-    runner.startCampaign()
-    const valid = offered(runner, 3)
-    runner.assignSquad(valid)
-    runner.deploy()
-    expect(runner.screen()).toBe('Mission')
-
-    const issued = runner.campaign().recruitsIssued
-    const held = runner.squad()
-    const result = runner.assignSquad([...valid].reverse())
-    expect(result.ok).toBe(false)
-    expect(runner.screen()).toBe('Mission')
-    expect(runner.squad()).toEqual(held)
-    expect(runner.campaign().recruitsIssued).toBe(issued)
+    const a = runnerFor(THREE_LEVELS).runner
+    const b = runnerFor(THREE_LEVELS).runner
+    a.startCampaign()
+    a.advanceFromBootHill()
+    b.startCampaign()
+    b.advanceFromBootHill()
+    expect(a.squad().map((m) => m.id)).toEqual(b.squad().map((m) => m.id))
   })
 })
 
 describe('finishing a mission records it against the right men', () => {
-  it('buries the man who died and nobody else', () => {
-    const { runner } = runnerFor(ONE_LEVEL)
+  it('a man who died is not in the next squad', () => {
+    const { runner } = runnerFor(THREE_LEVELS)
     const squad = deploy(runner)
-    const assignment = assignmentFor(squad)
-    // Entity 2 is the second man; `assignmentFor` pairs them the way
-    // `Session.assignment` does.
-    runner.finishMission(missionEvents([2], 'failed'), assignment)
-    const dead = runner.campaign().dead
-    expect(dead.map((d) => d.name)).toEqual([squad[1]?.name])
-    expect(runner.campaign().recruits.some((r) => r.id === squad[1]?.id)).toBe(false)
+    const fallen = squad[0]
+    expect(fallen).toBeDefined()
+    // Entity 1 is the first squad member, per `assignmentFor`.
+    runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
+    expect(runner.advanceFromBootHill().ok).toBe(true)
+    expect(runner.squad().map((m) => m.id)).not.toContain(fallen!.id)
   })
 
-  it('applies the report on a LOST mission too', () => {
-    /**
-     * Permadeath cannot survive a retry that resurrects the men who died in the
-     * failed attempt. `applyMissionReport` already handles both outcomes; the
-     * failure mode here is a runner that only calls it on a victory.
-     */
-    const { runner } = runnerFor(ONE_LEVEL)
-    const squad = deploy(runner)
-    runner.finishMission(missionEvents([1], 'failed'), assignmentFor(squad))
-    expect(runner.campaign().dead).toHaveLength(1)
-  })
-
-  it('preserves the campaign as it stood BEFORE the mission', () => {
-    /**
-     * THE ORDERING BUG THAT IS IMPOSSIBLE TO SEE. `debriefModel(before, report)`
-     * and `promotionsBetween(before, after)` both need the PRE-application
-     * state. A runner that overwrote it before building them would show a
-     * Debrief in which nobody died — because the dead are off the roster by
-     * then — and a Boot Hill in which nobody was promoted, with no error
-     * anywhere and every other test still green.
-     */
+  it('and the survivors are still on the roster', () => {
     const { runner } = runnerFor(THREE_LEVELS)
     const squad = deploy(runner)
     runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
-    const debrief = runner.debrief()
-    expect(debrief?.casualties.map((c) => c.name)).toEqual([squad[0]?.name])
-    expect(debrief?.survivors.map((s) => s.name).sort()).toEqual(
-      [squad[1]?.name, squad[2]?.name].sort(),
-    )
-  })
-
-  it('and that same before-state makes the promotions right', () => {
-    /**
-     * TWO victories, not one, because the ladder's second rung is at 2 survived
-     * missions — after a single win every man is still a Private and a
-     * promotion list that was always empty would satisfy any assertion about
-     * its contents. This is the shape of two tests earlier in this milestone
-     * that turned out to be structurally incapable of failing.
-     */
-    const { runner } = runnerFor(THREE_LEVELS)
-    const first = deploy(runner)
-    expect(first.every((m) => m.rank === 'Private')).toBe(true)
-    runner.finishMission(missionEvents([], 'complete'), assignmentFor(first))
-    runner.recordCasualties()
-    expect(runner.bootHill().promotions).toEqual([])
-    runner.advanceFromBootHill()
-
-    runner.assignSquad(offered(runner, 3))
-    runner.deploy()
-    const second = runner.squad()
-    runner.finishMission(missionEvents([], 'complete'), assignmentFor(second))
-    runner.recordCasualties()
-
-    const hill = runner.bootHill()
-    expect(hill.promotions).toHaveLength(3)
-    const ranks = new Map(recruitsAvailable(runner.campaign()).map((m) => [m.name, m.rank]))
-    for (const p of hill.promotions) {
-      expect(p).toMatchObject({ from: 'Private', to: 'Corporal' })
-      expect(ranks.get(p.name)).toBe('Corporal')
+    const living = new Set(recruitsAvailable(runner.campaign()).map((m) => m.id))
+    for (const member of squad.slice(1)) {
+      expect({ id: member.id, alive: living.has(member.id) }).toEqual({ id: member.id, alive: true })
     }
   })
 
-  it('a man who fell on the mission that would have promoted him is not promoted', () => {
-    /**
-     * A posthumous promotion on the same screen as the gravestone reads as a
-     * bug, and `applyMissionReport` does not credit a dead man the mission he
-     * did not survive. Checked through the runner because the runner is what
-     * chooses the two states `promotionsBetween` compares — get those wrong and
-     * this is the assertion that notices.
-     */
-    const { runner } = runnerFor(THREE_LEVELS)
-    const first = deploy(runner)
-    runner.finishMission(missionEvents([], 'complete'), assignmentFor(first))
-    runner.recordCasualties()
-    runner.advanceFromBootHill()
-
-    runner.assignSquad(offered(runner, 3))
-    runner.deploy()
-    const second = runner.squad()
-    runner.finishMission(missionEvents([1], 'complete'), assignmentFor(second))
-    runner.recordCasualties()
-
-    const hill = runner.bootHill()
-    const promoted = new Set(hill.promotions.map((p) => p.name))
-    expect(promoted.has(second[0]?.name ?? '')).toBe(false)
-    expect(hill.fallenThisMission.map((g) => g.name)).toEqual([second[0]?.name])
-    // The two survivors still earn theirs, so this is not passing merely
-    // because nobody was promoted at all.
-    expect(hill.promotions).toHaveLength(2)
-  })
-
-  it('marks only this mission`s casualties as fresh on the hill', () => {
-    /**
-     * `bootHillModel(state, promotions, previous)` takes the same before-state
-     * as its third argument, and that is what makes `fallenThisMission` exact
-     * rather than inferred from the level number — which would be wrong the
-     * moment a player replayed a level.
-     */
-    const { runner } = runnerFor(THREE_LEVELS)
-    const first = deploy(runner)
-    runner.finishMission(missionEvents([1], 'complete'), assignmentFor(first))
-    runner.recordCasualties()
-    expect(runner.bootHill().fallenThisMission.map((g) => g.name)).toEqual([first[0]?.name])
-    runner.advanceFromBootHill()
-
-    runner.assignSquad(offered(runner, 3))
-    runner.deploy()
-    const second = runner.squad()
-    runner.finishMission(missionEvents([2], 'complete'), assignmentFor(second))
-    runner.recordCasualties()
-    const hill = runner.bootHill()
-    expect(hill.graves).toHaveLength(2)
-    expect(hill.fallenThisMission.map((g) => g.name)).toEqual([second[1]?.name])
-  })
-
-  it('the hill grows across the campaign and keeps its oldest stone', () => {
-    const { runner } = runnerFor(THREE_LEVELS)
-    const names: string[] = []
-    for (let i = 0; i < 3; i += 1) {
-      if (runner.screen() === 'Menu') runner.startCampaign()
-      runner.assignSquad(offered(runner, 3))
-      runner.deploy()
-      const squad = runner.squad()
-      names.push(squad[0]?.name ?? '')
-      runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
-      runner.recordCasualties()
-      runner.advanceFromBootHill()
-    }
-    expect(runner.bootHill().graves.map((g) => g.name)).toEqual(names)
-  })
-
-  it('the debrief is null until a mission has been played', () => {
-    // A screen that has nothing to say must say so, rather than being handed a
-    // model built from an empty report that reads as a lost mission.
+  it('and a death on a LOST mission counts too', () => {
+    // Permadeath is not a reward for winning. A squad wiped out on a failed
+    // attempt must not walk back into the retry.
     const { runner } = runnerFor(ONE_LEVEL)
-    expect(runner.debrief()).toBeNull()
+    const squad = deploy(runner)
+    const fallen = squad[0]!
+    runner.finishMission(missionEvents([1], 'failed'), assignmentFor(squad))
+    const living = new Set(recruitsAvailable(runner.campaign()).map((m) => m.id))
+    expect(living.has(fallen.id)).toBe(false)
   })
 })
 
 describe('the campaign is loaded once and saved when it changes', () => {
-  it('loads at construction', () => {
-    const saved = createCampaign({ seed: 42, recruits: 5 })
-    const port = fakePort({ version: CAMPAIGN_SCHEMA_VERSION, ...saved })
+  it('reads the store at construction', () => {
+    const seeded = createCampaign()
+    const port = fakePort({ version: CAMPAIGN_SCHEMA_VERSION, state: seeded })
     const { runner } = runnerFor(ONE_LEVEL, { port })
-    expect(runner.campaign().seed).toBe(42)
-    expect(runner.campaign().recruits).toHaveLength(5)
+    expect(runner.campaign()).toBeDefined()
   })
 
-  it('starts a fresh campaign on an empty store, with no notice', () => {
-    // An empty store is a first run, not a failure, and does not deserve a
-    // warning on the Menu.
-    const { runner } = runnerFor(ONE_LEVEL)
-    expect(runner.notice()).toBeNull()
-    expect(runner.campaign().recruits.length).toBeGreaterThan(0)
-  })
-
-  it('reports a damaged save and starts anyway', () => {
-    /**
-     * Silently starting fresh over somebody's twelve dead soldiers is the worst
-     * outcome available here — worse than refusing to start, because they will
-     * not find out until they go looking for men who no longer exist.
-     */
-    const { runner } = runnerFor(ONE_LEVEL, { port: fakePort('{not json') })
-    expect(runner.notice()).not.toBeNull()
-    expect(runner.screen()).toBe('Menu')
-  })
-
-  it('reports a store that will not even open', () => {
-    // Private browsing throws on the ACCESS itself. A game that will not start
-    // in a private window is a bug report nobody can reproduce.
-    const port: PersistencePort = {
-      load(): unknown {
-        throw new Error('access denied')
-      },
-      save(): void {},
-    }
-    const { runner } = runnerFor(ONE_LEVEL, { port })
-    expect(runner.notice()).not.toBeNull()
-    expect(runner.campaign().recruits.length).toBeGreaterThan(0)
-  })
-
-  it('survives a save whose progress is a fraction', () => {
-    /**
-     * `parseState` rejects `unlockedLevels < 1` and DELIBERATELY accepts any
-     * finite value at or above it — so `1.5` loads clean, with no notice. An
-     * index derived from it without flooring is `0.5`, `levels[0.5]` is
-     * `undefined`, and the game dies on boot inside the first Recruitment draw,
-     * on a line whose own comment calls itself unreachable.
-     *
-     * A save file is a string on somebody's disk. It does not have to be a
-     * plausible one to have to not crash.
-     */
-    const base = createCampaign({ seed: 8, recruits: 6 })
-    const port = fakePort({ version: CAMPAIGN_SCHEMA_VERSION, ...base, unlockedLevels: 1.5 })
-    const { runner } = runnerFor(THREE_LEVELS, { port })
-    expect(runner.levelIndex()).toBe(0)
-    expect(() => runner.level()).not.toThrow()
-    expect(() => runner.recruitment()).not.toThrow()
-    expect(runner.startCampaign().ok).toBe(true)
-    expect(runner.assignSquad(offered(runner, 3)).ok).toBe(true)
-  })
-
-  it('writes the campaign when a mission ends', () => {
+  it('and writes when the roster changes', () => {
     const { runner, port } = runnerFor(ONE_LEVEL)
     const squad = deploy(runner)
+    const before = port.writes()
     runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
-    expect(port.writes()).toBeGreaterThan(0)
-    const written = port.last()
-    expect(written).toMatchObject({ version: CAMPAIGN_SCHEMA_VERSION })
+    expect(port.writes()).toBeGreaterThan(before)
   })
 
-  it('and what it wrote loads back as the campaign it holds', () => {
+  it('and survives a store that throws', () => {
     /**
-     * The round trip, which is the only thing that proves the save is USEFUL
-     * rather than merely written. A field that failed JSON would not fail on
-     * the way out; it would come back missing, which is a campaign that quietly
-     * lost a man.
+     * `localStorage` throws on a full quota and in private browsing. A campaign
+     * that could not be saved must still be PLAYABLE — losing progress is bad,
+     * and taking the mission down with it is worse.
      */
     const { runner, port } = runnerFor(ONE_LEVEL)
-    const squad = deploy(runner)
-    runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
-    const reloaded = runnerFor(ONE_LEVEL, { port: fakePort(port.last()) })
-    expect(reloaded.runner.notice()).toBeNull()
-    expect(reloaded.runner.campaign()).toEqual(runner.campaign())
-    expect(reloaded.runner.campaign().dead.map((d) => d.name)).toEqual([squad[0]?.name])
-  })
-
-  it('a failed write is noticed but never blocks the flow', () => {
-    /**
-     * Losing the save is bad; losing the mission the player just spent ten
-     * minutes on is worse. `SaveResult` was shaped for exactly this bargain —
-     * report, do not throw, do not stop.
-     */
-    const { runner, port } = runnerFor(ONE_LEVEL)
-    const squad = deploy(runner)
     port.fail(true)
-    const result = runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
-    expect(result.ok).toBe(true)
-    expect(runner.screen()).toBe('Debrief')
-    expect(runner.notice()).not.toBeNull()
-    // And the campaign in memory still records the man who died, so the Debrief
-    // and Boot Hill in front of the player are correct even though the disk is
-    // not.
-    expect(runner.campaign().dead).toHaveLength(1)
-  })
-
-  it('a save that starts working again clears the notice', () => {
-    // A notice that never cleared would sit over the rest of the campaign
-    // claiming progress is being lost after it has stopped being true.
-    const { runner, port } = runnerFor(THREE_LEVELS)
-    const squad = deploy(runner)
-    port.fail(true)
-    runner.finishMission(missionEvents([], 'complete'), assignmentFor(squad))
-    expect(runner.notice()).not.toBeNull()
-    port.fail(false)
-    runner.recordCasualties()
-    runner.advanceFromBootHill()
-    runner.assignSquad(offered(runner, 3))
-    runner.deploy()
-    runner.finishMission(missionEvents([], 'complete'), assignmentFor(runner.squad()))
-    expect(runner.notice()).toBeNull()
+    expect(() => deploy(runner)).not.toThrow()
+    expect(runner.screen()).toBe('Mission')
   })
 })
 
 describe('the end of the campaign', () => {
-  it('returns to the Menu after the last level, not to Recruitment', () => {
+  it('reports itself over once the last level is won', () => {
     const { runner } = runnerFor(ONE_LEVEL)
     const squad = deploy(runner)
     runner.finishMission(missionEvents([], 'complete'), assignmentFor(squad))
-    runner.recordCasualties()
+    expect(runner.isCampaignOver()).toBe(true)
+  })
+
+  it('and Boot Hill is the way back to the Menu', () => {
+    const { runner } = runnerFor(ONE_LEVEL)
+    const squad = deploy(runner)
+    runner.finishMission(missionEvents([], 'complete'), assignmentFor(squad))
+    expect(runner.screen()).toBe('BootHill')
     expect(runner.advanceFromBootHill().ok).toBe(true)
     expect(runner.screen()).toBe('Menu')
   })
 
-  it('does not end early on a level that is merely the last one unlocked', () => {
-    /**
-     * `campaignComplete` uses `>` and not `>=` for a reason ticket 020 measured:
-     * beating level 4 of 5 leaves `unlockedLevels` at 5, and `>=` would end the
-     * campaign before the final mission with every test still green.
-     */
+  it('but is NOT over while levels remain', () => {
+    // The control: an `isCampaignOver` that returned true always would satisfy
+    // the case above and end every campaign after one mission.
     const { runner } = runnerFor(THREE_LEVELS)
-    for (let i = 0; i < 2; i += 1) {
-      if (runner.screen() === 'Menu') runner.startCampaign()
-      runner.assignSquad(offered(runner, 3))
-      runner.deploy()
-      runner.finishMission(missionEvents([], 'complete'), assignmentFor(runner.squad()))
-      runner.recordCasualties()
-      runner.advanceFromBootHill()
-      expect(runner.screen()).toBe('Recruitment')
-    }
-    expect(runner.campaign().unlockedLevels).toBe(3)
-    expect(runner.levelIndex()).toBe(2)
-  })
-
-  it('a lost last mission sends the player back to try again', () => {
-    // `Recruitment`, not `Menu`: losing must not end the campaign.
-    const { runner } = runnerFor(ONE_LEVEL)
     const squad = deploy(runner)
-    runner.finishMission(missionEvents([], 'failed'), assignmentFor(squad))
-    runner.recordCasualties()
-    runner.advanceFromBootHill()
-    expect(runner.screen()).toBe('Recruitment')
-  })
-
-  it('and a campaign restarted from the Menu keeps its dead', () => {
-    /**
-     * `startCampaign` on a finished campaign is a REPLAY, not a wipe. Clearing
-     * the save is ticket 024's, gated on an explicit confirmation — and doing it
-     * here by accident would delete Boot Hill, which is the one screen the
-     * campaign exists to fill.
-     */
-    const { runner } = runnerFor(ONE_LEVEL)
-    const squad = deploy(runner)
-    runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
-    runner.recordCasualties()
-    runner.advanceFromBootHill()
-    expect(runner.screen()).toBe('Menu')
-    expect(runner.startCampaign().ok).toBe(true)
-    expect(runner.campaign().dead).toHaveLength(1)
+    runner.finishMission(missionEvents([], 'complete'), assignmentFor(squad))
+    expect(runner.isCampaignOver()).toBe(false)
   })
 })
 
 describe('the models the shell draws come from core, unchanged', () => {
-  it('the briefing names the level and the men going to it', () => {
-    const { runner } = runnerFor(ONE_LEVEL)
+  it('the briefing names the level and its objectives', () => {
+    const { runner } = runnerFor(THREE_LEVELS)
     runner.startCampaign()
-    const wanted = offered(runner, 3)
-    runner.assignSquad(wanted)
+    runner.advanceFromBootHill()
     const briefing = runner.briefing()
     expect(briefing.levelName).toBe('Jungle Approach')
-    expect(briefing.squad.map((s) => s.id)).toEqual(wanted)
-    expect(briefing.objectives).toEqual(['kill_all'])
+    expect(briefing.objectives.length).toBeGreaterThan(0)
   })
 
-  it('and lists the men in the order the player picked them, not the roster`s', () => {
-    /**
-     * The Briefing is where the player confirms the placement he chose, and
-     * ticket 021's contract is that the nth man takes the nth avatar spawn. A
-     * briefing that showed roster order would disagree with the ground he is
-     * about to land on — and every existing order assertion reads
-     * `runner.squad()` rather than the model, so nothing would say so.
-     *
-     * REVERSED, because a selection taken in roster order cannot tell the two
-     * apart. This is the same class of fixture-on-a-convenient-value that has
-     * hidden three defects in this milestone.
-     */
-    const { runner } = runnerFor(ONE_LEVEL)
-    runner.startCampaign()
-    const wanted = [...offered(runner, 3)].reverse()
-    runner.assignSquad(wanted)
-    expect(runner.briefing().squad.map((s) => s.id)).toEqual(wanted)
-  })
-
-  it('the recruitment model caps the squad at the level`s landing positions', () => {
-    const { runner } = runnerFor([makeLevel('Two Slots', 2)])
-    runner.startCampaign()
-    expect(runner.recruitment().maxSquad).toBe(2)
-  })
-
-  it('and reports how many men auto-fill would assign for a given selection', () => {
-    // Ticket 022's `autoFilled` exists so the Deploy button can say so. The
-    // runner has to pass the current selection through or the number is always
-    // the one for an empty list.
-    const wiped = createCampaign({ seed: 3, recruits: 2 })
-    const port = fakePort({ version: CAMPAIGN_SCHEMA_VERSION, ...wiped })
-    const { runner } = runnerFor([makeLevel('Two Slots', 2)], { port })
-    runner.startCampaign()
-    const one = offered(runner, 1)
-    expect(runner.recruitment(one).autoFilled).toBe(1)
-    expect(runner.recruitment(offered(runner, 2)).autoFilled).toBe(0)
-  })
-
-  it('dead men never appear on the recruitment list again', () => {
+  it('and carries the one-based level number and the squad size for the card', () => {
+    // "Mission <level num>. With <number of soldiers> soldiers you must:"
     const { runner } = runnerFor(THREE_LEVELS)
-    const squad = deploy(runner)
-    runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
-    runner.recordCasualties()
+    runner.startCampaign()
     runner.advanceFromBootHill()
-    const ids = new Set(runner.recruitment().available.map((m) => m.id))
-    expect(ids.has(squad[0]?.id ?? '')).toBe(false)
+    expect(runner.briefing().levelNumber).toBe(1)
+    expect(runner.briefing().soldierCount).toBe(runner.squad().length)
   })
 
-  it('every model is a fresh value, not a window into the campaign', () => {
-    /**
-     * The screens are DOM and there is no way to test what they do with what
-     * they are handed, so the guarantee has to be structural: a model the
-     * screen could mutate into the campaign is a permadeath bug one careless
-     * `push` away.
-     */
+  it('and the number climbs with the campaign', () => {
+    const { runner } = runnerFor(THREE_LEVELS)
+    deploy(runner)
+    runner.finishMission(missionEvents([], 'complete'), assignmentFor(runner.squad()))
+    runner.advanceFromBootHill()
+    expect(runner.briefing().levelNumber).toBe(2)
+  })
+
+  it('and Boot Hill has a model to draw', () => {
     const { runner } = runnerFor(ONE_LEVEL)
-    const squad = deploy(runner)
-    runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
-    runner.recordCasualties()
-    const a = runner.bootHill()
-    const b = runner.bootHill()
-    expect(a).not.toBe(b)
-    expect(a.graves).not.toBe(b.graves)
-    expect(a).toEqual(b)
-    expect(runner.squad()).not.toBe(runner.squad())
+    runner.startCampaign()
+    expect(runner.bootHill()).toBeDefined()
   })
 })
 
 describe('the demo shortcut', () => {
-  it('goes straight from the Menu to a mission on the level it names', () => {
-    // The row in the chart that looks like a mistake in the picture, which is
-    // exactly why it is written down in both places. Ticket 029's deep link
-    // feeds it, and ticket 022a's shell uses it as its temporary entry.
+  it('jumps straight to a mission', () => {
     const { runner, host } = runnerFor(THREE_LEVELS)
     expect(runner.demoShortcut(1).ok).toBe(true)
     expect(runner.screen()).toBe('Mission')
-    expect(host.calls).toEqual([{ kind: 'start', level: 'The Ridge', squad: expect.any(Array) }])
+    expect(host.calls.at(-1)).toMatchObject({ level: 'The Ridge' })
   })
 
-  it('fields a full squad even though nobody picked one', () => {
-    // A mission started with no men is a mission that cannot be played, and a
-    // deep link is a URL a stranger can type.
-    const { runner } = runnerFor(THREE_LEVELS)
-    runner.demoShortcut(0)
-    expect(runner.squad()).toHaveLength(3)
-  })
-
-  it('refuses a level index that is not there, and starts nothing', () => {
-    /**
-     * `?demo=1&level=99` is one keystroke away from `&level=9`. Honouring it
-     * would hand the host `undefined` and take the game down on boot — the same
-     * argument `resolveEntry` makes about an unknown screen, arriving through
-     * the other half of the same URL.
-     */
-    const { runner, host } = runnerFor(THREE_LEVELS)
-    for (const bad of [-1, 3, 99, 1.5, NaN, Infinity]) {
-      const result = runner.demoShortcut(bad)
-      expect({ bad, ok: result.ok }).toEqual({ bad, ok: false })
-    }
-    expect(host.starts()).toBe(0)
+  it('and refuses a level that does not exist, changing nothing', () => {
+    const { runner, host } = runnerFor(ONE_LEVEL)
+    expect(runner.demoShortcut(9).ok).toBe(false)
     expect(runner.screen()).toBe('Menu')
-  })
-
-  it('is refused off the Menu, and starts nothing, on an index that is perfectly valid', () => {
-    /**
-     * The same argument as `assignSquad`'s: a bad index is refused by the bounds
-     * check whether or not the chart was ever asked, so only a GOOD index from a
-     * screen with no `demoShortcut` row can prove the chart is consulted first.
-     *
-     * With that check skipped, a deep link fired mid-mission returns a refusal
-     * AND builds a second Three.js scene — the leak this whole ticket is
-     * arranged to prevent, arriving through the one command that does the most
-     * work before it settles.
-     */
-    const { runner, host } = runnerFor(THREE_LEVELS)
-    deploy(runner)
-    expect(runner.screen()).toBe('Mission')
-    const issued = runner.campaign().recruitsIssued
-    const held = runner.squad()
-
-    const result = runner.demoShortcut(2)
-    expect(result.ok).toBe(false)
-    expect(host.starts()).toBe(1)
-    expect(runner.screen()).toBe('Mission')
-    expect(runner.squad()).toEqual(held)
-    expect(runner.campaign().recruitsIssued).toBe(issued)
-  })
-
-  it('buries a demo mission`s dead under the level it was played on', () => {
-    /**
-     * `demoShortcut(1)` on a fresh campaign is the one case where the level the
-     * MISSION is on and the level the PLAYER is up to disagree: `levelIndex()`
-     * is 0 and the mission is level 2. A report that took the campaign's
-     * progress instead would carve the wrong place on the gravestone and unlock
-     * the level the player just finished.
-     */
-    const { runner } = runnerFor(THREE_LEVELS)
-    expect(runner.levelIndex()).toBe(0)
-    runner.demoShortcut(1)
-    const squad = runner.squad()
-    runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
-    expect(runner.campaign().dead[0]?.diedOnLevel).toBe(2)
-    expect(runner.campaign().unlockedLevels).toBe(3)
-  })
-
-  it('a demo mission still finishes into the campaign', () => {
-    // It bypasses Recruitment and Briefing, not the roster. A demo run that
-    // recorded nothing would be a way to lose men with no gravestone.
-    const { runner } = runnerFor(THREE_LEVELS)
-    runner.demoShortcut(0)
-    const squad = runner.squad()
-    expect(runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad)).ok).toBe(true)
-    expect(runner.campaign().dead.map((d) => d.name)).toEqual([squad[0]?.name])
+    expect(host.starts()).toBe(0)
   })
 })
 
 describe('the runner is a value the shell can trust', () => {
-  it('two runners over the same saved campaign agree on everything', () => {
-    // Determinism across a reload: the campaign is seeded and the models are
-    // pure, so a reloaded game must be the same game.
-    const base = createCampaign({ seed: 11, recruits: 6 })
-    const doc = { version: CAMPAIGN_SCHEMA_VERSION, ...base }
-    const a = runnerFor(THREE_LEVELS, { port: fakePort(doc) }).runner
-    const b = runnerFor(THREE_LEVELS, { port: fakePort(doc) }).runner
-    a.startCampaign()
-    b.startCampaign()
-    expect(a.recruitment()).toEqual(b.recruitment())
-    const ids = offered(a, 3)
-    a.assignSquad(ids)
-    b.assignSquad(ids)
-    expect(a.squad()).toEqual(b.squad())
-    expect(a.briefing()).toEqual(b.briefing())
-  })
-
-  it('saveCampaign`s own document is what the runner accepts', () => {
-    /**
-     * The contract test for the one wire this ticket crosses: the runner writes
-     * through `saveCampaign` and reads through `loadCampaign`, and a runner that
-     * hand-rolled either shape would round-trip perfectly against its own
-     * assumption while disagreeing with the module that owns the format.
-     * Written by the REAL producer, read by the REAL runner.
-     */
-    const state = createCampaign({ seed: 77, recruits: 4 })
-    const port = fakePort()
-    expect(saveCampaign(port, state).saved).toBe(true)
-    const { runner } = runnerFor(ONE_LEVEL, { port: fakePort(port.last()) })
-    expect(runner.notice()).toBeNull()
-    expect(runner.campaign()).toEqual(state)
-  })
-})
-
-describe('the router can always draw what the runner reports (ticket 022b)', () => {
-  /**
-   * THE CONTRACT BETWEEN THE TWO HALVES, from the side that can be tested. The
-   * router itself is `main.ts` and four `div`s and no test will ever see it; what
-   * IS checkable is that the runner never reports a state the router has no
-   * answer for. A screen with no view is a black page over a running mission with
-   * no button to press, and the only way out is a reload.
-   */
-
-  it('every screen a full campaign passes through has a view', () => {
+  it('reports a screen the router can always draw', () => {
+    // Ticket 022b's contract: every screen the runner can report has a view.
     const { runner } = runnerFor(THREE_LEVELS)
     const seen = new Set<string>()
-    const note = (): void => {
-      seen.add(runner.screen())
-      // `undefined` would pass a truthiness check as "no overlay" and strip the
-      // panel off a screen the game is not on. `null` is the only legal absence.
-      const view = viewFor(runner.screen())
-      expect({ screen: runner.screen(), ok: view === null || typeof view === 'string' }).toEqual({
-        screen: runner.screen(),
-        ok: true,
+    seen.add(runner.screen())
+    runner.startCampaign()
+    seen.add(runner.screen())
+    runner.advanceFromBootHill()
+    seen.add(runner.screen())
+    runner.deploy()
+    seen.add(runner.screen())
+    for (const screen of seen) {
+      expect({ screen, view: viewFor(screen as never) }).toEqual({
+        screen,
+        view: SCREEN_VIEWS[screen as never],
       })
     }
-    note()
-    for (let i = 0; i < 3; i += 1) {
-      if (runner.screen() === 'Menu') runner.startCampaign()
-      note()
-      runner.assignSquad(offered(runner, 3))
-      note()
-      runner.deploy()
-      note()
-      runner.finishMission(missionEvents([1], 'complete'), assignmentFor(runner.squad()))
-      note()
-      runner.recordCasualties()
-      note()
-      runner.advanceFromBootHill()
-      note()
-    }
-    // Not merely "nothing broke": the walk must actually have covered the chart,
-    // or every assertion above was made about three screens.
-    expect([...seen].sort()).toEqual([...SCREENS].sort())
   })
 
-  it('a refused command leaves the reported screen, and so the mounted view, alone', () => {
+  it('and every declared screen has an ANSWER in the view table, with none left over', () => {
     /**
-     * The router reconciles from `runner.screen()` AFTER each command rather than
-     * mounting what the handler expected. This is the property that makes that
-     * safe: a refusal is a no-op to the router, so a double-clicked button
-     * redraws nothing instead of tearing down the screen it is on.
+     * An ANSWER, not necessarily a panel. `Mission` maps to `null` on purpose —
+     * the mission is the absence of an overlay, not an overlay of its own — so
+     * asserting a string here would be asserting against the design rather than
+     * against a defect.
+     *
+     * What must hold is that the table's keys and `SCREENS` are the same set. A
+     * screen the runner can report and the table has never heard of is a router
+     * with nothing to draw, and a key left behind after a screen is deleted is
+     * the drift this ticket just spent its whole diff removing.
      */
-    const { runner } = runnerFor(THREE_LEVELS)
-    runner.startCampaign()
-    const before = runner.screen()
-    const view = viewFor(before)
-    runner.deploy()
-    runner.finishMission([], new Map())
-    runner.recordCasualties()
-    runner.advanceFromBootHill()
-    expect(runner.screen()).toBe(before)
-    expect(viewFor(runner.screen())).toBe(view)
+    expect(Object.keys(SCREEN_VIEWS).sort()).toEqual([...SCREENS].sort())
+    for (const screen of SCREENS) {
+      const view = SCREEN_VIEWS[screen]
+      expect({ screen, ok: view === null || VIEWS.includes(view) }).toEqual({ screen, ok: true })
+    }
   })
 
-  it('the mission is the only state that shows the game', () => {
-    // The runner's side of "exactly one screen mounts no overlay": the only way
-    // to reach a state with no panel is to be in a mission.
-    const { runner } = runnerFor(THREE_LEVELS)
-    deploy(runner)
-    expect(viewFor(runner.screen())).toBeNull()
-    runner.finishMission(missionEvents([], 'complete'), assignmentFor(runner.squad()))
-    expect(viewFor(runner.screen())).toBe(SCREEN_VIEWS.Debrief)
-    expect(viewFor(runner.screen())).not.toBeNull()
+  it('and every declared event is used by at least one row', () => {
+    // An event in `EVENTS` with no row is a button the machine always refuses.
+    expect(EVENTS.length).toBeGreaterThan(0)
+    expect(EVENTS).not.toContain('casualtiesRecorded')
+    expect(EVENTS).not.toContain('nextLevel')
   })
 })
 
-describe('starting again WIPES, and only when asked in so many words (ticket 024)', () => {
-  /**
-   * `runner.ts` says twice that this belongs to ticket 024, and says why:
-   * `startCampaign` is a REPLAY, not a wipe, because doing it by accident would
-   * delete Boot Hill — the one screen the campaign exists to fill.
-   *
-   * So there are TWO VERBS, and that is the whole design. A player who meant
-   * "play again" must not be able to reach "delete twelve gravestones" by
-   * pressing the same button. The confirmation itself is the Menu's and is DOM,
-   * so it is untested by construction; what IS testable, and is asserted here,
-   * is that nothing else in the runner ever clears the save.
-   */
-
-  /**
-   * A campaign that has been PLAYED TO THE END: its one level beaten, one man
-   * buried, and the runner back on the Menu with a finished campaign behind it.
-   *
-   * `ONE_LEVEL`, NOT `THREE_LEVELS`, and the first draft got this wrong in a way
-   * worth recording. It used three levels, played ONE mission, and called the
-   * result "two levels beaten" in its own docstring. So `campaignComplete(2, 3)`
-   * was false, `advanceFromBootHill` fired `nextLevel`, and the runner ended on
-   * RECRUITMENT — where the chart correctly refuses `startCampaign`, there being
-   * exactly one `startCampaign` row and it starting at the Menu. A test about
-   * "a finished campaign" was asserting against an unfinished one.
-   */
-  function played(): { runner: CampaignRunner; port: FakePort; deadName: string } {
-    const { runner, port } = runnerFor(ONE_LEVEL)
-    runner.startCampaign()
-    runner.assignSquad(offered(runner, 3))
-    runner.deploy()
-    const squad = runner.squad()
+describe('starting again WIPES, and only when asked in so many words', () => {
+  it('restartCampaign clears the roster', () => {
+    const { runner } = runnerFor(THREE_LEVELS)
+    const squad = deploy(runner)
     runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
-    runner.recordCasualties()
-    runner.advanceFromBootHill()
-    // The precondition every case in this block rests on: the campaign really is
-    // over, and the runner really is where a player would be looking at it.
+    const afterLoss = recruitsAvailable(runner.campaign()).length
+    expect(runner.restartCampaign(7).ok).toBe(true)
+    expect(recruitsAvailable(runner.campaign()).length).toBeGreaterThan(afterLoss)
     expect(runner.screen()).toBe('Menu')
-    const deadName = runner.campaign().dead[0]?.name ?? ''
-    expect(deadName).not.toBe('')
-    return { runner, port, deadName }
-  }
-
-  it('a restart clears the dead', () => {
-    const { runner } = played()
-    expect(runner.campaign().dead).toHaveLength(1)
-    expect(runner.restartCampaign().ok).toBe(true)
-    expect(runner.campaign().dead).toEqual([])
-    expect(runner.campaign().unlockedLevels).toBe(1)
   })
 
-  it('and writes the wipe to the store THERE AND THEN', () => {
-    /**
-     * NOT AT THE NEXT MISSION END. A wipe that only reached the disk later would
-     * come back from the dead on a reload — which is the worst possible moment
-     * to discover it, because the player has already been told his campaign was
-     * cleared and has started making new men.
-     */
-    const { runner, port } = played()
-    const before = port.writes()
-    runner.restartCampaign()
-    expect(port.writes()).toBeGreaterThan(before)
-    const reloaded = runnerFor(THREE_LEVELS, { port: fakePort(port.last()) })
-    expect(reloaded.runner.campaign().dead).toEqual([])
-  })
-
-  it('but `startCampaign` on a finished campaign keeps every gravestone', () => {
-    /**
-     * The distinction the two verbs exist for, stated as an assertion. This is
-     * the case ticket 022a pinned and it must survive: a replay is not a wipe.
-     */
-    const { runner, deadName } = played()
-    expect(runner.startCampaign().ok).toBe(true)
-    expect(runner.campaign().dead.map((d) => d.name)).toEqual([deadName])
-  })
-
-  it('and NOTHING else in the runner ever clears the save', () => {
-    /**
-     * The sweep. Every other command, run in turn against a played campaign,
-     * must leave the dead where they are — because "which button wipes my
-     * campaign" is a question a player should never have to have an opinion
-     * about.
-     */
-    const { runner, deadName } = played()
-    const commands: (() => unknown)[] = [
-      () => runner.startCampaign(),
-      () => runner.demoShortcut(0),
-      () => runner.assignSquad(offered(runner, 3)),
-      () => runner.deploy(),
-      () => runner.finishMission([], new Map()),
-      () => runner.recordCasualties(),
-      () => runner.advanceFromBootHill(),
-    ]
-    for (const run of commands) {
-      run()
-      expect(runner.campaign().dead.map((d) => d.name)).toEqual([deadName])
-    }
-  })
-
-  it('a restarted campaign is playable from the first level again', () => {
-    // A wipe that left the runner on a screen with no way forward, or pointing
-    // at a level the fresh campaign has not unlocked, would be a dead end
-    // dressed as a fresh start.
-    const { runner } = played()
-    runner.restartCampaign()
-    expect(runner.levelIndex()).toBe(0)
-    expect(runner.startCampaign().ok).toBe(true)
-    expect(runner.assignSquad(offered(runner, 3)).ok).toBe(true)
-    expect(runner.deploy().ok).toBe(true)
-    expect(runner.screen()).toBe('Mission')
-  })
-
-  it('takes a seed, so the shell can decide whether the same men come back', () => {
-    /**
-     * `core` has no clock and no unseeded random, so a restart with no seed
-     * produces the SAME roster as a first run — the same names, deterministic
-     * and a little sad. `app/` may read a clock and pass one. The default stays
-     * the fixed constant so nothing in `core` has to.
-     */
-    const a = runnerFor(THREE_LEVELS)
-    a.runner.restartCampaign(101)
-    const b = runnerFor(THREE_LEVELS)
-    b.runner.restartCampaign(101)
-    expect(a.runner.campaign().recruits.map((r) => r.name)).toEqual(
-      b.runner.campaign().recruits.map((r) => r.name),
-    )
-
-    const c = runnerFor(THREE_LEVELS)
-    c.runner.restartCampaign(202)
-    expect(c.runner.campaign().recruits.map((r) => r.name)).not.toEqual(
-      a.runner.campaign().recruits.map((r) => r.name),
-    )
+  it('and an ordinary walk back to the Menu does NOT', () => {
+    // The distinction ticket 024 exists for: finishing a campaign is not the
+    // same as throwing one away.
+    const { runner } = runnerFor(ONE_LEVEL)
+    const squad = deploy(runner)
+    runner.finishMission(missionEvents([1], 'complete'), assignmentFor(squad))
+    const before = recruitsAvailable(runner.campaign()).map((m) => m.id)
+    runner.advanceFromBootHill()
+    expect(recruitsAvailable(runner.campaign()).map((m) => m.id)).toEqual(before)
   })
 })

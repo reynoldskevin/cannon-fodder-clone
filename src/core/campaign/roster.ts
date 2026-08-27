@@ -34,11 +34,29 @@ import type {
 /**
  * How many men a campaign starts with when the caller does not say.
  *
- * More than a mission needs, because the point of a roster is choosing who goes
- * — a starting list the size of the squad makes the recruitment screen a
- * formality until the first casualty.
+ * MORE THAN A MISSION NEEDS, and ticket 040 changed the reason rather than the
+ * number. It used to be "the point of a roster is choosing who goes"; nobody
+ * chooses any more, so what the surplus buys now is a campaign that survives its
+ * first casualties without enlisting a stranger between one mission and the
+ * next. A starting list the size of the squad would put a fresh recruit on the
+ * beach the moment anybody fell.
  */
 export const DEFAULT_RECRUITS = 8
+
+/**
+ * The seed a campaign gets when the caller does not supply one.
+ *
+ * A CONSTANT, because `core/` has no clock and no unseeded random source to make
+ * a fresh one from. `app/` supplies its own seed for a campaign the player
+ * deliberately restarts; this value only has to be valid, not varied.
+ *
+ * IT LIVES HERE RATHER THAN IN `persistence.ts`, WHERE IT WAS DECLARED, because
+ * it is `createCampaign`'s default and a default two modules apart from the
+ * parameter it fills is a default nobody finds. `persistence.ts` re-exports the
+ * name it published, so `FRESH_CAMPAIGN_SEED` still reads the same everywhere it
+ * is imported.
+ */
+export const FRESH_CAMPAIGN_SEED = 1
 
 /**
  * The most men a campaign will ever hold at once.
@@ -66,7 +84,8 @@ export const MAX_UNLOCKED_LEVELS = 32
 
 /** Options for a new campaign. `seed` is the caller's, so `app/` owns seeding. */
 export interface CreateCampaignOptions {
-  readonly seed: number
+  /** Defaults to `FRESH_CAMPAIGN_SEED`. See it for why a constant is enough. */
+  readonly seed?: number
   /** Starting roster size. Defaults to `DEFAULT_RECRUITS`. */
   readonly recruits?: number
 }
@@ -76,10 +95,17 @@ function recruitId(index: number): string {
   return `soldier-${index}`
 }
 
-/** A brand new campaign: nobody recruited, nobody dead, one level open. */
-export function createCampaign(options: CreateCampaignOptions): CampaignState {
+/**
+ * A brand new campaign: nobody recruited, nobody dead, one level open.
+ *
+ * EVERY OPTION HAS A DEFAULT AND THE OBJECT ITSELF IS OPTIONAL, so
+ * `createCampaign()` is a whole campaign. Both defaults are constants, so the
+ * no-argument call is exactly as deterministic as the four-argument one — which
+ * is the only reason it is safe to offer.
+ */
+export function createCampaign(options: CreateCampaignOptions = {}): CampaignState {
   const empty: CampaignState = {
-    seed: options.seed,
+    seed: options.seed ?? FRESH_CAMPAIGN_SEED,
     recruits: [],
     dead: [],
     // Exactly one. Unlocking two would let a fresh player skip the level the

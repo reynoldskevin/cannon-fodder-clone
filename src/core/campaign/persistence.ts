@@ -41,11 +41,14 @@ export const CAMPAIGN_SCHEMA_VERSION = 1
 /**
  * The seed a campaign gets when there is nothing to load from.
  *
- * A CONSTANT, because `core/` has no clock and no unseeded random source to
- * make a fresh one from. `app/` supplies its own seed for a campaign the player
- * deliberately starts; this value only has to be valid, not varied.
+ * RE-EXPORTED FROM `roster.ts`, WHERE IT IS `createCampaign`'S OWN DEFAULT
+ * (ticket 040). It was declared here, and a second constant would have been the
+ * cheaper edit — but then "the seed a fresh save gets" and "the seed a campaign
+ * built with no options gets" would be two numbers that agree until somebody
+ * changed one, and a campaign loaded from an empty store would field a different
+ * eight men than a campaign made from nothing.
  */
-export const FRESH_CAMPAIGN_SEED = 1
+export { FRESH_CAMPAIGN_SEED } from './roster'
 
 const NOTICE_UNREADABLE = 'The saved campaign could not be read, so a new one was started.'
 const NOTICE_DAMAGED = 'The saved campaign was damaged, so a new one was started.'
@@ -123,7 +126,7 @@ export function loadCampaign(port: PersistencePort): LoadedCampaign {
 }
 
 function freshCampaign(): CampaignState {
-  return createCampaign({ seed: FRESH_CAMPAIGN_SEED })
+  return createCampaign()
 }
 
 function fallback(notice: string): LoadedCampaign {

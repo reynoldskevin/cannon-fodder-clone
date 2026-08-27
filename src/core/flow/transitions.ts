@@ -22,7 +22,7 @@
  * a screen added as a loose string would compile into a machine with no rows
  * that can reach or leave it, which is a softlock that type-checks.
  */
-export type Screen = 'Menu' | 'Recruitment' | 'Briefing' | 'Mission' | 'Debrief' | 'BootHill'
+export type Screen = 'Menu' | 'BootHill' | 'Briefing' | 'Mission'
 
 /** Everything the player (or `main.ts`) can do to move between screens. */
 export type FlowEvent =
@@ -31,8 +31,6 @@ export type FlowEvent =
   | 'deploy'
   | 'missionComplete'
   | 'missionFailed'
-  | 'casualtiesRecorded'
-  | 'nextLevel'
   | 'campaignComplete'
   | 'demoShortcut'
 
@@ -48,8 +46,8 @@ export interface Transition {
  *
  * A DISCRIMINATED RESULT, NEVER A THROW AND NEVER SILENCE. Returning the state
  * unchanged on an event the screen has no row for produces a dead button: the
- * player presses Deploy on the Debrief screen, nothing happens, and there is
- * nothing to log. Throwing is the opposite failure — a double-clicked button is
+ * player presses Deploy on Boot Hill, nothing happens, and there is nothing to
+ * log. Throwing is the opposite failure — a double-clicked button is
  * ordinary traffic, not a programming error, and it would take the game down.
  */
 export type AdvanceResult = { readonly ok: true; readonly state: Screen } | { readonly ok: false; readonly reason: string }
@@ -57,7 +55,7 @@ export type AdvanceResult = { readonly ok: true; readonly state: Screen } | { re
 /** Where a launch with no valid entry state begins. */
 export const INITIAL_SCREEN: Screen = 'Menu'
 
-export const SCREENS: readonly Screen[] = ['Menu', 'Recruitment', 'Briefing', 'Mission', 'Debrief', 'BootHill']
+export const SCREENS: readonly Screen[] = ['Menu', 'BootHill', 'Briefing', 'Mission']
 
 export const EVENTS: readonly FlowEvent[] = [
   'startCampaign',
@@ -65,8 +63,6 @@ export const EVENTS: readonly FlowEvent[] = [
   'deploy',
   'missionComplete',
   'missionFailed',
-  'casualtiesRecorded',
-  'nextLevel',
   'campaignComplete',
   'demoShortcut',
 ]
@@ -78,18 +74,23 @@ export const EVENTS: readonly FlowEvent[] = [
  * `ordnance/table.ts` make: a row carries no behaviour, so a later ticket can
  * read these out of a document without a line of code changing.
  *
- * `Menu -> Mission` is the demo shortcut (`?demo=1&level=N`). It bypasses
- * Recruitment and Briefing and looks like a mistake in the picture, which is
+ * A LOSS GOES TO THE BRIEFING AND A WIN GOES TO BOOT HILL, AND THAT ASYMMETRY IS
+ * THE ONE THING IN THIS TABLE WORTH ARGUING (ticket 040). A defeat means the
+ * level was not finished — no ground taken, no replacements due — so routing it
+ * through Boot Hill would promote a fresh squad for a mission the player is
+ * about to retry. The Briefing is also the screen that says what the mission IS,
+ * which is exactly what somebody who has just failed it wants to read again.
+ *
+ * `Menu -> Mission` is the demo shortcut (`?demo=1&level=N`). It bypasses Boot
+ * Hill and the Briefing and looks like a mistake in the picture, which is
  * precisely why it is written down in both places.
  */
 export const TRANSITIONS: readonly Transition[] = [
-  { from: 'Menu', event: 'startCampaign', to: 'Recruitment' },
-  { from: 'Recruitment', event: 'squadAssigned', to: 'Briefing' },
+  { from: 'Menu', event: 'startCampaign', to: 'BootHill' },
+  { from: 'BootHill', event: 'squadAssigned', to: 'Briefing' },
   { from: 'Briefing', event: 'deploy', to: 'Mission' },
-  { from: 'Mission', event: 'missionComplete', to: 'Debrief' },
-  { from: 'Mission', event: 'missionFailed', to: 'Debrief' },
-  { from: 'Debrief', event: 'casualtiesRecorded', to: 'BootHill' },
-  { from: 'BootHill', event: 'nextLevel', to: 'Recruitment' },
+  { from: 'Mission', event: 'missionComplete', to: 'BootHill' },
+  { from: 'Mission', event: 'missionFailed', to: 'Briefing' },
   { from: 'BootHill', event: 'campaignComplete', to: 'Menu' },
   { from: 'Menu', event: 'demoShortcut', to: 'Mission' },
 ]
@@ -155,7 +156,7 @@ export function isMissionExit(from: Screen, to: Screen): boolean {
  * counts and has no idea how many levels exist — beat level 5 of 5 and it reads
  * 6, which is right for a counter and meaningless as a progression. So the
  * caller supplies the level count and `BootHill -> Menu` versus
- * `BootHill -> Recruitment` is decided against it.
+ * `BootHill -> Briefing` is decided against it.
  *
  * A nonsense `totalLevels` (0, negative, NaN — a caller whose level list failed
  * to load) reports "not over". Declaring victory on a missing manifest would end

@@ -334,13 +334,13 @@ describe('leaving a mission', () => {
      * transitions must release resources is a decision, and a decision belongs
      * where it can be tested. `main.ts` calls `teardown()` on this predicate.
      */
-    expect(isMissionExit('Mission', 'Debrief')).toBe(true)
+    expect(isMissionExit('Mission', 'BootHill')).toBe(true)
   })
 
   it('is false for transitions that never touched a mission', () => {
-    expect(isMissionExit('Menu', 'Recruitment')).toBe(false)
-    expect(isMissionExit('Debrief', 'BootHill')).toBe(false)
-    expect(isMissionExit('BootHill', 'Recruitment')).toBe(false)
+    expect(isMissionExit('Menu', 'BootHill')).toBe(false)
+    expect(isMissionExit('BootHill', 'Briefing')).toBe(false)
+    expect(isMissionExit('BootHill', 'Menu')).toBe(false)
   })
 
   it('is false for entering a mission', () => {

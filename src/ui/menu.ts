@@ -103,7 +103,12 @@ const RESTART_ARMED_MS = 6000
 export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen {
   const { backdrop, panel } = createChrome('Main menu')
 
-  const heading = createHeading('Game Week')
+  /**
+   * THE GAME'S NAME, NOT THE REPOSITORY'S (ticket 040). The start screen is the
+   * first thing anybody sees and it read `Game Week` — the name of the build
+   * exercise, which means nothing to a player.
+   */
+  const heading = createHeading('Cannon Fodder')
 
   const blurb = document.createElement('p')
   blurb.style.cssText = `margin:0;color:${MUTED}`

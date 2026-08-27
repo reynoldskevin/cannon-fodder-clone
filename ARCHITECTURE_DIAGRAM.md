@@ -20,16 +20,16 @@ flowchart TD
 
   subgraph app["app/ — shell"]
     LOOP["GameLoop<br/>fixed 60Hz + interpolation"]
-    SM["StateMachine<br/>Menu→Recruit→Brief→Mission→Debrief→BootHill"]
+    SM["StateMachine<br/>Menu→BootHill→Briefing→Mission→BootHill"]
     LS["localStorage adapter"]
   end
 
   subgraph inputui["input/ + ui/ — DOM"]
     PC["PointerController"]
     HUD["HUD"]
-    RS["RecruitmentScreen"]
+    MS["MenuScreen"]
     BH["BootHill"]
-    BD["Briefing / Debrief"]
+    BD["Briefing<br/>mission card, on black"]
   end
 
   subgraph core["core/ — engine-free simulation (no three.js, no DOM)"]
@@ -76,14 +76,14 @@ flowchart TD
   LOOP --> W
   LOOP --> ER
   SM --> LOOP
-  SM --> RS & BD & BH
+  SM --> MS & BD & BH
   W -. read-only state .-> ER
   W -. read-only state .-> HUD
   EV --> FX
   EV --> AB
   EV --> HUD
   EV --> SM
-  CAMP --> RS & BH
+  CAMP --> BD & BH
   PP --> LS
   ER --> PFX
   TR --> PFX
@@ -129,7 +129,7 @@ flowchart LR
   H --> P["HUD"]
   H -->|"MissionComplete / UnitDied"| Q["Campaign"]
   Q -->|"at mission boundary"| R[("localStorage")]
-  Q --> S["RecruitmentScreen / BootHill"]
+  Q --> S["Briefing / BootHill"]
 ```
 
 ## Mission tick — sequence
@@ -166,16 +166,24 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
   [*] --> Menu
-  Menu --> Recruitment: new / continue campaign
-  Recruitment --> Briefing: squad assigned
+  Menu --> BootHill: new / continue campaign
+  BootHill --> Briefing: squad assigned (no picking)
   Briefing --> Mission: deploy
-  Mission --> Debrief: MissionComplete
-  Mission --> Debrief: MissionFailed
-  Debrief --> BootHill: casualties recorded
-  BootHill --> Recruitment: next level
+  Mission --> BootHill: MissionComplete
+  Mission --> Briefing: MissionFailed
   BootHill --> Menu: campaign complete
   Menu --> Mission: ?demo=1&level=N (demo shortcut)
 ```
+
+Four screens: the title, Boot Hill with the squad assigned FOR the player, the
+mission card on black, and the level itself.
+
+A win returns to Boot Hill for the next mission; **a loss returns to the
+Briefing, and that is the one asymmetry in the chart**. The level was not
+finished, so no ground was taken and no replacements are due — routing a defeat
+through Boot Hill would promote a fresh squad for a mission about to be retried.
+The Briefing is also the screen that says what the mission is, which is what
+somebody who has just failed it wants to read again.
 
 ## Build & deploy boundary
 

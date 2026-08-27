@@ -3,9 +3,14 @@
  * (ticket 020).
  *
  * The public face of two things that are decisions rather than pictures: which
- * screen an event leads to, and what the Briefing and Debrief screens say. The
- * screens themselves are DOM and live in `src/ui`; nothing in here knows what
- * any of them look like.
+ * screen an event leads to, and what the campaign's screens say. The screens
+ * themselves are DOM and live in `src/ui`; nothing in here knows what any of
+ * them look like.
+ *
+ * `debriefModel` IS EXPORTED WITHOUT A SCREEN TO DRAW IT (ticket 040). The
+ * Debrief left the chart and the post-mission summary is owed to Boot Hill; the
+ * fold that decides who died is kept here in the meantime rather than deleted
+ * and rewritten. See `screens.ts`.
  *
  * IT HOLDS NO STATE OF ITS OWN. `advance` is `(screen, event) -> result`; the
  * campaign lives in `core/campaign` and the mission in `core/session`. Fusing

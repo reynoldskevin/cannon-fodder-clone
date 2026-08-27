@@ -52,9 +52,7 @@ import { showFatalError, type FatalErrorReport } from '../ui/error-overlay'
 import { createHud, type RosterMember } from '../ui/hud'
 import { createBootHill } from '../ui/boot-hill'
 import { createMenu } from '../ui/menu'
-import { createRecruitment } from '../ui/recruitment'
 import { createBriefing } from '../ui/briefing'
-import { createDebrief } from '../ui/debrief'
 import { createLocalStoragePort } from './local-storage-port'
 import { CORE_VERSION } from '../core/version'
 
@@ -781,8 +779,6 @@ async function boot(): Promise<void> {
    * the type rather than of every handler being careful.
    */
   let mounted: { readonly view: ViewId; readonly screen: { dispose(): void } } | undefined
-  /** `MissionFailed.reason`, kept because the event is a one-shot and the screen is not. */
-  let failure: string | undefined
 
   /**
    * The control hint, once the game has actually reached the canvas.
@@ -867,9 +863,9 @@ async function boot(): Promise<void> {
      * Release the mission that is ending.
      *
      * WHAT A MISSION OWNS HERE IS THE SESSION, THE TRACERS AND THE POINTER — NOT
-     * THE STAGE. The terrain, the atlas and the ground stay up behind the Debrief
-     * and Boot Hill; disposing them here would leave nothing to come back to and
-     * a black canvas behind both. The stage is swapped by `startMission` when the
+     * THE STAGE. The terrain, the atlas and the ground stay up behind Boot Hill
+     * and the Briefing; disposing them here would leave nothing to come back to
+     * and a black canvas behind both. The stage is swapped by `startMission` when the
      * campaign moves to a DIFFERENT level, and freed for good by `teardown()`
      * below, which ends the page rather than the mission.
      *
@@ -877,7 +873,7 @@ async function boot(): Promise<void> {
      * ARE DELIBERATE. `dispose` is idempotent, so the pair is safe. This one
      * exists because the pointer holds the finished session's command queue by
      * reference and the mission it would push orders onto is over — the player
-     * sits on the Debrief and Boot Hill for minutes, and a live pointer over a
+     * sits on Boot Hill and the Briefing for minutes, and a live pointer over a
      * dead session for all of that is what this releases. `startMission`'s call
      * is the one that actually REPLACES it, and it cannot be dropped: a mission
      * started without an intervening `teardown` (the first deploy of the page)
@@ -911,7 +907,6 @@ async function boot(): Promise<void> {
     // runner's own state. A mission that disposed screens itself would be a
     // second owner of the one slot, disagreeing with the router the first time a
     // command was refused.
-    failure = undefined
     // EMPTIED FOR THE NEW MISSION, so the men who died in the last one are not
     // buried a second time in this one's report. Nothing subtle about the
     // placement — this function is synchronous, so no frame can run between here
@@ -1052,13 +1047,15 @@ async function boot(): Promise<void> {
 
   /**
    * The mission is over: record it against the campaign, and let the router put
-   * the Debrief up.
+   * up whichever screen follows.
    *
-   * IT MOUNTS NOTHING ITSELF, for the reason `reconcile` gives. `finishMission`
-   * moves the screen to `Debrief` on both outcomes, so asking the runner
-   * afterwards is the same answer with none of the risk of guessing it — and a
-   * refused `finishMission` leaves the mission on screen rather than putting a
-   * Debrief over a campaign that recorded nothing.
+   * IT MOUNTS NOTHING ITSELF, for the reason `reconcile` gives — and since
+   * ticket 040 that matters more than it did. A win lands on Boot Hill and a
+   * loss back on the Briefing, and which of those happened is `missionReport`'s
+   * answer rather than anything this file saw; asking the runner afterwards is
+   * that same answer with none of the risk of guessing it. A refused
+   * `finishMission` leaves the mission on screen rather than putting a memorial
+   * over a campaign that recorded nothing.
    */
   function endMission(): void {
     // `session.assignment` is read BEFORE the runner tears the mission down: it
@@ -1085,8 +1082,9 @@ async function boot(): Promise<void> {
    * handler that mounted its own guess would disagree with the runner the first
    * time a command was refused, and the player would be looking at a screen the
    * game is not on. Refusals are printed rather than swallowed — by `announce`
-   * into the console, and by Recruitment onto the screen, since `selectSquad`'s
-   * reason is the one a player can actually act on.
+   * into the console. Since ticket 040 no screen prints a refusal of its own:
+   * the one that did was Recruitment, and nothing on the three that remain asks
+   * the player for anything a command can reject.
    *
    * A `switch` over `ViewId` and not a lookup object, so the compiler is the
    * thing that notices when `core/flow` gains a view: the return type makes a
@@ -1132,26 +1130,6 @@ async function boot(): Promise<void> {
         })
         return menu
       }
-      case 'recruitment':
-        return createRecruitment(mount, {
-          // ASKED AGAIN ON EVERY TOGGLE, which is what keeps `autoFilled` — and
-          // so the Deploy button's promise — true of the selection in front of
-          // the player rather than of the empty one he started with.
-          modelFor: (chosen) => runner.recruitment(chosen),
-          onDeploy: (chosen) => {
-            const result = runner.assignSquad(chosen)
-            if (!result.ok) {
-              // BACK TO THE SCREEN, not just to the console. "This level needs 3
-              // men; only 1 was selected" is a sentence the player can act on,
-              // and a Deploy button that refuses in silence is precisely what
-              // `selectSquad` returning a reason exists to prevent.
-              announce(result, 'assigning the squad')
-              return result.reason
-            }
-            reconcile()
-            return null
-          },
-        })
       case 'briefing':
         return createBriefing(mount, {
           model: runner.briefing(),
@@ -1160,34 +1138,6 @@ async function boot(): Promise<void> {
             reconcile()
           },
         })
-      case 'debrief': {
-        const model = runner.debrief()
-        if (model === null) {
-          // Unreachable: `Debrief` is only ever entered through `finishMission`,
-          // which writes the report before it moves the screen. Written out
-          // rather than asserted away, and reported as fatal rather than mounted
-          // empty — a Debrief with no report means the mission's record was
-          // lost, and a screen that made one up would tell the player nobody
-          // died.
-          fail(mount, {
-            title: 'The mission result was lost',
-            detail: 'The debrief has no report to show, so the mission could not be recorded.',
-            technical: 'runner.debrief() was null on the Debrief screen.',
-            action: { label: 'Reload the game', onClick: () => location.reload() },
-          })
-          return undefined
-        }
-        return createDebrief(mount, {
-          model,
-          // The sim's own sentence for the loss, kept because the event is a
-          // one-shot and the screen outlives it by minutes.
-          ...(failure === undefined ? {} : { reason: failure }),
-          onContinue: () => {
-            announce(runner.recordCasualties(), 'recording the casualties')
-            reconcile()
-          },
-        })
-      }
       case 'boot-hill': {
         const hill = createBootHill(mount, {
           continueLabel: 'Carry on',
@@ -1238,11 +1188,11 @@ async function boot(): Promise<void> {
     if (view === null) showHintOnce()
     // The hint is a one-shot and its own file removes it on a timer or a click;
     // dismissing it here only covers the case where the mission ends before
-    // either has happened, so it does not linger over the Debrief.
+    // either has happened, so it does not linger over the mission card.
     else hint?.dismiss()
     // Already right. The early return is what makes a refused command free —
-    // without it a redraw would tear down the Recruitment screen the player is
-    // mid-selection on and put an empty one back.
+    // without it a redraw would tear down the screen the player is looking at
+    // and put an identical one back, taking his keyboard focus with it.
     if (mounted?.view === view) return
     mounted?.screen.dispose()
     mounted = undefined
@@ -1325,8 +1275,8 @@ async function boot(): Promise<void> {
       // fires once and the screen it explains outlives it by minutes.
       // ONLY WHILE THE MISSION IS ON, and off the same guard `endMission` uses
       // below rather than a second flag of this file's. The session keeps
-      // stepping and keeps emitting for as long as the player leaves the Debrief
-      // and Boot Hill up, and a log that kept growing after the report it feeds
+      // stepping and keeps emitting for as long as the player leaves Boot Hill
+      // or the mission card up, and a log that kept growing after the report it feeds
       // was written is an array with no bound and no reader — the pre-022a loop
       // discarded those events. `endMission` runs after this drain, so the final
       // frame's `MissionComplete` is still logged on the frame it lands.
@@ -1372,7 +1322,7 @@ async function boot(): Promise<void> {
          *
          * THE MISSION-END CUES ARE EXEMPT FROM `onMission`, and that exemption is
          * the point of them. Everything else is gated for the reason the FX above
-         * are: the session keeps stepping behind the Debrief and Boot Hill, and
+         * are: the session keeps stepping behind Boot Hill and the Briefing, and
          * rifles firing under an end-of-mission screen are a fault. But victory
          * and defeat are what those screens are FOR — and they land on the very
          * frame the mission ends, which `endMission` (below this loop) turns into
@@ -1405,12 +1355,15 @@ async function boot(): Promise<void> {
               : cue
           audio.play(placed, listener)
         }
-        if (event.type === 'MissionFailed') failure = event.reason
         // ONE TRACER PER ROUND, from the event's own endpoints. Ticket 011a
         // already clamps the far end to the near face of whatever the round
         // meets, so a tracer drawn to `targetX`/`targetZ` stops at the wall
         // without a line of geometry code asking whether it should.
-        else if (onMission && event.type === 'ShotFired') {
+        //
+        // AN `if`, NOT AN `else if`: ticket 040 deleted the `MissionFailed`
+        // branch that used to head this chain (the Debrief it stashed the reason
+        // for is gone), so there is no longer a preceding arm to chain onto.
+        if (onMission && event.type === 'ShotFired') {
           tracers.add(event, elapsed)
           // AND A FLASH AT THE BARREL. The tracer says where the round went; the
           // flash says who fired it, and a miss fires both — see `ShotFired.hit`.
@@ -1458,8 +1411,8 @@ async function boot(): Promise<void> {
           }
         }
       }
-      // NOT UPDATED WHILE HIDDEN. The session keeps stepping behind the Debrief
-      // and Boot Hill, so this would go on writing a clock and a roster nobody
+      // NOT UPDATED WHILE HIDDEN. The session keeps stepping behind Boot Hill
+      // and the mission card, so this would go on writing a clock and a roster nobody
       // can see. Nothing is lost by skipping: the router shows the panel from
       // inside the callback that starts the mission, and the next frame's update
       // runs before that frame is painted, so it is never seen stale.
@@ -1478,11 +1431,11 @@ async function boot(): Promise<void> {
       // asked at any time.
       const outcome = session.outcome()
       // THE RUNNER'S SCREEN IS THE GUARD, not a flag of this file's: the mission
-      // is over exactly once, and `Mission -> Debrief` is a transition the chart
-      // will not make twice. An `ending === undefined` check would have said the
-      // same thing until the Debrief was dismissed, at which point it would fire
-      // again over a mission that had already been recorded — and the campaign
-      // would bury the same men twice.
+      // is over exactly once, and there is no row that leaves `Mission` and
+      // comes back to it in one step. An `ending === undefined` check would have
+      // said the same thing until the screen after it was dismissed, at which
+      // point it would fire again over a mission that had already been recorded
+      // — and the campaign would bury the same men twice.
       if (outcome !== 'playing' && runner.screen() === 'Mission') endMission()
       stage.built.entities.update(elapsed, alpha)
       // EVERY FRAME, not only on a stepping one: a tracer fades on the display's

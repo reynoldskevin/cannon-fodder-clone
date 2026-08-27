@@ -37,7 +37,7 @@ import type { Screen } from './transitions'
  * these to pick a `create*` function, and an id added as a loose string would
  * compile into a router with no arm that can mount it.
  */
-export type ViewId = 'menu' | 'recruitment' | 'briefing' | 'debrief' | 'boot-hill'
+export type ViewId = 'menu' | 'briefing' | 'boot-hill'
 
 /**
  * What each screen mounts, or `null` for the one that mounts nothing.
@@ -47,17 +47,15 @@ export type ViewId = 'menu' | 'recruitment' | 'briefing' | 'debrief' | 'boot-hil
  */
 export const SCREEN_VIEWS: Record<Screen, ViewId | null> = {
   Menu: 'menu',
-  Recruitment: 'recruitment',
+  BootHill: 'boot-hill',
   Briefing: 'briefing',
   // The canvas. See the header: the mission is the absence of a panel, not a
   // panel of its own.
   Mission: null,
-  Debrief: 'debrief',
-  BootHill: 'boot-hill',
 }
 
 /** Every id the table uses, for a shell that wants to enumerate them. */
-export const VIEWS: readonly ViewId[] = ['menu', 'recruitment', 'briefing', 'debrief', 'boot-hill']
+export const VIEWS: readonly ViewId[] = ['menu', 'briefing', 'boot-hill']
 
 /**
  * The reading the router does: what does this screen mount?
