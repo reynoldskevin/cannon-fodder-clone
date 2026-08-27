@@ -31,46 +31,61 @@ import { createRng } from '../world/prng'
 import type { Rng } from '../world/prng'
 
 /**
- * The pool. Plain data, deliberately dull, deliberately short surnames: these
- * are rendered into a roster row and onto a gravestone, and a long name is a
- * truncated name on both.
+ * The pool (ticket 045). Plain data, imported from `recruit_names.csv` — the
+ * roll the original game recruited from — and NOT invented here. Short, first
+ * names and nicknames rather than surnames: they are rendered into a roster row
+ * and onto a gravestone, and the longest of these is six characters, so nothing
+ * in the pool is up against either field.
+ *
+ * THE NAME COLUMN ONLY. The sheet carries four other columns and none of them
+ * is imported; a name with anything else riding along would read as the man's
+ * name on every screen that shows one. `names.test.ts` holds every entry to a
+ * single bare word so a re-import cannot smuggle one in.
+ *
+ * SHEET ORDER, LESS ITS REPEATS. Thirteen of the sheet's 360 rows name someone
+ * who already appeared, and the first appearance is the one kept. That is not
+ * tidiness: a duplicate here becomes two identical gravestones, which is the
+ * exact ambiguity the rest of this file is built to prevent — see below.
  *
  * ADD TO IT FREELY — nothing derives a count from its length, and a longer pool
  * simply delays the first generation suffix. It must never contain a duplicate
  * or a name already ending in a numeral, either of which would collide with a
- * suffixed form and reintroduce exactly the ambiguity this file exists to stop.
+ * suffixed form. Both rules were prose until ticket 045 and are now checked.
  */
 export const NAME_POOL: readonly string[] = [
-  'Baker',
-  'Nowak',
-  'Fletcher',
-  'Ashby',
-  'Sokolov',
-  'Whitlock',
-  'Cronin',
-  'Vasquez',
-  'Doyle',
-  'Marchetti',
-  'Hargreaves',
-  'Okonkwo',
-  'Renshaw',
-  'Kovac',
-  'Pike',
-  'Delaney',
-  'Mercer',
-  'Halloran',
-  'Bright',
-  'Yates',
-  'Novak',
-  'Strand',
-  'Faulkner',
-  'Rhodes',
-  'Ackroyd',
-  'Lindqvist',
-  'Farrow',
-  'Bellamy',
-  'Grimes',
-  'Weatherby',
+  'JOOLS', 'JOPS', 'STOO', 'RJ', 'UBIK', 'CJ', 'CHRIS', 'PETE', 'TADGER', 'HECTOR', 'ELROY',
+  'SOFTY', 'MAC', 'BOMBER', 'STAN', 'TOSH', 'BRAINS', 'NORM', 'BUSTER', 'SPIKE', 'BROWNY',
+  'MURPHY', 'KILLER', 'ABDUL', 'SPOTTY', 'GOOFY', 'DONALD', 'WINDY', 'NIFTA', 'DENZIL', 'CEDRIC',
+  'ALF', 'MARTY', 'CECIL', 'WALLY', 'DONG', 'JASON', 'ROY', 'PEEWEE', 'ARNIE', 'LOFTY', 'TUBBY',
+  'PORKY', 'NORRIS', 'BUGSY', 'GREG', 'GUS', 'GINGER', 'EDDY', 'STEVE', 'HUGO', 'ZIPPY', 'SONNY',
+  'WILLY', 'MARIO', 'LUIGI', 'BO', 'JOHAN', 'COLIN', 'RUBY', 'MORGAN', 'REG', 'PETER', 'BRETT',
+  'MATT', 'VIC', 'HUT', 'BUD', 'BRAD', 'ASHLEY', 'LES', 'REX', 'LOUIS', 'PEDRO', 'MARCO', 'LEON',
+  'ALI', 'TYSON', 'TIGER', 'FRANK', 'REUBEN', 'LEYTON', 'JOSH', 'JUDAS', 'AJ', 'LEX', 'BUTCH',
+  'BISON', 'GARY', 'LUTHER', 'KERMIT', 'BRIAN', 'RAY', 'FREAK', 'LEROY', 'LEE', 'BANJO', 'BEAKER',
+  'BASIL', 'BONZO', 'KELVIN', 'RONNIE', 'RUPERT', 'ROO', 'DAN', 'BASHER', 'LUCKY', 'DON', 'TOMMY',
+  'EDDIE', 'CYNIC', 'BLOND', 'PADDY', 'ARNOLD', 'TONY', 'TEDDY', 'DOM', 'THEO', 'MARTIN',
+  'CHUNKY', 'JON', 'BEN', 'GIRLY', 'JULIAN', 'PIZZA', 'MARK', 'CIARAN', 'JOCK', 'GRAVY', 'TRENDY',
+  'NEIL', 'DEREK', 'ED', 'BIFF', 'PAUL', 'STUART', 'RANDY', 'LORETA', 'SUZIE', 'PUMPY', 'URMER',
+  'BUNNY', 'ADEY', 'PEPPER', 'BEEFY', 'HARRY', 'TINY', 'HOWARD', 'MORRIS', 'THOR', 'REV', 'DUKE',
+  'SHORTY', 'MICKY', 'CHAS', 'MELONY', 'CRAIG', 'SIDNEY', 'PARSON', 'ROWAN', 'SMELLY', 'DOK',
+  'STEW', 'ADRIAN', 'PAT', 'ICEMAN', 'GOOSE', 'DIPPY', 'VIV', 'SI', 'BUNTY', 'NOEL', 'BONO',
+  'EDGE', 'ROBBIE', 'SEAN', 'MILES', 'JIMI', 'GORDON', 'VAL', 'HOBO', 'FUNGUS', 'JR', 'LAMPY',
+  'MARCUS', 'PELE', 'HUBERT', 'JAMES', 'TIM', 'SAUL', 'ANDY', 'SILKY', 'SIMON', 'HANDY', 'SID',
+  'GEORGE', 'JOFF', 'BARRY', 'DICK', 'GIL', 'NICK', 'TED', 'PHIL', 'WOODY', 'WYNN', 'ALAN', 'PIP',
+  'MICKEY', 'JUSTIN', 'KARL', 'MADDOG', 'HORACE', 'HAROLD', 'GAZZA', 'SPIV', 'FOXY', 'NED',
+  'BAZIL', 'OLIVER', 'RETT', 'SCOT', 'DARREN', 'EDWIN', 'MOSES', 'NOAH', 'SETH', 'HARVEY', 'MARY',
+  'PILOT', 'MCBETH', 'MCDUFF', 'BELLY', 'MATHEW', 'LUKE', 'JOHN', 'ASLAM', 'HAM', 'SHEM',
+  'JOSHUA', 'JACOB', 'ESAW', 'OMAR', 'ENOCH', 'OBADIA', 'DANIEL', 'SAMUEL', 'ROBBO', 'JOEBED',
+  'ISMAEL', 'ISREAL', 'ISABEL', 'ISARAT', 'MONK', 'BLIP', 'BACON', 'DANUBE', 'FRIEND', 'DARRYL',
+  'IZZY', 'CROSBY', 'STILLS', 'NASH', 'YOUNG', 'CHEESE', 'SALAMI', 'PRAWN', 'RADISH', 'EGBERT',
+  'EDWY', 'EDGAR', 'EDRED', 'EGGPIE', 'BROS', 'CAKEY', 'ZIGGY', 'ALFRED', 'SIGGY', 'HILDA',
+  'SNELL', 'SPARKS', 'ROB', 'TOPCAT', 'BENNY', 'DIBBLE', 'BENKER', 'DOSEY', 'BEAKY', 'JOIST',
+  'PIVOT', 'TREE', 'BUSH', 'GRASS', 'SEEDY', 'TIN', 'ROLLO', 'ZIPPO', 'NANCY', 'LARRY', 'IGGY',
+  'NIGEL', 'JAMIE', 'JESSE', 'LEO', 'VIRGO', 'GARTH', 'FIDEL', 'IDI', 'CHE', 'JOHNNY', 'AMBER',
+  'LAIRY', 'LARDO', 'CLIFF', 'FESTER', 'JETHRO', 'JIMBOB', 'DECLAN', 'HICKEY', 'CHOCCO', 'GOCH',
+  'PABLO', 'RENOIR', 'ROLF', 'DALI', 'MONET', 'MANET', 'GAUGIN', 'CHAGAL', 'KID', 'HULLY',
+  'ROBERT', 'PIERS', 'RAITH', 'JEEVES', 'PASTER', 'GINAN', 'DEITER', 'DENI', 'ZARK', 'WIZKID',
+  'WIZARD', 'IAIN', 'KITTEN', 'GONNER', 'WASTER', 'LOSER', 'FODDER',
 ]
 
 /** Roman numeral pieces, largest first. Enough for any campaign a player finishes. */
