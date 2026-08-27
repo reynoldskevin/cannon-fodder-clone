@@ -34,7 +34,7 @@ export interface ResolvedTileStyle extends TileAppearance {
 
 /**
  * Styles for the ids `tools/mapgen` currently emits (see `tools/mapgen/terrain.ts`:
- * 0 unknown, 1 grass, 2 canopy, 3 rock, 4 water).
+ * 0 unknown, 1 grass, 2 canopy, 3 rock, 4 water, 5 bridge).
  *
  * Invariant across every entry: a *blocked* tile is never lower than its
  * walkable form. Raised blocked terrain is the whole reason the map reads as
@@ -131,6 +131,27 @@ export const TILE_STYLES: Readonly<Record<number, TileStyle>> = {
     // colour tells you it is impassable, because a raised lake reads as a wall.
     walkable: { colour: '#4d86b5', height: -0.12 },
     blocked: { colour: '#2f5c88', height: -0.12 },
+  },
+  5: {
+    name: 'bridge',
+    /**
+     * Plank brown at 0.06 — a hair above grass (0.05) rather than level with it.
+     *
+     * The height is not decoration. A deck laid flush with the bank would meet
+     * the river at a step of nothing on the bank sides and a cliff on the water
+     * sides; raising it by a hair means the skirt of the tile draws down to the
+     * water either side, so it reads as a deck standing over the river rather
+     * than as a stripe painted on it.
+     *
+     * BLOCKED IS THE SAME SURFACE AT THE SAME HEIGHT, exactly as water is. A
+     * raised blocked tile reads as a wall, and a bridge you cannot cross should
+     * look like a bridge somebody has closed, not like a barricade.
+     *
+     * Ticket 034 replaces the top face with `bridge.png` and this colour becomes
+     * what tints it, so it is not throwaway.
+     */
+    walkable: { colour: '#8a6a45', height: 0.06 },
+    blocked: { colour: '#6b5236', height: 0.06 },
   },
 }
 

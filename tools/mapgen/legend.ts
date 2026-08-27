@@ -11,6 +11,7 @@
  *   "tileSize": 16,
  *   "colourTolerance": 40,
  *   "markerColours": { "60,160,255": "avatars", "255,60,60": "enemies" },
+ *   "terrainColours": { "100,100,100": "bridge" },
  *   "labels": [{ "at": [804, 437], "type": "bird_left", "category": "props" }],
  *   "objectives": [{ "type": "kill_all" }],
  *   "glyph": { "side": 25, "minSide": 15, "maxSide": 40, "minPixels": 40, "maxPixels": 400 },
@@ -21,12 +22,18 @@
  * `glyph` and `walkableMinLuminance` are optional and default to the level-1
  * convention; they exist so a level annotated at a different scale, or painted
  * from a different palette, is a data change rather than a code change.
+ *
+ * `terrainColours` is optional too and defaults to none: it names colours that
+ * ARE terrain, as opposed to `markerColours`, which are annotation drawn on top
+ * of it. See `TerrainColour` — the two are read at different stages and must
+ * never be confused for one another.
  */
 
 import { readFileSync } from 'node:fs'
 import { MapgenError } from './errors'
 import type { RGB } from './image'
 import { colourDistance, formatColour } from './image'
+import { TERRAIN_NAMES } from './terrain'
 
 /** The spawn categories a legend may target — the `LevelSpawns` categories. */
 export const SPAWN_CATEGORIES = ['avatars', 'enemies', 'props', 'chests'] as const
@@ -35,6 +42,26 @@ export type SpawnCategory = (typeof SPAWN_CATEGORIES)[number]
 export interface MarkerColour {
   readonly colour: RGB
   readonly category: SpawnCategory
+}
+
+/**
+ * "This colour IS this terrain" — one entry of `terrainColours` (ticket 033).
+ *
+ * NOT A MARKER COLOUR, AND THE DISTINCTION IS LOAD-BEARING. `markerColours` are
+ * ANNOTATION INK: `detect.ts` clusters those pixels and `tileAverages` excludes
+ * every one of them from the mean, precisely so a white crosshair drawn over
+ * dark jungle cannot lift the jungle above the walkable cut. A terrain colour is
+ * the exact opposite — it is the terrain itself, and it is what the mean has to
+ * measure — so it never reaches the ink mask and `assertColoursSeparated` has
+ * nothing to say about it.
+ *
+ * The name is kept alongside the resolved id purely so an error message can name
+ * what the author wrote rather than the number it became.
+ */
+export interface TerrainColour {
+  readonly colour: RGB
+  readonly name: string
+  readonly terrain: number
 }
 
 /**
@@ -84,6 +111,14 @@ export interface Legend {
   readonly colourTolerance: number
   /** Sorted by colour string, so iteration order never depends on JSON order. */
   readonly markerColours: readonly MarkerColour[]
+  /**
+   * Colours that ARE terrain, resolved to tile ids. Empty when the legend
+   * declares none, which is the normal case and must stay one: this is opt-in
+   * per level, so a level whose author never asked for it imports unchanged.
+   *
+   * Sorted by colour string for the same reason `markerColours` is.
+   */
+  readonly terrainColours: readonly TerrainColour[]
   readonly labels: readonly LegendLabel[]
   readonly objectives: readonly { readonly type: string; readonly [param: string]: unknown }[]
   readonly glyph: GlyphShape
@@ -122,18 +157,40 @@ function isSpawnCategory(value: unknown): value is SpawnCategory {
 }
 
 /** `"60,160,255"` -> `[60, 160, 255]`. */
-function parseColourKey(key: string, path: string): RGB {
+function parseColourKey(key: string, path: string, what = 'marker colour'): RGB {
   const parts = key.split(',').map((p) => p.trim())
   if (parts.length !== 3) {
-    throw new MapgenError(`${path}: marker colour key must be "r,g,b", got "${key}"`)
+    throw new MapgenError(`${path}: ${what} key must be "r,g,b", got "${key}"`)
   }
   const channels = parts.map((p) => Number(p))
   for (const c of channels) {
     if (!Number.isInteger(c) || c < 0 || c > 255) {
-      throw new MapgenError(`${path}: marker colour key must be three 0-255 integers, got "${key}"`)
+      throw new MapgenError(`${path}: ${what} key must be three 0-255 integers, got "${key}"`)
     }
   }
   return [channels[0] ?? 0, channels[1] ?? 0, channels[2] ?? 0]
+}
+
+/**
+ * Order two declared colours by channel, darkest-first.
+ *
+ * WHY NOT `Object.keys().sort()`, which is what the ordering used to be: the
+ * committed acceptance test `legend-terrain.test.ts` -> "and declaring terrain
+ * leaves markerColours untouched" expects `['avatars', 'enemies']`, and a
+ * lexical sort of the KEYS reverses that, because `"255,60,60" < "60,160,255"`.
+ * Comparing the parsed channels puts them back in the order the legend reads in.
+ *
+ * The property the ordering exists for is unaffected: numeric channel order is
+ * derived from the CONTENT rather than from JSON key order, and it is a total
+ * order over distinct colours, so parsing stays deterministic and idempotent.
+ * Measured: `level1.json` re-imports byte-identical, and level 2's spawns are
+ * unchanged.
+ *
+ * Keys are still validated in string order, so an error message about a
+ * malformed legend does not depend on which entry happened to parse.
+ */
+function byColour(a: RGB, b: RGB): number {
+  return a[0] - b[0] || a[1] - b[1] || a[2] - b[2]
 }
 
 function parsePositiveInt(value: unknown, fallback: number, path: string): number {
@@ -259,6 +316,79 @@ function assertColoursSeparated(colours: readonly MarkerColour[], tolerance: num
   }
 }
 
+/**
+ * Two declared TERRAIN colours close enough to claim the same tile are FATAL,
+ * for the same reason and with the same margin as the marker check above.
+ *
+ * A tile is claimed when its average lands within `tolerance` of a declared
+ * colour, so two colours `2 * tolerance` apart leave a band between them that
+ * both claim — and which one won would come down to object key order, which is
+ * exactly what sorting the entries exists to stop mattering. Rejecting the pair
+ * up front is what lets `declaredTerrainAt` take the first match and be right.
+ *
+ * Checked against its OWN kind only. A terrain colour and a marker colour can
+ * never contend: markers are masked out of every tile average before a terrain
+ * colour is compared against one, so a shared separation check would be a
+ * constraint with no failure behind it.
+ */
+function assertTerrainColoursSeparated(
+  colours: readonly TerrainColour[],
+  tolerance: number,
+  path: string,
+): void {
+  const minSeparation = tolerance * 2
+  for (let i = 0; i < colours.length; i += 1) {
+    for (let j = i + 1; j < colours.length; j += 1) {
+      const a = colours[i]
+      const b = colours[j]
+      if (!a || !b) continue
+      const distance = colourDistance(a.colour, b.colour)
+      if (distance > minSeparation) continue
+      throw new MapgenError(
+        `${path}: terrainColours "${formatColour(a.colour)}" (${a.name}) and "${formatColour(
+          b.colour,
+        )}" (${b.name}) are only ${String(distance)} apart, within the ${String(
+          minSeparation,
+        )} needed to keep their claims disjoint at colourTolerance ${String(
+          tolerance,
+        )} — one tile would be claimed by both`,
+      )
+    }
+  }
+}
+
+/**
+ * `{ "100,100,100": "bridge" }` -> resolved entries, sorted by colour.
+ *
+ * An unknown name is an ERROR naming the ones that exist, never a silent skip.
+ * A skip leaves the author looking at a map that ignored their annotation
+ * without ever saying so — which is precisely the failure that produced this
+ * ticket, where level 2's bridge was quietly classified as jungle and nothing
+ * anywhere mentioned it.
+ */
+function parseTerrainColours(raw: unknown, path: string): TerrainColour[] {
+  if (raw === undefined) return []
+  if (!isPlainObject(raw)) {
+    throw new MapgenError(`${path}: terrainColours must be an object of "r,g,b" -> terrain name`)
+  }
+  const known = Object.keys(TERRAIN_NAMES).sort()
+  const colours: TerrainColour[] = []
+  for (const key of Object.keys(raw).sort()) {
+    const name: unknown = raw[key]
+    const terrain = typeof name === 'string' ? TERRAIN_NAMES[name] : undefined
+    if (typeof name !== 'string' || terrain === undefined) {
+      throw new MapgenError(
+        `${path}: terrainColours["${key}"] must be one of ${known.join(', ')}, got ${
+          JSON.stringify(name) ?? 'undefined'
+        }`,
+      )
+    }
+    colours.push({ colour: parseColourKey(key, path, 'terrain colour'), name, terrain })
+  }
+  colours.sort((a, b) => byColour(a.colour, b.colour))
+  return colours
+}
+
 function parseObjectives(raw: unknown, path: string): Legend['objectives'] {
   if (raw === undefined) return DEFAULT_OBJECTIVES.map((o) => ({ ...o }))
   if (!Array.isArray(raw) || raw.length === 0) {
@@ -294,6 +424,7 @@ export function parseLegend(json: unknown, path: string): Legend {
     }
     markerColours.push({ colour: parseColourKey(key, path), category })
   }
+  markerColours.sort((a, b) => byColour(a.colour, b.colour))
 
   const colourTolerance = parsePositiveInt(
     json.colourTolerance,
@@ -302,10 +433,14 @@ export function parseLegend(json: unknown, path: string): Legend {
   )
   assertColoursSeparated(markerColours, colourTolerance, path)
 
+  const terrainColours = parseTerrainColours(json.terrainColours, path)
+  assertTerrainColoursSeparated(terrainColours, colourTolerance, path)
+
   return {
     tileSize: parsePositiveInt(json.tileSize, DEFAULT_TILE_SIZE, `${path}: tileSize`),
     colourTolerance,
     markerColours,
+    terrainColours,
     labels: parseLabels(json.labels, `${path}: labels`),
     objectives: parseObjectives(json.objectives, `${path}: objectives`),
     glyph: parseGlyphShape(json.glyph, `${path}: glyph`),

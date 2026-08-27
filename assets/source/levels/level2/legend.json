@@ -6,5 +6,8 @@
     "255,60,60": "enemies",
     "255,220,0": "props"
   },
+  "terrainColours": {
+    "100,100,100": "bridge"
+  },
   "labels": []
 }

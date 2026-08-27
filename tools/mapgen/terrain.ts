@@ -15,7 +15,8 @@
  */
 
 import type { Image, RGB } from './image'
-import { luminance, pixelAt } from './image'
+import { colourDistance, luminance, pixelAt } from './image'
+import type { TerrainColour } from './legend'
 
 /**
  * Tile ids emitted by this importer. Small, open set — the renderer maps the
@@ -32,7 +33,53 @@ export const TILE = {
   ROCK: 3,
   /** Blue-dominant: water. */
   WATER: 4,
+  /**
+   * A deck laid across something else — a bridge. Declared, never guessed: no
+   * colour rule in `classifyTile` produces this id, because a rule about "grey
+   * means bridge" is a rule about every level including the ones nobody looked
+   * at. It arrives only through `legend.json`'s `terrainColours`.
+   */
+  BRIDGE: 5,
 } as const
+
+/**
+ * The terrain vocabulary a `legend.json` may write, name -> id.
+ *
+ * Derived from `TILE` rather than typed out a second time: a hand-written list
+ * would be a third copy of the same table (after `core/level`'s `TERRAIN`) and
+ * the one nobody would remember to update, leaving an id no author could name.
+ *
+ * NAMES, NOT IDS, in the legend for the same reason every other legend field is
+ * a name: a level author writes `avatars`, not a category ordinal, and the
+ * numeric tile ids are this directory's private business.
+ */
+export const TERRAIN_NAMES: Readonly<Record<string, number>> = Object.fromEntries(
+  Object.entries(TILE).map(([name, id]) => [name.toLowerCase(), id]),
+)
+
+/**
+ * The declared terrain claiming this tile's average colour, if any.
+ *
+ * Chebyshev at the legend's own `colourTolerance` — the same test and the same
+ * one number the marker masks use, rather than a second tolerance to keep in
+ * step. Euclidean would let a colour 60 off on a single channel and exact on the
+ * other two count as close, and a declaration that absorbs terrain merely
+ * averaging out near it is the heuristic this exists to replace.
+ *
+ * The first match wins, and it can only ever BE one: `parseLegend` rejects two
+ * declared colours within twice the tolerance of each other, so no tile is ever
+ * inside two claims at once.
+ */
+export function declaredTerrainAt(
+  colour: RGB,
+  declared: readonly TerrainColour[],
+  tolerance: number,
+): number | undefined {
+  for (const entry of declared) {
+    if (colourDistance(colour, entry.colour) <= tolerance) return entry.terrain
+  }
+  return undefined
+}
 
 /**
  * Above this fraction of a tile covered by annotation ink, the handful of
@@ -235,12 +282,32 @@ const ISLAND_DOMINANCE = 2 / 3
  * rocks were blocked, as jungle should be. So it changes what the map looks like
  * and cannot change where anybody may walk, which is the property that makes
  * dissolving anything safe at all. The import asserts it.
+ *
+ * A DECLARED TILE IS INVISIBLE TO ALL OF THIS (ticket 033). Everything above is
+ * an argument about cleaning up a GUESS; a tile whose colour the legend declares
+ * was not guessed at, and the exemption has to run in both directions or it only
+ * half works. A declared tile is never part of an island, so it is never
+ * dissolved — a three-tile footbridge would otherwise be dissolved back into the
+ * river it crosses. And it is never counted as shoreline evidence either, so a
+ * declaration cannot reach out and absorb a tile beside it: one rock boxed in on
+ * three sides by declared bridge would otherwise clear the two-thirds dominance
+ * cut and widen the deck by a tile nobody painted.
+ *
+ * That is the whole of it. A declared tile is not part of any island, casts no
+ * vote, and is not a bridge between islands either — flooding an island THROUGH
+ * a declaration would join two components that only touch across it, which can
+ * push a pair of unrelated specks over the size cap and mix the far side's
+ * shoreline into the near side's vote.
  */
-function despecklePass(terrain: readonly (readonly number[])[]): number[][] {
+function despecklePass(
+  terrain: readonly (readonly number[])[],
+  declared: readonly (readonly boolean[])[],
+): number[][] {
   const h = terrain.length
   const w = terrain[0]?.length ?? 0
   const out = terrain.map((row) => [...row])
   const seen: boolean[] = new Array<boolean>(w * h).fill(false)
+  const isDeclared = (x: number, y: number): boolean => declared[y]?.[x] === true
 
   // How much of the map each id covers, so an island can only ever be absorbed
   // by terrain there is MORE of than the island itself.
@@ -250,14 +317,24 @@ function despecklePass(terrain: readonly (readonly number[])[]): number[][] {
   // is under the size cap, its entire shoreline is that one rock, and it
   // dissolves INTO the speck. The speck wins and the jungle disappears. A test
   // caught exactly that on a 3x3 fixture.
+  //
+  // Declared tiles are left out of the census for the same reason they are left
+  // out of the shoreline: they are not evidence about what the classifier
+  // guessed, and counting them could let an island dissolve into a terrain that
+  // exists nowhere on the map except as somebody's annotation.
   const total = new Map<number, number>()
-  for (const row of terrain) {
-    for (const id of row) total.set(id, (total.get(id) ?? 0) + 1)
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      const id = terrain[y]?.[x]
+      if (id === undefined || isDeclared(x, y)) continue
+      total.set(id, (total.get(id) ?? 0) + 1)
+    }
   }
 
   for (let y0 = 0; y0 < h; y0 += 1) {
     for (let x0 = 0; x0 < w; x0 += 1) {
       if (seen[y0 * w + x0] === true) continue
+      if (isDeclared(x0, y0)) continue
       const id = terrain[y0]?.[x0]
       if (id === undefined) continue
 
@@ -272,9 +349,9 @@ function despecklePass(terrain: readonly (readonly number[])[]): number[][] {
       while (stack.length > 0) {
         const index = stack.pop()
         if (index === undefined) continue
-        island.push(index)
         const x = index % w
         const y = (index - x) / w
+        island.push(index)
         for (const [nx, ny] of [
           [x - 1, y],
           [x + 1, y],
@@ -284,11 +361,14 @@ function despecklePass(terrain: readonly (readonly number[])[]): number[][] {
           if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue
           const neighbour = terrain[ny]?.[nx]
           if (neighbour === undefined) continue
+          const at = ny * w + nx
+          // A declared tile is neither part of this island nor evidence about
+          // it: the flood stops here and no vote is cast.
+          if (isDeclared(nx, ny)) continue
           if (neighbour !== id) {
             shore.set(neighbour, (shore.get(neighbour) ?? 0) + 1)
             continue
           }
-          const at = ny * w + nx
           if (seen[at] === true) continue
           seen[at] = true
           stack.push(at)
@@ -350,10 +430,18 @@ const MAX_DESPECKLE_PASSES = 8
  * `despeckle(despeckle(x))` is `despeckle(x)` — which a single pass was not, and
  * which anything an offline pipeline re-runs on its own output ought to be.
  */
-export function despeckleTerrain(terrain: readonly (readonly number[])[]): number[][] {
+export function despeckleTerrain(
+  terrain: readonly (readonly number[])[],
+  /**
+   * True where `legend.json` declared the tile's colour. Optional and empty by
+   * default, so a level that declares nothing — level 1 — goes through this
+   * unchanged, byte for byte.
+   */
+  declaredMask: readonly (readonly boolean[])[] = [],
+): number[][] {
   let current = terrain.map((row) => [...row])
   for (let pass = 0; pass < MAX_DESPECKLE_PASSES; pass += 1) {
-    const next = despecklePass(current)
+    const next = despecklePass(current, declaredMask)
     if (next.every((row, y) => row.every((id, x) => id === current[y]?.[x]))) return current
     current = next
   }
@@ -384,23 +472,110 @@ export function despeckleTerrain(terrain: readonly (readonly number[])[]): numbe
  * WALKABILITY IS READ, NEVER WRITTEN. This changes what a tile looks like on the
  * strength of what it already is; a pass that could edit the mask could make a
  * mission unwinnable.
+ *
+ * A DECLARED TILE IS EXEMPT (ticket 033), on the same rule as the despeckle
+ * above: this is a heuristic about a GUESS, and a tile the legend named was not
+ * guessed at. An author who declares a colour `grass` and paints it closed in
+ * `walkable.png` has said two things, both of them on purpose — a blocked
+ * clearing — and rewriting it to canopy would overrule the one thing they stated
+ * outright with the one this file inferred.
  */
 export function blockedGrassToCanopy(
   terrain: readonly (readonly number[])[],
   walkable: readonly (readonly boolean[])[],
+  /**
+   * True where `legend.json` declared the tile's colour. Empty by default, so a
+   * level that declares nothing — level 1 — goes through this unchanged.
+   */
+  declaredMask: readonly (readonly boolean[])[] = [],
 ): number[][] {
   return terrain.map((row, y) =>
-    row.map((id, x) => (id === TILE.GRASS && walkable[y]?.[x] === false ? TILE.CANOPY : id)),
+    row.map((id, x) =>
+      id === TILE.GRASS && walkable[y]?.[x] === false && declaredMask[y]?.[x] !== true
+        ? TILE.CANOPY
+        : id,
+    ),
+  )
+}
+
+/**
+ * Which tiles the legend's declared terrain colours claim, and as what.
+ *
+ * Matched on the tile AVERAGE and therefore AFTER the ink mask has done its
+ * work, which is the whole distinction ticket 033 turns on: `markerColours` are
+ * annotation drawn ON terrain and are excluded from the average, while a terrain
+ * colour IS the terrain and is exactly what the average has to measure. Routing
+ * a declared colour through the ink mask would erase the deck from the map it is
+ * there to describe.
+ */
+function declaredGrid(
+  averages: readonly (readonly RGB[])[],
+  declared: readonly TerrainColour[],
+  tolerance: number,
+): (number | undefined)[][] {
+  return averages.map((row) => row.map((c) => declaredTerrainAt(c, declared, tolerance)))
+}
+
+/**
+ * Which tiles the legend claims, as a plain mask.
+ *
+ * Exported because the exemption outlives `buildTerrain`: `blockedGrassToCanopy`
+ * runs later, once the walkability mask is known, and it has to know which tiles
+ * were declared too. Recomputed from the same averages and the same tolerance
+ * rather than smuggled out of `buildTerrain` as a second return value, so there
+ * is one definition of "declared" and no way for the two to drift.
+ */
+export function declaredTerrainMask(
+  averages: readonly (readonly RGB[])[],
+  declared: readonly TerrainColour[] = [],
+  tolerance = 0,
+): boolean[][] {
+  return declaredGrid(averages, declared, tolerance).map((row) =>
+    row.map((id) => id !== undefined),
   )
 }
 
 export function buildTerrain(
   averages: readonly (readonly RGB[])[],
   walkableMinLuminance: number,
+  /** `legend.json`'s declared terrain colours; empty when it declares none. */
+  declared: readonly TerrainColour[] = [],
+  tolerance = 0,
 ): number[][] {
-  return despeckleTerrain(
-    averages.map((row) => row.map((c) => classifyTile(c, walkableMinLuminance))),
+  const claimed = declaredGrid(averages, declared, tolerance)
+  // A declared tile takes its id outright: `classifyTile` is not consulted for
+  // it at all, because the classifier already had an opinion about level 2's
+  // deck — canopy — and it is not the artist's.
+  const classified = averages.map((row, y) =>
+    row.map((c, x) => claimed[y]?.[x] ?? classifyTile(c, walkableMinLuminance)),
   )
+  return despeckleTerrain(
+    classified,
+    claimed.map((row) => row.map((id) => id !== undefined)),
+  )
+}
+
+/**
+ * Whether a DECLARED terrain is walkable, keyed by what it is rather than by how
+ * bright it was painted.
+ *
+ * A short explicit table, and the shortness is the point: "declared" cannot
+ * simply mean "walkable", because canopy is a name the legend accepts and canopy
+ * is the thing that blocks. `rgb(100,100,100)` clears level 2's luminance cut at
+ * luma 100 against 55, so today's deck is passable BY LUCK — a deck painted in a
+ * dark stain would come out solid with the importer cheerfully calling it a
+ * bridge.
+ *
+ * UNKNOWN IS ABSENT ON PURPOSE, not forgotten: it is the id for "no idea what
+ * this is", so declaring it says nothing about passability and the luminance
+ * guess is still the best answer available.
+ */
+const DECLARED_WALKABLE: Readonly<Record<number, boolean>> = {
+  [TILE.GRASS]: true,
+  [TILE.CANOPY]: false,
+  [TILE.ROCK]: true,
+  [TILE.WATER]: true,
+  [TILE.BRIDGE]: true,
 }
 
 /**
@@ -429,17 +604,28 @@ export function buildTerrain(
  * function at all — see `walkableFromMask`, and the branch in `importLevel`
  * that picks between them. "Water is walkable" and "the mask decides" only look
  * like they conflict until you know which one runs.
+ *
+ * A DECLARED TILE IS ANSWERED FROM `DECLARED_WALKABLE`, never from luminance —
+ * see there for why brightness is the wrong question to ask about a bridge. The
+ * authored-mask rule above is untouched by that: this function still is not
+ * called at all when `walkable.png` exists.
  */
 export function buildWalkable(
   averages: readonly (readonly RGB[])[],
   walkableMinLuminance: number,
+  declared: readonly TerrainColour[] = [],
+  tolerance = 0,
 ): boolean[][] {
   return averages.map((row) =>
-    row.map(
-      (c) =>
+    row.map((c) => {
+      const claimed = declaredTerrainAt(c, declared, tolerance)
+      const stated = claimed === undefined ? undefined : DECLARED_WALKABLE[claimed]
+      if (stated !== undefined) return stated
+      return (
         classifyTile(c, walkableMinLuminance) === TILE.WATER ||
-        luminance(c) >= walkableMinLuminance,
-    ),
+        luminance(c) >= walkableMinLuminance
+      )
+    }),
   )
 }
 
