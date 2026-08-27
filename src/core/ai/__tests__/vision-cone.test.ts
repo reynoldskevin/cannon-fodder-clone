@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { rig, OPEN } from './rig'
+import { rig } from './rig'
 import { VISION_HALF_ANGLE_COS, DEFAULT_AWARENESS_RADIUS_TILES, DEFAULT_ENEMY_FACING } from '../tuning'
 
 /**

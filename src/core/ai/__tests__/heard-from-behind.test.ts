@@ -19,10 +19,29 @@ import { rig, OPEN } from './rig'
  * mechanic nobody asked for, and would make the one above unrecoverable.
  */
 
+/**
+ * Every sentry here is pointed SOUTH explicitly (ticket 039).
+ *
+ * These cases were written when the default facing was a fixed south, and the
+ * word "behind" in each of their names means "north of him". Ticket 039 makes
+ * the default an inward direction computed from where a man stands, so which way
+ * "behind" points now depends on which half of the arena he was spawned in —
+ * which is a property of the fixture, not of hearing.
+ *
+ * Saying it out loud is what keeps this suite about the thing it is named after.
+ * The default facing has its own tests in `facing.test.ts` and
+ * `shipped-facing.test.ts`.
+ */
+const facingSouth = (r: ReturnType<typeof rig>, tileX: number, tileY: number) => {
+  const enemy = r.spawn(tileX, tileY, 'enemy')
+  r.ai.face(enemy.id, 0, 1)
+  return enemy
+}
+
 describe('a shot from behind', () => {
   it('is heard, even though the shooter cannot be seen', () => {
     const r = rig(OPEN)
-    const enemy = r.spawn(10, 6, 'enemy') // facing south by default
+    const enemy = facingSouth(r, 10, 6)
     r.spawn(10, 2, 'player', 10_000) // four tiles NORTH: behind him
     r.run(6)
     // The premise: sight alone leaves him idle.
@@ -36,7 +55,7 @@ describe('a shot from behind', () => {
     // The coupling, stated directly. Without it he investigates a noise while
     // looking the other way, and walks past the man who made it.
     const r = rig(OPEN)
-    const enemy = r.spawn(10, 6, 'enemy')
+    const enemy = facingSouth(r, 10, 6)
     r.ai.hear([r.shotAt(10, 2)])
     r.run(20)
     const facing = r.ai.facingOf(enemy.id)!
@@ -50,7 +69,7 @@ describe('a shot from behind', () => {
      * later tick the shooter is inside the arc and gets noticed.
      */
     const r = rig(OPEN)
-    const enemy = r.spawn(10, 8, 'enemy')
+    const enemy = facingSouth(r, 10, 8)
     r.spawn(10, 2, 'player', 10_000)
     r.ai.hear([r.shotAt(10, 2)])
     let noticed = false
@@ -66,7 +85,7 @@ describe('a shot from behind', () => {
     // gunfire", which would pull the whole map toward the first round fired and
     // delete stealth in the other direction.
     const r = rig(OPEN, { alertRadiusTiles: 3 })
-    const enemy = r.spawn(10, 8, 'enemy')
+    const enemy = facingSouth(r, 10, 8)
     r.ai.hear([r.shotAt(10, 1)])
     r.run(20)
     expect(r.ai.stateOf(enemy.id)).toBe('idle')
@@ -79,12 +98,12 @@ describe('a shot from behind', () => {
      * quietly grew a cone too and the shot happened to be in front.
      */
     const behind = rig(OPEN)
-    const a = behind.spawn(10, 6, 'enemy')
+    const a = facingSouth(behind, 10, 6)
     behind.ai.hear([behind.shotAt(10, 2)])
     behind.run(4)
 
     const ahead = rig(OPEN)
-    const b = ahead.spawn(10, 6, 'enemy')
+    const b = facingSouth(ahead, 10, 6)
     ahead.ai.hear([ahead.shotAt(10, 10)])
     ahead.run(4)
 
