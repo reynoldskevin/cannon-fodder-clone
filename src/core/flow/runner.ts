@@ -32,6 +32,7 @@ import {
   applyMissionReport,
   bootHillModel,
   campaignSummary,
+  campaignUnderway,
   createCampaign,
   FRESH_CAMPAIGN_SEED,
   loadCampaign,
@@ -126,6 +127,16 @@ export interface CampaignRunner {
    * the thing ticket 020 measured.
    */
   isCampaignOver(): boolean
+  /**
+   * Has the campaign been played at all — is the player COMING BACK to one?
+   *
+   * BESIDE `isCampaignOver` AND FOR THE SAME REASON. The Menu's one button says
+   * "Start campaign" to a new player and "Continue campaign" to a returning one,
+   * and "the save has a history in it" spelled inside a `div` is a rule in the
+   * one layer that has no tests. `campaignUnderway` owns it; this hands the
+   * answer over.
+   */
+  isCampaignUnderway(): boolean
 
   startCampaign(): AdvanceResult
   /**
@@ -356,6 +367,7 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
     summary: () => campaignSummary(state),
 
     isCampaignOver: () => campaignComplete(state.unlockedLevels, levels.length),
+    isCampaignUnderway: () => campaignUnderway(state),
 
     /**
      * `startCampaign` IS A REPLAY, NOT A WIPE. It moves a screen and touches no

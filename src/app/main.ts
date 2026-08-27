@@ -1127,6 +1127,9 @@ async function boot(): Promise<void> {
           // computed in `core` so the screen only draws them.
           summary: runner.summary(),
           campaignOver: runner.isCampaignOver(),
+          // TICKET 046. Whether the button reads "Start" or "Continue" — asked
+          // of the runner beside the other two, for the same reason.
+          campaignUnderway: runner.isCampaignUnderway(),
           onStart: () => {
             announce(runner.startCampaign(), 'starting the campaign')
             reconcile()
@@ -1147,6 +1150,9 @@ async function boot(): Promise<void> {
               notice: runner.notice(),
               summary: runner.summary(),
               campaignOver: runner.isCampaignOver(),
+              // A wipe puts the player back in front of a campaign with no
+              // history, so the button has to go back to saying "Start".
+              campaignUnderway: runner.isCampaignUnderway(),
             })
             reconcile()
           },

@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import * as campaignApi from '../index'
 import {
   applyMissionReport,
+  campaignSummary,
+  campaignUnderway,
   createCampaign,
   missionReport,
   rankFor,
@@ -590,5 +592,75 @@ describe('reading a mission off the event stream', () => {
   it('an empty stream is a mission that is still running, not a victory', () => {
     // A `MissionComplete` that never arrived must not read as one.
     expect(missionReport([], assignment, 1).outcome).not.toBe('complete')
+  })
+})
+
+/**
+ * Ticket 046 — the Menu's button says "Continue" to a player who is coming back.
+ *
+ * THE WHOLE POINT IS THE FIRST CASE. `createCampaign` recruits eight men on its
+ * way out of the door, so every obvious spelling of "has this campaign been
+ * played" — `recruitsIssued > 0`, `recruits.length > 0` — is TRUE on a campaign
+ * nobody has touched, and would greet a first-time player with "Continue
+ * campaign". The rest are the three independent ways a campaign can be underway;
+ * none of them implies either of the others.
+ */
+describe('a campaign that is underway', () => {
+  const men = (state: CampaignState): readonly string[] =>
+    recruitsAvailable(state).map((man) => man.id)
+
+  it('is not a campaign that has merely been created', () => {
+    expect(campaignUnderway(createCampaign({ seed: 21 }))).toBe(false)
+  })
+
+  it('is one with a level beaten, even with nobody lost', () => {
+    const state = createCampaign({ seed: 22, recruits: 3 })
+    const after = applyMissionReport(state, {
+      levelId: 1,
+      outcome: 'complete',
+      entries: men(state).map((id) => ({ recruitId: id, survived: true, kills: 0 })),
+    })
+    expect(after.unlockedLevels).toBeGreaterThan(1)
+    expect(after.dead.length).toBe(0)
+    expect(campaignUnderway(after)).toBe(true)
+  })
+
+  it('is one with a man in the ground, even with no level beaten', () => {
+    const state = createCampaign({ seed: 23, recruits: 3 })
+    const after = applyMissionReport(state, {
+      levelId: 1,
+      outcome: 'failed',
+      entries: [{ recruitId: men(state)[0]!, survived: false, kills: 0 }],
+    })
+    expect(after.unlockedLevels).toBe(1)
+    expect(campaignUnderway(after)).toBe(true)
+  })
+
+  it('is NOT one where a failed mission killed nobody and lost nobody', () => {
+    /**
+     * THE LIMIT, PINNED RATHER THAN LEFT TO BE DISCOVERED. A failed mission
+     * increments no `missionsSurvived` (see `applyMissionReport`), so a squad
+     * that came home from one having killed nobody leaves a save that is
+     * byte-for-byte a fresh campaign. There is nothing here to find — and if the
+     * campaign ever starts recording the attempt, this is the case that says so.
+     */
+    const state = createCampaign({ seed: 24, recruits: 3 })
+    const after = applyMissionReport(state, {
+      levelId: 1,
+      outcome: 'failed',
+      entries: [{ recruitId: men(state)[0]!, survived: true, kills: 0 }],
+    })
+    expect(campaignSummary(after)).toMatchObject({ levelsCompleted: 0, casualties: 0, kills: 0 })
+    expect(campaignUnderway(after)).toBe(false)
+  })
+
+  it('is one whose men have killed, even before a mission is recorded against them', () => {
+    const state = createCampaign({ seed: 25, recruits: 3 })
+    const after = applyMissionReport(state, {
+      levelId: 1,
+      outcome: 'failed',
+      entries: [{ recruitId: men(state)[0]!, survived: true, kills: 2 }],
+    })
+    expect(campaignUnderway(after)).toBe(true)
   })
 })

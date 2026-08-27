@@ -500,6 +500,28 @@ describe('the campaign is loaded once and saved when it changes', () => {
   })
 })
 
+/**
+ * Ticket 046 — the Menu says "Continue campaign" to a player who is coming back.
+ *
+ * The rule itself is `campaignUnderway`'s and is tested against the campaign in
+ * `core/campaign`. What these two cases pin is that the runner hands the SCREEN
+ * the live answer: a menu built from a stale one greets a returning player with
+ * "Start campaign" over his own save, which is the whole defect.
+ */
+describe('coming back to a campaign', () => {
+  it('a campaign nobody has played is not underway', () => {
+    const { runner } = runnerFor(THREE_LEVELS)
+    expect(runner.isCampaignUnderway()).toBe(false)
+  })
+
+  it('but one with a mission behind it is, and says so as soon as it is over', () => {
+    const { runner } = runnerFor(THREE_LEVELS)
+    const squad = deploy(runner)
+    runner.finishMission(missionEvents([], 'complete'), assignmentFor(squad))
+    expect(runner.isCampaignUnderway()).toBe(true)
+  })
+})
+
 describe('the end of the campaign', () => {
   it('reports itself over once the last level is won', () => {
     const { runner } = runnerFor(ONE_LEVEL)

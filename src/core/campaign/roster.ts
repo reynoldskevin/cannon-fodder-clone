@@ -151,6 +151,39 @@ export function recruit(state: CampaignState, count: number): CampaignState {
 }
 
 /**
+ * Has this campaign been PLAYED, or is it only a campaign that exists?
+ *
+ * WHAT THE MENU NEEDS TO SAY "CONTINUE" RATHER THAN "START" (ticket 046). A
+ * returning player meets a Start button that has always read as a beginning, on
+ * a save that is halfway through — and the same button, on the same screen, is
+ * how a first-time player begins. The only difference between them is whether
+ * the campaign already has a history, which is what this answers.
+ *
+ * NOT `recruitsIssued > 0`, WHICH IS THE OBVIOUS ANSWER AND IS ALWAYS TRUE.
+ * `createCampaign` recruits `DEFAULT_RECRUITS` on its way out of the door, so a
+ * campaign that has never been touched has already issued eight men. A predicate
+ * built on it would greet every first-time player with "Continue campaign".
+ *
+ * THREE MARKS AND NOT ONE, because a campaign can be underway in ways that do
+ * not imply each other: a level beaten (`unlockedLevels`), a man lost (`dead`),
+ * or a survivor carrying a record (`missionsSurvived` or `kills`). A player who
+ * won level one cleanly has no graves; a player who lost his whole squad on a
+ * failed mission has no unlocked level; a man who killed two and then the
+ * mission failed has neither.
+ *
+ * SOME PLAY LEAVES NO MARK AT ALL, and that is a fact about the campaign rather
+ * than a gap here. Nothing is recorded until `applyMissionReport`, and a FAILED
+ * mission increments no `missionsSurvived` — so a player who deployed, killed
+ * nobody, lost nobody and failed has a save that is byte-for-byte a fresh
+ * campaign. There is nothing for this to find, and nothing of his to continue.
+ */
+export function campaignUnderway(state: CampaignState): boolean {
+  if (state.unlockedLevels > 1) return true
+  if (state.dead.length > 0) return true
+  return state.recruits.some((man) => man.missionsSurvived > 0 || man.kills > 0)
+}
+
+/**
  * The living roster, with `rank` and `status` computed on read.
  *
  * THIS IS THE ONLY PLACE A LIVING MAN'S RANK EXISTS. Storing it would let a
