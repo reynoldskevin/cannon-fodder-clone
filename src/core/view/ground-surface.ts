@@ -8,12 +8,17 @@
  * water and the bridge, which have art of their own: the river was jungle floor
  * tinted blue and the deck was jungle floor tinted brown.
  *
- * WHY THIS IS HERE AND NOT IN THE RENDERER. `src/render` has no tests and cannot
- * have any — Vitest runs in `environment: 'node'`, so there is no WebGL context
- * and no DOM. A lookup written there is a lookup nothing checks. The renderer's
- * job is to turn this answer into a geometry group; the answer itself is a
- * decision, and decisions live where they can be asserted — the same argument
- * `terrain-style` makes about colour and height.
+ * WHY THIS IS HERE AND NOT IN THE RENDERER. Not because `src/render` is
+ * untestable — `src/render/__tests__` exists and runs in node in milliseconds,
+ * because geometry, materials and textures are plain objects until a
+ * `WebGLRenderer` uploads them. What genuinely cannot be checked under
+ * `environment: 'node'` is narrower: shaders, uploads, draw calls, and anything
+ * that reads pixels back.
+ *
+ * The reason is that this is a DECISION rather than plumbing. The renderer's job
+ * is to turn this answer into a geometry group; the answer itself belongs in
+ * `core`, the engine-free layer, where the simulation can read it too — the same
+ * argument `terrain-style` makes about colour and height.
  */
 
 import { TERRAIN } from '../level/terrain'

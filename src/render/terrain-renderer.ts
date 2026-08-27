@@ -227,8 +227,9 @@ export class TerrainRenderer {
     // One index buffer, the four lists laid end to end, and one group per list.
     // A group is a (start, count) RANGE into that buffer, so the lists have to be
     // contiguous and the running offset is what makes them so.
-    // Appended one at a time rather than spread: the lists run to tens of
-    // thousands of entries and `push(...list)` passes each as an argument.
+    // Joined with `concat` rather than `push(...list)`: the lists run to tens of
+    // thousands of entries (level 2 is 92x72, so 39,744 top indices) and spread
+    // passes each entry as a separate argument, which is what blows the stack.
     let index: number[] = []
     let start = 0
     for (const surface of GROUND_SURFACES) {

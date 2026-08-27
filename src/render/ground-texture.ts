@@ -51,9 +51,14 @@ const MAX_ANISOTROPY = 8
  * ALL OR NOTHING, AND EVERY FAILURE NAMES WHICH TEXTURE. There is no fallback to
  * the jungle for a missing water or bridge image: a river quietly drawn as
  * jungle floor is exactly the "looks plausible, is wrong" outcome the boot error
- * overlay exists to prevent, and it is the failure ticket 033 spent a week
- * living with. Three textures is three ways to get this wrong, so the message
- * says which one.
+ * overlay exists to prevent, and it is the failure ticket 033 lived with. Three
+ * textures is three ways to get this wrong, so the message says which one.
+ *
+ * The declaration is checked in FULL before a single byte is fetched. A manifest
+ * missing `water` must fail on `water` whatever order `GROUND_SURFACES` happens
+ * to be in, and it must fail without having gone to the network for `jungle`
+ * first. That also keeps the validation half callable with no DOM at all, which
+ * is what lets it be tested.
  *
  * `maxAnisotropy` comes from `renderer.capabilities.getMaxAnisotropy()`; the
  * caller passes it rather than this module reaching for a renderer, so the
@@ -72,10 +77,8 @@ export async function loadGroundTextures(
     )
   }
 
-  const loaded = {} as Record<GroundSurface, THREE.Texture>
-  // Sequential rather than `Promise.all`: three small images off the same origin
-  // are not worth the parallelism, and a serial loop makes the FIRST failure the
-  // one reported instead of whichever lost the race.
+  // Pass one: the whole declaration, before any network work.
+  const declared = {} as Record<GroundSurface, NonNullable<(typeof ground)[GroundSurface]>>
   for (const surface of GROUND_SURFACES) {
     const entry = ground[surface]
     if (!entry) {
@@ -93,7 +96,15 @@ export async function loadGroundTextures(
         `manifest ground.${surface}.tileable was ${String(entry.tileable)}.`,
       )
     }
+    declared[surface] = entry
+  }
 
+  const loaded = {} as Record<GroundSurface, THREE.Texture>
+  // Pass two. Sequential rather than `Promise.all`: three small images off the
+  // same origin are not worth the parallelism, and a serial loop makes the FIRST
+  // failure the one reported instead of whichever lost the race.
+  for (const surface of GROUND_SURFACES) {
+    const entry = declared[surface]
     const url = resolveAssetUrl(entry.file, manifestUrl)
     let texture: THREE.Texture
     try {

@@ -9,10 +9,10 @@
  * which image is underneath.
  *
  * It lives in `core/view` rather than in `src/render` for the reason
- * `ground-surface` gives: `src/render` runs against WebGL and has no tests, so a
- * number computed there is a number nothing checks. Engine-free on purpose —
- * `THREE.Color` is three channels of float and `LinearRgb` says so without the
- * dependency.
+ * `ground-surface` gives: this is a decision, not plumbing, and `core` is the
+ * engine-free layer where the simulation can read it as well as the renderer.
+ * Engine-free on purpose — `THREE.Color` is three channels of float and
+ * `LinearRgb` says so without the dependency.
  */
 
 import type { GroundSurface } from './ground-surface'
@@ -39,8 +39,11 @@ export function linearLuminance(c: LinearRgb): number {
  *       let a=[0,0,0];for(let i=0;i<p.data.length;i+=4)for(let c=0;c<3;c++)a[c]+=lin(p.data[i+c]);
  *       console.log(a.map(v=>(v/(p.width*p.height)).toFixed(4)))"
  *
- * The build's halving is a box downsample over exact 2x2 blocks, so the mean
- * survives it and the source may be measured instead of the emitted file.
+ * Measured off the SOURCE art rather than the emitted half-size file. The build's
+ * halving averages exact 2x2 blocks but does so in GAMMA bytes, so the linear
+ * mean does not survive it as an identity: the source water above emits as
+ * 0.0680, 0.1664, 0.1158, a drift of about 0.3%. Immaterial at the scale these
+ * feed — a gain divided by a luminance — but it is a drift, not a no-op.
  *
  * IT HAS TO BE PER TEXTURE, and that is the failure mode this ticket exists to
  * prevent. Water and the bridge are both over twice the jungle's luminance, so a
@@ -51,7 +54,10 @@ export function linearLuminance(c: LinearRgb): number {
  * the number the whole of that ticket's tint maths was tuned against; re-deriving
  * it slightly differently would shift the brightness of every grass, canopy and
  * rock tile in the game while looking like a no-op. (The one-liner above puts the
- * jungle at 0.0695, 0.0646, 0.0093 — the same to three places.)
+ * jungle at 0.0695, 0.0646, 0.0093 — which matches the committed constants to
+ * three places only if you TRUNCATE. Rounded, 0.0695 and 0.0646 go to 0.070 and
+ * 0.065 where 0.0693 and 0.0642 go to 0.069 and 0.064. The agreement is to about
+ * a third of a percent, not to three decimal places.)
  *
  * Hardcoded rather than measured at runtime: reading them back from the GPU would
  * mean a canvas round trip on boot to recover constants that only change when the

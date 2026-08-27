@@ -137,7 +137,7 @@ describe('a missing ground texture stops the build and says which one', () => {
     /**
      * NOT A SILENT FALLBACK TO THE JUNGLE. A river quietly drawn as jungle floor
      * is precisely the "looks plausible, is wrong" outcome that produced ticket
-     * 033 — the bridge rendered as trees for a week because nothing said
+     * 033 — the bridge rendered as trees because nothing anywhere said
      * otherwise. Three textures means three ways to get this wrong, so the error
      * has to name which.
      */
