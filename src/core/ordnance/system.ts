@@ -107,6 +107,20 @@ export interface InFlightOrdnance {
   readonly x: number
   readonly y: number
   readonly z: number
+  /**
+   * The round's HORIZONTAL heading, as a unit vector on the ground plane
+   * (ticket 055). `(0, 0)` only if a trajectory somehow began and ended on the
+   * same spot, which the launch checks already refuse.
+   *
+   * CONSTANT FOR THE WHOLE FLIGHT, and exact rather than sampled. A `Trajectory`
+   * holds its origin and its target and the horizontal path between them is a
+   * straight line — only the height varies — so this is the direction the round
+   * is travelling at every instant of its life. Deriving it from successive
+   * positions instead would need per-projectile state, be undefined on the first
+   * frame, and be noisier for no gain.
+   */
+  readonly dx: number
+  readonly dz: number
 }
 
 /**
@@ -550,6 +564,13 @@ export function createOrdnanceSystem(
       const p = flying[i]
       if (p === undefined) continue
       const at = positionAt(p.trajectory, p.age)
+      const runX = p.trajectory.targetX - p.trajectory.originX
+      const runZ = p.trajectory.targetZ - p.trajectory.originZ
+      // Normalised here rather than by the caller: a renderer that took the raw
+      // run would get a longer vector for a longer throw, and anything scaling by
+      // it — a rotation is not, but the next reader might be — would be wrong in
+      // a way that only showed up at range.
+      const run = Math.hypot(runX, runZ)
       out.push({
         id: p.id,
         launcherId: p.launcherId,
@@ -557,6 +578,8 @@ export function createOrdnanceSystem(
         x: at.x,
         y: at.y,
         z: at.z,
+        dx: run > 0 ? runX / run : 0,
+        dz: run > 0 ? runZ / run : 0,
       })
     }
     return out

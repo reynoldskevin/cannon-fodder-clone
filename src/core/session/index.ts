@@ -1281,10 +1281,12 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
         x: round.x,
         z: round.z,
         y: groundHeightAt(tile.x, tile.y) + round.y,
-        // No facing. A round has no eight-way art, and a zero vector leaves the
-        // renderer's facing memory alone rather than fighting it.
-        dx: 0,
-        dz: 0,
+        // THE DIRECTION IT IS TRAVELLING (ticket 055). Not an eight-way facing —
+        // a round has one frame — but a continuous heading the renderer turns the
+        // sprite by, for art that is painted pointing somewhere. `inFlight`
+        // reports it normalised and constant for the flight.
+        dx: round.dx,
+        dz: round.dz,
         animationStart: 0,
         // NOT SUBMERGED, whatever it is over. A grenade in the air above a river
         // is not in the river, and the tile lookup that decides submersion for a
