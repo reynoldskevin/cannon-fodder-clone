@@ -32,6 +32,7 @@ import { createSquadSystem } from '../squad'
 import { createGameLoop, EMPTY_EVENTS, FIXED_TIMESTEP } from '../world'
 import { World } from '../world'
 import { worldToTile } from '../view/projection'
+import { submersionFor } from '../view/submersion'
 import { propRenderEntities } from './props'
 import type { AiSystem } from '../ai'
 import type { Armoury } from '../armoury'
@@ -42,7 +43,7 @@ import type { LevelData } from '../level'
 import type { MissionOutcome, ObjectiveSystem } from '../objectives'
 import type { NavGrid } from '../pathing'
 import type { PickupSystem } from '../pickups'
-import type { RenderEntity } from '../render-state/entity'
+import type { SubmergedRenderEntity } from '../render-state/entity'
 import type { SquadOptions, SquadSystem } from '../squad'
 import type { TileCoord } from '../view/projection'
 import type { Entity, SimEvent, SimSystem, Team } from '../world'
@@ -212,7 +213,7 @@ export interface Session {
    */
   events(): readonly SimEvent[]
   /** This frame's drawables: every living unit, the recent dead, and the props. */
-  renderEntities(groundHeightAt: GroundHeightAt): RenderEntity[]
+  renderEntities(groundHeightAt: GroundHeightAt): SubmergedRenderEntity[]
   /** Living player unit ids, in spawn order — who an order is for. */
   selection(): readonly number[]
   /**
@@ -558,8 +559,22 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
   // SESSION: `restart()` builds a new session, so a new mission cannot inherit
   // the last one's empty pouch. See `SessionOptions.ammo` for why the option
   // replaces the default rather than merging over it.
-  const ordnance = createOrdnanceSystem(grid)
   const armoury = createArmoury({ starting: options.ammo ?? DEFAULT_LOADOUT })
+  const ordnance = createOrdnanceSystem(grid, {
+    // THE POUCH IS ONLY EVER CHARGED FOR A ROUND THAT ACTUALLY LEFT, and this
+    // is the one path that can discover after the fact that one did not: a man
+    // who threw on the very tick he waded off the bank is refused inside the
+    // ordnance pass, by which time `command/apply.ts` has already spent the
+    // round. See `refuseUncommitted` for why the two disagree by a tick.
+    //
+    // ONLY THE PLAYER'S SQUAD IS REFUNDED, because only the player's squad
+    // spends: `armoury` is that squad's pouch and nothing else draws from it.
+    // Crediting it for an enemy's refused throw would hand the player rounds he
+    // never carried, which is a stranger bug than the one being fixed.
+    refund: (launcherId, name) => {
+      if (world.get(launcherId)?.team === 'player') armoury.grant(name, 1)
+    },
+  })
   // Loot chests (ticket 017), which is what makes finite ammo a decision rather
   // than an annoyance. It is handed the two things it pays into — the pouch and
   // the mission's judge — and reads the level for where the chests are; it never
@@ -968,13 +983,46 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
   }
 
   /**
+   * How deep the man at this world position is standing in the river, as the
+   * fraction `core/view/submersion.ts` decided (ticket 041).
+   *
+   * IT MUST AGREE, TILE FOR TILE, WITH THE FIRE GATE, and that is the only
+   * subtle thing here. `combat/system.ts` reads the shooter's tile as
+   * `floor(worldToTileAxis(w, n))`, i.e. `floor(w + n / 2)` — CORNER-indexed,
+   * the tile that geometrically contains the point. `tileOf` is `worldToTile`,
+   * which is `round(w + (n - 1) / 2)`; and `round(x)` is `floor(x + 0.5)`, so
+   * the two expressions are the SAME tile for every position on the map. That
+   * identity is why this can reuse `tileOf` instead of transcribing the `+ n / 2`
+   * a fourth time.
+   *
+   * It has to be checked rather than assumed because the OTHER conversion in
+   * this codebase — the fractional `w + (n - 1) / 2`, floored — is half a tile
+   * away, and at a tile CENTRE all three agree. Only a man mid-stride, which is
+   * every man who is walking, can tell them apart; a mismatch would show up as
+   * a soldier who is drawn dry on the frame the rifle refuses to fire, which is
+   * exactly the contradiction this ticket exists to remove.
+   *
+   * The clamp `worldToTile` carries is the difference that remains, and it is
+   * harmless: a unit is always on the map, and the same clamped tile is already
+   * what feeds `groundHeightAt` on the line below.
+   */
+  function submersionAt(tile: TileCoord): number {
+    // A row or column the level does not have reads as `undefined` and is dry —
+    // the neutral answer, matching `submersionFor`'s own answer for a tile id
+    // this build cannot name, and matching the fire gate, which lets a shooter
+    // it cannot place fire.
+    const id = level.terrain[tile.y]?.[tile.x]
+    return id === undefined ? 0 : submersionFor(id)
+  }
+
+  /**
    * This frame's drawables. A PURE READ: it consults the world, the corpse list
    * and the tracks, and writes to none of them. A headless replay and a rendered
    * one must produce the same mission, and the only way to guarantee that is for
    * looking to change nothing.
    */
-  function renderEntities(groundHeightAt: GroundHeightAt): RenderEntity[] {
-    const out: RenderEntity[] = []
+  function renderEntities(groundHeightAt: GroundHeightAt): SubmergedRenderEntity[] {
+    const out: SubmergedRenderEntity[] = []
 
     const entities = world.entities
     for (let i = 0; i < entities.length; i += 1) {
@@ -1026,6 +1074,11 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
         // Only corpses carry a real start, because `die` is one-shot and has to
         // begin at the death that caused it.
         animationStart: 0,
+        // Read fresh every frame from the tile he is on RIGHT NOW, never
+        // latched on entering the water. A flag set at the bank and cleared
+        // "when he arrives" would leave the squad waist-deep in the jungle for
+        // the rest of the mission the first time a crossing was interrupted.
+        submersion: submersionAt(tile),
         tint: entity.team === 'enemy' ? ENEMY_TINT : undefined,
       })
     }
@@ -1051,6 +1104,11 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
         // than `MAX_STEPS_PER_FRAME` steps; past that the loop discards the
         // backlog and sim time falls behind wall time by whatever it dropped.
         animationStart: corpse.diedAtTick * FIXED_TIMESTEP,
+        // A man shot in the river sinks in it. The same lookup as the living,
+        // because the alternative — a body that pops up onto the surface the
+        // instant it dies — is the one thing that would draw the eye to the
+        // fact that this is a sprite offset and not water.
+        submersion: submersionAt(tile),
         // A body stays the colour the man was, so it is still recognisably one
         // of theirs or one of ours. The team comes off the `UnitDied` event,
         // which is the last thing that knew it — the entity is already gone.

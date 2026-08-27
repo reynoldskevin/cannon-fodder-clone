@@ -144,6 +144,8 @@ const MAX_QUAD_ELEVATION = (89 * Math.PI) / 180
 /** Per-instance data batching carries through for us, on top of what it keys on. */
 interface SpriteDrawItem extends DrawItem {
   readonly y: number
+  /** See `RenderEntity.submersion`. A fraction of this sprite's own height. */
+  readonly submersion: number
   readonly sprite: SpriteFrame
   readonly tint: number | undefined
 }
@@ -342,6 +344,11 @@ export class EntityRenderer {
         x: entity.x,
         z: entity.z,
         y: entity.y,
+        // Honoured for scenery too, even though everything that reaches this
+        // path answers 0 today: a batch built here is written once and never
+        // rebuilt, so a producer that later says otherwise would be silently
+        // ignored rather than visibly wrong.
+        submersion: entity.submersion ?? 0,
         sprite,
         tint: entity.tint,
       })
@@ -428,6 +435,13 @@ export class EntityRenderer {
         x: at.x,
         z: at.z,
         y: entity.y,
+        // From the CURRENT sim state, not interpolated between the two.
+        // `interpolateEntities` smooths position because a sprite sliding
+        // between ticks is what 60fps rendering is for; submersion is a step
+        // function of the tile underfoot, and blending it would draw a man
+        // half-sunk for the frames either side of the waterline — a
+        // three-frame ramp nobody asked for on a value that has two states.
+        submersion: entity.submersion ?? 0,
         sprite,
         tint: entity.tint,
       })
@@ -467,6 +481,28 @@ export class EntityRenderer {
     items.forEach((item, index) => {
       const sprite = item.sprite
 
+      // THE QUAD'S WORLD HEIGHT, which is the number `core` is not allowed to
+      // know and this is therefore the only place that can apply a submersion
+      // (ticket 041). It is the sprite's authored height TIMES the vertical
+      // pre-stretch — see the header — because the stretch is what makes the
+      // quad project at its authored on-screen size. Sinking by a fraction of
+      // the unstretched height would hide `cos(elevation)` of what was asked
+      // for, i.e. 40% of the man rather than 70%, and would change with the
+      // `?elev=` knob.
+      const quadHeight = sprite.height * this.verticalStretch
+
+      // HOW A MAN ENDS UP IN THE RIVER RATHER THAN ON IT. There is no shader
+      // and no clipping: the whole quad is simply lowered, and the depth buffer
+      // does the hiding. The material already runs `depthTest` and `depthWrite`
+      // (see `ALPHA_TEST`, which is what makes writing depth from a blended
+      // sprite safe), and the terrain and its water surface are opaque, so
+      // whatever is pushed below the surface SHOULD fail the depth test and not
+      // appear. Reasoned from the material settings and the geometry, not
+      // watched — nobody has rendered this build, and if the sink turns out to
+      // read wrong on screen this is the sentence that was doing the guessing. A dry sprite has `submersion === 0` and this term is
+      // exactly zero, so it is drawn precisely where it always was.
+      const sink = item.submersion * quadHeight
+
       // The quad centre, offset from the ground anchor: anchor + offset + rect,
       // exactly as the manifest defines them — never the rect's own centre, or
       // `die` slides. The vertical offset is stretched by the same factor as the
@@ -474,10 +510,10 @@ export class EntityRenderer {
       // still projects where the manifest says it should.
       this.scratchPosition.set(
         item.x + sprite.centreX,
-        item.y + GROUND_LIFT + sprite.centreY * this.verticalStretch,
+        item.y + GROUND_LIFT + sprite.centreY * this.verticalStretch - sink,
         item.z,
       )
-      this.scratchScale.set(sprite.width, sprite.height * this.verticalStretch, 1)
+      this.scratchScale.set(sprite.width, quadHeight, 1)
       this.scratchMatrix.compose(this.scratchPosition, this.quadRotation, this.scratchScale)
       mesh.setMatrixAt(index, this.scratchMatrix)
 

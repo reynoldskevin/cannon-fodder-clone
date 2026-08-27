@@ -75,6 +75,13 @@ export function canopyRenderEntities(
       dx: 0,
       dz: 0,
       animationStart: 0,
+      // Canopy trees grow on canopy tiles, which are never water, so this is
+      // already 0 by the terrain rather than by decree. Stated anyway — and the
+      // field is OPTIONAL, so nothing forces it — because a future waterside
+      // variant should have to change a value somebody wrote down rather than
+      // inherit a default nobody chose. An earlier draft of this comment claimed
+      // the field was required; it is not.
+      submersion: 0,
       tint: undefined,
     }
   })
