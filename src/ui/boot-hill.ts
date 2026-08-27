@@ -36,6 +36,7 @@
 import { createChrome } from './screen-chrome'
 import { DISPLAY_FONT, loadDisplayFont } from './display-font'
 import hillUrl from '../../assets/source/hill-path-background.webp?url'
+import crossUrl from '../../assets/source/sprites/cross.png?url'
 import type { BootHillModel, Grave, Promotion, Trooper } from '../core/campaign'
 
 export interface BootHillOptions {
@@ -98,6 +99,17 @@ const HILL_IMAGE = `url(${hillUrl})`
  * rather than a black rectangle with white crosses floating on it.
  */
 const HILL_FALLBACK = 'linear-gradient(#39414d 0%, #39414d 35%, #2c3a24 35%, #1d2a17 100%)'
+
+/**
+ * How this mission's stones are told from every older one, on the hillside.
+ *
+ * BOTH CARRY THE SAME CAST SHADOW, so the difference between them is the halo
+ * and the weathering and nothing else — a stone that also sat differently on the
+ * ground would read as two sprites rather than as one sprite twice.
+ */
+const DROP = 'drop-shadow(0 2px 3px rgba(0,0,0,0.55))'
+const FRESH_GLOW = `drop-shadow(0 0 7px ${FRESH}) ${DROP}`
+const WEATHERED = `saturate(0.75) brightness(0.86) ${DROP}`
 
 const LIST_STYLE =
   'margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0.15rem'
@@ -439,18 +451,34 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
   function crossAt(index: number): HTMLElement {
     const existing = crosses[index]
     if (existing !== undefined) return existing
-    const cross = document.createElement('span')
-    cross.textContent = '✝'
+    // THE PAINTED MARKER (ticket 062), where this used to be a `✝` glyph in
+    // whatever face the system had. A dagger set in a text run is at the mercy of
+    // the font stack — it is a different shape on every machine, and on a few it
+    // is the missing-glyph box, which is the one thing a memorial must not be.
+    const cross = document.createElement('img')
+    cross.src = crossUrl
+    // Decorative, and DELIBERATELY SO: the empty `alt` is what keeps a reader
+    // from announcing twelve unlabelled images over a HEROES column that already
+    // names every one of these men. See the note this function used to carry
+    // about `aria-hidden`; an `img` says the same thing with `alt=""`.
+    cross.alt = ''
     cross.setAttribute('aria-hidden', 'true')
     const { left, top } = plot(index)
     cross.style.cssText = [
       'position:absolute',
       `left:${left.toFixed(2)}%`,
       `top:${top.toFixed(2)}%`,
-      'transform:translate(-50%, -100%)',
-      'font-size:clamp(1rem, 2.4vw, 1.75rem)',
-      'line-height:1',
-      'text-shadow:0 2px 3px rgba(0,0,0,0.55)',
+      /**
+       * -93.4%, NOT -100%. The plot point is where the man is buried, so the
+       * BASE OF THE MOUND has to land on it — and the sprite carries 68px of
+       * empty pixels below that mound in a 1024px square, 6.6% of its height. At
+       * -100% every grave on the hill would float that far above where it was
+       * plotted, which on a slope is the difference between standing on the
+       * ground and hovering over it.
+       */
+      'transform:translate(-50%, -93.4%)',
+      'height:clamp(1.75rem, 3.6vw, 3rem)',
+      'width:auto',
       'pointer-events:none',
     ].join(';')
     crosses[index] = cross
@@ -547,7 +575,12 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
       const crossState = fresh ? 'fresh' : 'old'
       if (cross.dataset.state !== crossState) {
         cross.dataset.state = crossState
-        cross.style.color = fresh ? FRESH : '#e8e4d8'
+        // A FILTER, BECAUSE `color` DOES NOTHING TO A PICTURE. The glyph took
+        // the warm tint directly; the sprite keeps its own paint and is picked
+        // out by a halo in the same colour instead — which is also the stronger
+        // signal of the two, being a change in shape as well as in hue. Older
+        // stones are pulled down and desaturated a little, as weathered wood.
+        cross.style.filter = fresh ? FRESH_GLOW : WEATHERED
       }
     }
     trim(graveRows, count)
