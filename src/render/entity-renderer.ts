@@ -172,6 +172,26 @@ const DIE_CLIP = 'die'
 const SPRITE_RENDER_ORDER = 1
 const CORPSE_RENDER_ORDER = 0.5
 
+/**
+ * The per-instance UV rect, injected into the stock shader.
+ *
+ * ONE FUNCTION SHARED BY BOTH MATERIALS, on purpose: Three keys its program
+ * cache on the identity of `onBeforeCompile`, so two materials given the same
+ * function compile to ONE program. Two equivalent arrow functions would compile
+ * to two.
+ */
+function injectInstanceUvs(shader: { vertexShader: string }): void {
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nattribute vec4 aUvRect;')
+    // `begin_vertex` runs after `uv_vertex` has already written vMapUv from the
+    // geometry's own UVs, so this overwrites it with the instance's rect.
+    // Injecting earlier would be silently undone.
+    .replace(
+      '#include <begin_vertex>',
+      '#include <begin_vertex>\n\tvMapUv = aUvRect.xy + uv * aUvRect.zw;',
+    )
+}
+
 /** The animation half of a batch key, which is `unit|animation|direction|frame`. */
 function animationOf(key: string): string {
   return key.split('|')[1] ?? ''
@@ -225,6 +245,21 @@ export class EntityRenderer {
 
   private readonly visual: UnitVisual
   private readonly material: THREE.MeshBasicMaterial
+  /**
+   * The same material with `depthWrite` off, for corpse batches (ticket 056).
+   *
+   * A SECOND MATERIAL IS A REAL COST and this file argues hard against having
+   * them — one per animation frame per direction would be ~96 shader-program
+   * lookups for the soldier alone. Two is not that: both compile the same program
+   * from the same source with the same defines, so what is paid is one more state
+   * change per frame, between the corpse batches and the living ones, which the
+   * render order already groups together.
+   *
+   * It cannot be a per-batch tweak of the shared one — materials are shared by
+   * reference, so setting `depthWrite: false` on it would stop EVERY sprite in
+   * the game writing depth.
+   */
+  private readonly corpseMaterial: THREE.MeshBasicMaterial
   private readonly geometry: THREE.PlaneGeometry
   private readonly meshes = new Map<string, BatchMesh>()
 
@@ -309,17 +344,20 @@ export class EntityRenderer {
       // terrain they stand on or they float in front of it at distance.
       fog: true,
     })
-    this.material.onBeforeCompile = (shader) => {
-      shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute vec4 aUvRect;')
-        // `begin_vertex` runs after `uv_vertex` has already written vMapUv from
-        // the geometry's own UVs, so this overwrites it with the instance's
-        // rect. Injecting earlier would be silently undone.
-        .replace(
-          '#include <begin_vertex>',
-          '#include <begin_vertex>\n\tvMapUv = aUvRect.xy + uv * aUvRect.zw;',
-        )
-    }
+    this.material.onBeforeCompile = injectInstanceUvs
+
+    /**
+     * THE CORPSE MATERIAL: identical in every respect but `depthWrite`.
+     *
+     * Cloned rather than built from a second literal, so the two cannot drift — a
+     * corpse fogged, tinted or alpha-tested differently from the man it used to be
+     * is a bug nobody would think to look for. Both are given the SAME
+     * `onBeforeCompile` function, which is what lets Three compile them to one
+     * program: its cache keys on that function's identity.
+     */
+    this.corpseMaterial = this.material.clone()
+    this.corpseMaterial.depthWrite = false
+    this.corpseMaterial.onBeforeCompile = injectInstanceUvs
 
     this.setElevation(elevationRad)
   }
@@ -553,6 +591,18 @@ export class EntityRenderer {
   }
 
   /**
+   * Which material a batch is drawn with (ticket 056).
+   *
+   * The dead get the one that writes no depth, so a body can never hide anything
+   * drawn after it. Everything else gets the shared one. Keyed on the same
+   * `animationOf` the render order uses, so the two decisions about corpses
+   * cannot disagree about which batches are corpses.
+   */
+  private materialFor(key: string): THREE.MeshBasicMaterial {
+    return animationOf(key) === DIE_CLIP ? this.corpseMaterial : this.material
+  }
+
+  /**
    * How far to turn this sprite in the screen plane, in radians. Zero for
    * everything whose art has no heading — which is everything but the rocket.
    *
@@ -699,7 +749,7 @@ export class EntityRenderer {
     const geometry = this.geometry.clone()
     geometry.setAttribute('aUvRect', uv)
 
-    const mesh = new THREE.InstancedMesh(geometry, this.material, capacity)
+    const mesh = new THREE.InstancedMesh(geometry, this.materialFor(key), capacity)
     mesh.name = `entities:${key}`
     mesh.count = 0
     // The geometry is a unit quad at the origin; every real position lives in
@@ -763,6 +813,7 @@ export class EntityRenderer {
     this.facings.clear()
     this.geometry.dispose()
     this.material.dispose()
+    this.corpseMaterial.dispose()
     // The unit visual — and so the sprite atlas texture — is NOT disposed here:
     // it is loaded once at boot and owned by the caller, which may build a
     // second level from it (ticket 020). Disposing it with the renderer would
