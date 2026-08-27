@@ -52,6 +52,24 @@ export interface BriefingScreen {
 const RULE = MUTED
 
 /**
+ * The card's three type sizes (ticket 058: every one of them 30% up on what 053
+ * shipped, which read small against the mockup on a full-screen window).
+ *
+ * CLAMPS, NOT NUMBERS, AND SCALED AT ALL THREE STOPS. Raising only the preferred
+ * `vw` term would leave a phone reading the old minimum and a large monitor the
+ * old maximum — i.e. the two windows where the card is least comfortable already,
+ * unchanged. Each bound is the old one times 1.3.
+ *
+ * `BRIEFING` AND `GO FOR IT` SHARE ONE, and share it as a constant rather than as
+ * two matching strings: the mockup sets the box's first and last lines at the
+ * same weight, and the pair drifting apart is the sort of half-millimetre nobody
+ * files but everybody sees.
+ */
+const TITLE_SIZE = 'clamp(2.08rem, 6.5vw, 3.58rem)'
+const CARD_TITLE_SIZE = 'clamp(1.76rem, 5.2vw, 2.73rem)'
+const BODY_SIZE = 'clamp(1.24rem, 3.12vw, 1.76rem)'
+
+/**
  * The card's sentence, minus its list of objectives.
  *
  * A PURE STRING FUNCTION FOR THE REASON `graveLine` IS ONE: the wording is the
@@ -90,7 +108,7 @@ function bodyLine(text: string, colour: string): HTMLElement {
     'margin:0',
     `color:${colour}`,
     `font-family:${DISPLAY_FONT}`,
-    'font-size:clamp(0.95rem, 2.4vw, 1.35rem)',
+    `font-size:${BODY_SIZE}`,
     'letter-spacing:0.08em',
   ].join(';')
   return row
@@ -161,7 +179,7 @@ export function createBriefing(mount: HTMLElement, options: BriefingOptions): Br
     'align-self:center',
     `color:${TEXT}`,
     `font-family:${DISPLAY_FONT}`,
-    'font-size:clamp(1.6rem, 5vw, 2.75rem)',
+    `font-size:${TITLE_SIZE}`,
     'letter-spacing:0.06em',
     'line-height:1.1',
     `border-bottom:2px solid ${TEXT}`,
@@ -186,7 +204,7 @@ export function createBriefing(mount: HTMLElement, options: BriefingOptions): Br
     'margin:0',
     `color:${TEXT}`,
     `font-family:${DISPLAY_FONT}`,
-    'font-size:clamp(1.35rem, 4vw, 2.1rem)',
+    `font-size:${CARD_TITLE_SIZE}`,
     'letter-spacing:0.06em',
   ].join(';')
 
@@ -231,7 +249,7 @@ export function createBriefing(mount: HTMLElement, options: BriefingOptions): Br
   deploy.style.background = 'transparent'
   deploy.style.color = TEXT
   deploy.style.fontFamily = DISPLAY_FONT
-  deploy.style.fontSize = 'clamp(1.35rem, 4vw, 2.1rem)'
+  deploy.style.fontSize = CARD_TITLE_SIZE
   deploy.style.letterSpacing = '0.06em'
   deploy.style.lineHeight = '1.1'
 
