@@ -13,3 +13,15 @@ declare module '*.png?url' {
   const src: string
   export default src
 }
+
+/**
+ * The same bargain for artwork that ships as WebP. A full-screen painting is an
+ * order of magnitude smaller in it than in PNG — Boot Hill's hillside is 144 KB
+ * where the PNG cut of the same picture was 1.2 MB — and none of this art needs
+ * a lossless copy. Declared separately rather than as one glob over every image
+ * extension, so what this project will actually load stays enumerated.
+ */
+declare module '*.webp?url' {
+  const src: string
+  export default src
+}

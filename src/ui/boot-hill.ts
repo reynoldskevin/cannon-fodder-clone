@@ -7,8 +7,9 @@
  * rest — a field of white crosses, one per man who has died.
  *
  * THE HILL IS A SECOND VIEW OF THE SAME LIST, NEVER THE ONLY ONE. Every man on
- * it is also a row in the HEROES column with his rank, where he fell and what it
- * cost the other side; the crosses are the picture and the column is the record.
+ * it is also a bar in the HEROES column carrying his name and his tally, with
+ * his rank and the level he fell on on the row's `title`; the crosses are the
+ * picture and the column is the record.
  * A memorial that said "twelve" only by drawing twelve marks would be
  * unreadable to a screen reader and unreadable to anybody counting.
  *
@@ -34,7 +35,7 @@
 
 import { createChrome } from './screen-chrome'
 import { DISPLAY_FONT, loadDisplayFont } from './display-font'
-import hillUrl from '../../assets/source/sprites/boot-hill.png?url'
+import hillUrl from '../../assets/source/hill-path-background.webp?url'
 import type { BootHillModel, Grave, Promotion, Trooper } from '../core/campaign'
 
 export interface BootHillOptions {
@@ -76,6 +77,10 @@ const HEADING = '#f2c14e'
  * THE PAINTED ONE AT LAST. Ticket 054 shipped a CSS sky and two radial mounds
  * because no such asset existed; this is that placeholder retired.
  *
+ * WEBP, NOT THE PNG CUT IT ARRIVED AS (ticket 058). Same picture, 144 KB rather
+ * than 1.2 MB — which on a screen the player meets between missions is most of
+ * the reason it appears at all rather than a frame later.
+ *
  * `cover` AND BOTTOM-ANCHORED, which is the whole reason it is not `center`: the
  * art is a horizon in its top third and a foreground of grass and poppies along
  * its bottom edge, and a window shorter than the image crops from wherever it is
@@ -94,23 +99,31 @@ const HILL_IMAGE = `url(${hillUrl})`
  */
 const HILL_FALLBACK = 'linear-gradient(#39414d 0%, #39414d 35%, #2c3a24 35%, #1d2a17 100%)'
 
-/**
- * The two stone markers: this mission's dead, and every mission before it.
- *
- * PRINTED CHARACTERS, NOT STYLING. Distinguishing the men who just died from
- * four levels of older stones is this screen's whole job, and colour plus font
- * weight would leave a colour-blind player weighing one line against another on
- * boldness alone — on a list that is already all one typeface. A cross the
- * reader can see is the signal; the colour is the reinforcement.
- *
- * BOTH ROWS CARRY ONE, so every line starts at the same column. Marking only
- * the fresh stones would indent them relative to the rest and make the hill
- * ragged exactly where it is meant to be legible.
- */
-const MARK_FRESH = '✚'
-const MARK_OLD = '·'
+const LIST_STYLE =
+  'margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0.15rem'
 
-const LIST_STYLE = 'margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0.2rem'
+/**
+ * One roster row, as the original draws it: a BAR, not a bullet (ticket 058).
+ *
+ * NAME LEFT, TALLY RIGHT, AND NOTHING ELSE ON THE LINE. The mockup's column is a
+ * stack of plaques four characters wide at the name and two at the number; the
+ * rank and the level a man fell on used to ride along in front of the name and
+ * wrapped every row on a narrow window, which is what turned a scoreboard back
+ * into prose. Both still reach anyone who wants them, through the row's `title`
+ * — see `graveLine`.
+ */
+const ROW_STYLE = [
+  'display:flex',
+  'align-items:center',
+  'justify-content:space-between',
+  'gap:0.5rem',
+  'padding:0.1rem 0.4rem',
+  'background:rgba(58,62,44,0.85)',
+  'border:1px solid rgba(242,193,78,0.22)',
+  `font-family:${DISPLAY_FONT}`,
+  'font-size:clamp(0.85rem, 2vw, 1.05rem)',
+  'letter-spacing:0.06em',
+].join(';')
 
 /** Write `text` into `node` only when it has actually changed. See `hud.ts`. */
 function setText(node: HTMLElement, text: string): void {
@@ -282,9 +295,17 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
   }
 
   const heroesHeading = sectionHeading('HEROES')
-  /** The count, and the only line an empty hill shows. */
-  const summary = document.createElement('p')
-  summary.style.cssText = `margin:0 0 0.2rem;color:${MUTED};font-size:0.8rem`
+  /**
+   * The only line an empty hill shows.
+   *
+   * NO COUNT ANYWHERE (ticket 058). "5 men lie here" was a number the column was
+   * already holding five rows of, and a second place to keep it is a second place
+   * to get it wrong. This says nothing at all once the first man has fallen; it
+   * exists so a first-mission player is not shown a gold heading over a void.
+   */
+  const gravesEmpty = document.createElement('p')
+  gravesEmpty.textContent = 'No one has fallen yet.'
+  gravesEmpty.style.cssText = `margin:0;font-size:0.8rem;color:${MUTED}`
 
   const graves = document.createElement('ul')
   graves.style.cssText = LIST_STYLE
@@ -310,7 +331,7 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
 
   roster.append(
     heroesHeading,
-    summary,
+    gravesEmpty,
     graves,
     squadHeading,
     squad,
@@ -406,7 +427,7 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
     const existing = cache[index]
     if (existing !== undefined) return existing
     const row = document.createElement('li')
-    row.style.cssText = 'display:flex;justify-content:space-between;gap:0.5rem;font-size:0.8rem'
+    row.style.cssText = ROW_STYLE
     cache[index] = row
     list.append(row)
     return row
@@ -476,12 +497,8 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
     setText(score, `${String(model.enemyKilled)} : ${String(model.casualties)}`)
 
     const count = model.graves.length
-    setText(
-      summary,
-      count === 0
-        ? 'No one has fallen yet.'
-        : `${String(count)} ${count === 1 ? 'man' : 'men'} lie here.`,
-    )
+    const noGraves = count === 0 ? 'block' : 'none'
+    if (gravesEmpty.style.display !== noGraves) gravesEmpty.style.display = noGraves
 
     // `fallenThisMission` is a subset of `graves` by position at the END of the
     // list — the dead list is append-only — so the fresh stones are the last
@@ -495,24 +512,23 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
       const row = rowAt(graveRows, graves, i)
       if (row.style.display !== 'flex') row.style.display = 'flex'
       const fresh = i >= freshFrom
-      // A PRINTED MARKER FIRST, colour second: "which of these are new" must
-      // survive a colour-blind player and a washed-out screen, the same bargain
-      // the HUD's roster pips make. The marker is text rather than a `data-`
-      // attribute or a font weight, because only text is something a reader can
-      // actually see — see `MARK_FRESH`.
-      setRow(
-        row,
-        `${fresh ? MARK_FRESH : MARK_OLD} ${grave.rankAtDeath} ${grave.name}`,
-        String(grave.kills),
-      )
-      // The whole line still reads as prose to anything that asks for it, which
-      // is what the two-column layout costs and what this buys back.
+      setRow(row, grave.name.toUpperCase(), String(grave.kills))
+      // HIS RANK AND WHERE HE FELL STILL REACH THE READER, off the face of the
+      // bar. The mockup's plaque has room for a name and a number and nothing
+      // else, but the rest of the record is not worth losing — it is the same
+      // prose line this screen used to print, moved to where it costs no width.
       row.title = graveLine(grave)
       const state = fresh ? 'fresh' : 'old'
       if (row.dataset.state !== state) {
         row.dataset.state = state
+        // WITH THE PRINTED MARKERS GONE (ticket 058) THIS IS COLOUR AND WEIGHT
+        // ALONE, which is a real loss and a deliberate one: the bars carry no
+        // room for a glyph in front of the name. The distinction is a nicety —
+        // every man here is dead either way — and the border is a second,
+        // non-chromatic channel for a player who cannot see the warm tint.
         row.style.color = fresh ? FRESH : MUTED
         row.style.fontWeight = fresh ? '600' : '400'
+        row.style.borderColor = fresh ? 'rgba(255,143,107,0.7)' : 'rgba(242,193,78,0.22)'
       }
 
       const cross = crossAt(i)
@@ -535,7 +551,8 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
       const row = rowAt(squadRows, squad, i)
       if (row.style.display !== 'flex') row.style.display = 'flex'
       if (row.style.color !== TEXT) row.style.color = TEXT
-      setRow(row, `${man.rank} ${man.name}`, String(man.kills))
+      setRow(row, man.name.toUpperCase(), String(man.kills))
+      row.title = `${man.rank} ${man.name}`
     }
     trim(squadRows, standing)
     // See `squadEmpty`: an empty roster is the end of the campaign's manpower,
