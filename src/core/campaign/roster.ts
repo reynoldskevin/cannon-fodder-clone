@@ -135,7 +135,7 @@ export function recruit(state: CampaignState, count: number): CampaignState {
 
   // Names and ids both key off `recruitsIssued`, which only ever rises, so no
   // name or id is ever handed out twice in the life of a campaign.
-  const names = issueNames(state.seed, state.recruitsIssued, shortfall)
+  const names = issueNames(state.recruitsIssued, shortfall)
   const joined: RecruitRecord[] = names.map((name, offset) => ({
     id: recruitId(state.recruitsIssued + offset),
     name,

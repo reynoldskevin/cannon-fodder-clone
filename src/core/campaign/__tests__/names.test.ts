@@ -91,23 +91,69 @@ describe('the pool honours what names.ts promises about it', () => {
   })
 })
 
-describe('issuing names off the bigger pool', () => {
-  it('gives distinct names well past exhaustion', () => {
-    // The property `names.ts` exists for, re-checked at the new size: past the end
-    // the generation suffix takes over, and it must not repeat either.
-    const names = issueNames(11, 0, NAME_POOL.length * 2 + 5)
+describe('issuing names walks the pool in order', () => {
+  it('the first men are the first rows, and Jools leads', () => {
+    /**
+     * THE TICKET. `issueNames` used to SHUFFLE the pool from the campaign's seed,
+     * so a fresh campaign opened on whichever names that seed happened to deal.
+     * The roll has an order of its own — Jools and Jops are the first two men —
+     * and a fresh campaign now always starts there.
+     */
+    expect(issueNames(0, 5)).toEqual(['JOOLS', 'JOPS', 'STOO', 'RJ', 'UBIK'])
+  })
+
+  it('and the whole issue is the pool read straight through', () => {
+    // Not just the head. A generator that special-cased the first two and dealt
+    // the rest would pass the case above.
+    expect(issueNames(0, 40)).toEqual(NAME_POOL.slice(0, 40))
+  })
+
+  it('picking up wherever the campaign had got to', () => {
+    // Issued by an ever-rising counter, which is what makes recruitment
+    // replayable from a save holding only that number.
+    expect(issueNames(20, 3)).toEqual(NAME_POOL.slice(20, 23))
+  })
+})
+
+describe('and the seed has nothing to do with it any more', () => {
+  it('two campaigns get the same men, which is now the POINT', () => {
+    /**
+     * THIS INVERTS A RULE THIS FILE USED TO STATE. The case here read "two seeds
+     * give two different ones", justified as "otherwise seeded is
+     * indistinguishable from hardcoded" — a fair rule for a pool of thirty
+     * invented surnames, where a fixed order would have made every campaign open
+     * on Baker and Nowak for no reason anyone chose.
+     *
+     * It is the wrong rule for a roll that HAS an order. Ticket 045 replaced the
+     * pool with the shipped one; 052 stopped shuffling it. Hardcoded is exactly
+     * what is wanted, so the case is rewritten rather than deleted — a suite that
+     * simply dropped it would leave the reversal unrecorded.
+     */
+    expect(issueNames(0, 12)).toEqual(issueNames(0, 12))
+  })
+
+  it('and reloading a save still returns the same squad', () => {
+    // The promise the seed used to carry, which survives it: naming is a pure
+    // function of the counter, so a save holding only that number replays it.
+    expect(issueNames(6, 8)).toEqual(issueNames(6, 8))
+  })
+})
+
+describe('and no name is ever reissued', () => {
+  it('not even well past the end of the pool', () => {
+    /**
+     * THE PROPERTY THE MODULE EXISTS FOR, and it never depended on the shuffle —
+     * it depends on the counter only ever rising. Past the end the generation
+     * suffix takes over, and it must not repeat either.
+     */
+    const names = issueNames(0, NAME_POOL.length * 2 + 5)
     expect(new Set(names).size).toBe(names.length)
   })
 
-  it('and the same seed still gives the same roster', () => {
-    // A player reloading a save must get his squad back, not strangers. The pool
-    // changed; the promise did not.
-    expect(issueNames(7, 0, 8)).toEqual(issueNames(7, 0, 8))
-  })
-
-  it('while two seeds give two different ones', () => {
-    // Otherwise "seeded" is indistinguishable from "hardcoded" — and with 347
-    // names the shuffle has far more room to prove it than it had with 30.
-    expect(issueNames(1, 0, 12)).not.toEqual(issueNames(2, 0, 12))
+  it('and the man after the last one is a second of that name, not the first again', () => {
+    // The wrap point, stated exactly. `JOOLS` then `JOOLS II`, never `JOOLS`
+    // twice — two identical gravestones is the failure the whole module prevents.
+    const wrap = issueNames(NAME_POOL.length, 1)
+    expect(wrap).toEqual([`${NAME_POOL[0] ?? ''} II`])
   })
 })
