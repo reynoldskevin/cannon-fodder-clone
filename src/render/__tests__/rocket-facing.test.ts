@@ -4,7 +4,6 @@ import { EntityRenderer } from '../entity-renderer'
 import type { SpriteFrame, UnitVisual } from '../sprite-atlas'
 import type { AnimationClip } from '../../core/render-state/animation'
 import type { RenderEntity } from '../../core/render-state/entity'
-import type { Facing } from '../../core/render-state/facing'
 
 /**
  * Ticket 055 — a rocket points where it is going.
@@ -50,7 +49,7 @@ function stubVisual(): UnitVisual {
     texture: new THREE.Texture(),
     clip: (unit: string, animation: string) =>
       CLIPS[`${unit}|${animation}`] ?? { frameCount: 1, fps: 1, loop: false },
-    frame: (_unit: string, _animation: string, _direction: Facing, _index: number) => frame,
+    frame: () => frame,
     dispose: () => {},
   }
 }

@@ -128,6 +128,29 @@ const ALPHA_TEST = 0.25
 const GROUND_LIFT = 0.02
 
 /**
+ * Which way a source's ART IS ALREADY POINTING, in screen radians measured
+ * anticlockwise from screen-right (ticket 055).
+ *
+ * `rocket.png` is painted flying south-west to north-east and aiming NORTH-EAST,
+ * which on screen is up and to the right: a quarter turn's worth, `PI / 4`. The
+ * spin applied to it is therefore the difference between where it is going and
+ * where it is already drawn as going — an unrotated rocket is one flying
+ * north-east, which is correct rather than a special case.
+ *
+ * A TABLE, AND DELIBERATELY SPARSE. Every source absent from it is drawn exactly
+ * as it always was, and that is most of the game: a soldier picks his direction
+ * by choosing one of eight FRAMES, and a grenade tumbles and has no nose to
+ * point. Rotating either would invent a heading its art does not have.
+ *
+ * IT IS A FACT ABOUT THE PICTURE, so it lives here beside `CELL_WORLD_HEIGHT`
+ * rather than in `core` — which decides where a round is going and must not have
+ * to know how the artist drew it.
+ */
+const ART_HEADING_RADIANS: Readonly<Record<string, number>> = {
+  rocket: Math.PI / 4,
+}
+
+/**
  * The clip whose batches are ordered behind everything else alive (ticket 050).
  *
  * Spelled here rather than imported from `sprite-atlas.ts`'s `ONE_SHOT_ANIMATIONS`,
@@ -171,6 +194,18 @@ const MAX_QUAD_ELEVATION = (89 * Math.PI) / 180
 /** Per-instance data batching carries through for us, on top of what it keys on. */
 interface SpriteDrawItem extends DrawItem {
   readonly y: number
+  /**
+   * The entity's heading on the ground plane, carried through UNSMOOTHED and
+   * unrelated to `direction` (ticket 055).
+   *
+   * `direction` is one of eight compass names and is part of the batch KEY,
+   * because it selects an atlas rect. This is the continuous heading a turned
+   * sprite is spun by, and it must not reach the key: two rockets a degree apart
+   * would otherwise be two batches, which is the failure `batching.ts` exists to
+   * prevent.
+   */
+  readonly dx: number
+  readonly dz: number
   /** See `RenderEntity.submersion`. A fraction of this sprite's own height. */
   readonly submersion: number
   readonly sprite: SpriteFrame
@@ -221,6 +256,9 @@ export class EntityRenderer {
    */
   private verticalStretch = 1
 
+  /** The camera elevation the stretch was computed from, clamped. See `setElevation`. */
+  private elevationRad = 0
+
   /**
    * Reused every frame.
    *
@@ -239,6 +277,8 @@ export class EntityRenderer {
   private readonly scratchPosition = new THREE.Vector3()
   private readonly scratchScale = new THREE.Vector3()
   private readonly scratchMatrix = new THREE.Matrix4()
+  /** A second matrix, so a turned sprite composes without allocating. */
+  private readonly scratchRotation = new THREE.Matrix4()
   private readonly scratchColour = new THREE.Color()
 
   private visibleBatches = 0
@@ -295,6 +335,10 @@ export class EntityRenderer {
     const stretch = 1 / Math.cos(clamped)
     if (stretch === this.verticalStretch) return
     this.verticalStretch = stretch
+    // Kept because the SPIN needs the angle itself, not the stretch derived from
+    // it: a ground heading is foreshortened by `sin(elevation)` on screen, which
+    // `1 / cos` cannot be turned back into without a sign ambiguity.
+    this.elevationRad = clamped
     // Scenery matrices have the old stretch baked in and are never rewritten by
     // `update`. Nothing rebuilds them if this does not.
     if (this.scenery.length > 0) this.buildScenery()
@@ -368,6 +412,11 @@ export class EntityRenderer {
         animation: entity.animation,
         direction: DEFAULT_FACING,
         frame: 0,
+        // Scenery is rooted where the level put it and has no heading; a tree is
+        // never spun. Stated rather than inherited, so the day a turned prop
+        // exists this is the line that has to say so.
+        dx: 0,
+        dz: 0,
         x: entity.x,
         z: entity.z,
         y: entity.y,
@@ -462,6 +511,9 @@ export class EntityRenderer {
         x: at.x,
         z: at.z,
         y: entity.y,
+        // The RAW heading, not `facing`. See `SpriteDrawItem.dx`.
+        dx: entity.dx,
+        dz: entity.dz,
         // From the CURRENT sim state, not interpolated between the two.
         // `interpolateEntities` smooths position because a sprite sliding
         // between ticks is what 60fps rendering is for; submersion is a step
@@ -498,6 +550,33 @@ export class EntityRenderer {
     }
 
     this.visibleBatches = visible
+  }
+
+  /**
+   * How far to turn this sprite in the screen plane, in radians. Zero for
+   * everything whose art has no heading — which is everything but the rocket.
+   *
+   * THE ANGLE IS COMPUTED ON SCREEN, NOT ON THE GROUND, and that is the part
+   * worth reading twice. The camera looks down at `elevationRad`, so the ground's
+   * north-south axis is squashed by `sin(elevation)` on its way to the screen
+   * while its east-west axis is not. A round flying north-east does not appear to
+   * lean at 45 degrees: at the shipped 55 it leans at `atan(sin 55)`, 39.3.
+   *
+   * SO `atan2(-dz, dx)` IS WRONG, AND WRONG IN THE WAY THAT SURVIVES A LOOK. It
+   * is exactly right for all four axis-aligned headings — due east, west, north
+   * and south — and off by up to six degrees for everything between. `-dz`
+   * because `+z` is south and screen-y counts upward.
+   */
+  private spinFor(item: SpriteDrawItem): number {
+    const baked = ART_HEADING_RADIANS[item.unit]
+    if (baked === undefined) return 0
+    const { dx, dz } = item
+    // A round with no heading — a degenerate trajectory, or any producer that
+    // leaves the field at zero — is drawn exactly as the artist painted it rather
+    // than snapped to `atan2(0, 0)`, which is 0 and would mean due east.
+    if (dx === 0 && dz === 0) return 0
+    const screenAngle = Math.atan2(-dz * Math.sin(this.elevationRad), dx)
+    return screenAngle - baked
   }
 
   /** Write one batch's instances into its mesh. */
@@ -540,8 +619,40 @@ export class EntityRenderer {
         item.y + GROUND_LIFT + sprite.centreY * this.verticalStretch - sink,
         item.z,
       )
-      this.scratchScale.set(sprite.width, quadHeight, 1)
-      this.scratchMatrix.compose(this.scratchPosition, this.quadRotation, this.scratchScale)
+      const spin = this.spinFor(item)
+      if (spin === 0) {
+        // THE PATH EVERY SPRITE IN THE GAME BUT ONE TAKES, unchanged and taken
+        // first: identical arithmetic to before ticket 055, so nothing that was
+        // already drawn moves by even a float.
+        this.scratchScale.set(sprite.width, quadHeight, 1)
+        this.scratchMatrix.compose(this.scratchPosition, this.quadRotation, this.scratchScale)
+      } else {
+        /**
+         * A TURNED SPRITE, AND THE ORDER IS THE WHOLE OF IT:
+         *
+         *     T . Sy(stretch) . Rz(spin) . S(width, height, 1)
+         *
+         * The rotation sits INSIDE the vertical stretch rather than outside it,
+         * and composing them the other way round is the obvious bug. The stretch
+         * exists because an upright quad is foreshortened by `cos(elevation)` on
+         * its way to the screen; pre-stretching by `1 / cos` cancels that exactly.
+         * So a direction rotated BEFORE the stretch, then stretched, then
+         * projected, comes out at the angle it was rotated to — while rotating
+         * AFTER the stretch turns an already-elongated quad and skews it, which
+         * reads as a rocket that stretches and leans as it turns.
+         *
+         * At `spin === 0` this reduces to `S(width, height * stretch, 1)`, which
+         * is exactly the branch above — asserted, not assumed, in
+         * `rocket-facing.test.ts`.
+         */
+        this.scratchScale.set(sprite.width, sprite.height, 1)
+        this.scratchMatrix.makeScale(this.scratchScale.x, this.scratchScale.y, 1)
+        this.scratchRotation.makeRotationZ(spin)
+        this.scratchMatrix.premultiply(this.scratchRotation)
+        this.scratchRotation.makeScale(1, this.verticalStretch, 1)
+        this.scratchMatrix.premultiply(this.scratchRotation)
+        this.scratchMatrix.setPosition(this.scratchPosition)
+      }
       mesh.setMatrixAt(index, this.scratchMatrix)
 
       const base = index * 4

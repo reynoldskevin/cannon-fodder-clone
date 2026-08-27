@@ -147,6 +147,45 @@ describe('and it is drawn where it actually is', () => {
   })
 })
 
+describe('and it reports which way it is going', () => {
+  it('a round thrown east heads east, as a unit vector', () => {
+    /**
+     * Ticket 055. The renderer turns the rocket sprite by this, so a heading that
+     * was zero, unnormalised or backwards would draw a rocket pointing the wrong
+     * way — the defect that ticket is named for.
+     *
+     * EXACT, NOT SAMPLED. `Trajectory` holds origin and target and the horizontal
+     * path between them is a straight line, so this is the direction at every
+     * instant of the flight rather than a difference between two frames.
+     */
+    const { s } = lob() // thrown from (4, 7) at (12, 7): due east, `+x`
+    for (let f = 0; f < 240; f += 1) {
+      const round = rounds(frame(s))[0]
+      if (round === undefined) continue
+      expect(round.dx).toBeCloseTo(1, 6)
+      expect(round.dz).toBeCloseTo(0, 6)
+      return
+    }
+    throw new Error('never saw the grenade')
+  })
+
+  it('and one thrown north heads north', () => {
+    // The other axis, and the sign. `+z` is south, so north is negative.
+    const s = createSession(THROWER())
+    const id = s.selection()[0]
+    if (id === undefined) throw new Error('no squad')
+    s.queue.push({ type: 'fire', unitIds: [id], ordnance: 'grenade', target: { x: 4, y: 2 } })
+    for (let f = 0; f < 240; f += 1) {
+      const round = rounds(frame(s))[0]
+      if (round === undefined) continue
+      expect(round.dz).toBeLessThan(-0.9)
+      expect(Math.hypot(round.dx, round.dz)).toBeCloseTo(1, 6)
+      return
+    }
+    throw new Error('never saw the grenade')
+  })
+})
+
 describe('a round cannot be mistaken for anything else on the field', () => {
   it('its id collides with no soldier, no prop and no scenery', () => {
     /**
