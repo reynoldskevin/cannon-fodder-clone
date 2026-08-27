@@ -284,15 +284,14 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
   /**
    * What the SQUAD column says when it has nobody to list.
    *
-   * TWO DIFFERENT SILENCES, AND THEY MUST NOT SOUND ALIKE. An empty column after
-   * a mission that carved stones means the squad was wiped, and that is the
-   * loudest thing this screen can say. An empty column with no fresh stones is a
-   * reload or a memorial reached before anybody deployed — nobody died, there is
-   * simply no squad in the field, and printing "Nobody came back" there would
-   * announce a massacre that did not happen.
+   * SINCE TICKET 056 THIS IS A RARE AND TERMINAL LINE, not the ordinary case it
+   * used to be. The column is the LIVING ROSTER now, so an empty one means the
+   * campaign has no men left at all — not, as it did before, that the two men
+   * who deployed both died while six waited in reserve.
    */
   const squadEmpty = document.createElement('p')
-  squadEmpty.style.cssText = `margin:0;font-size:0.8rem`
+  squadEmpty.textContent = 'No one left.'
+  squadEmpty.style.cssText = `margin:0;font-size:0.8rem;color:${FRESH}`
 
   const promotionsHeading = sectionHeading('PROMOTIONS')
   const promotions = document.createElement('ul')
@@ -523,16 +522,10 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
       setRow(row, `${man.rank} ${man.name}`, String(man.kills))
     }
     trim(squadRows, standing)
-    // See `squadEmpty`: a wipe and a reload both leave this column empty, and
-    // only one of them is news.
+    // See `squadEmpty`: an empty roster is the end of the campaign's manpower,
+    // not the ordinary aftermath of a bad mission.
     const emptied = standing === 0 ? 'block' : 'none'
     if (squadEmpty.style.display !== emptied) squadEmpty.style.display = emptied
-    if (standing === 0) {
-      const wiped = model.fallenThisMission.length > 0
-      setText(squadEmpty, wiped ? 'Nobody came back.' : 'Nobody in the field.')
-      const colour = wiped ? FRESH : MUTED
-      if (squadEmpty.style.color !== colour) squadEmpty.style.color = colour
-    }
 
     // Hidden outright when nobody was promoted, rather than left as a heading
     // over nothing: an empty section reads as a screen that failed to load its

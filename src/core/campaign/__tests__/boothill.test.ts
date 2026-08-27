@@ -486,50 +486,60 @@ describe('the scoreboard and the column beside the hill', () => {
     expect(model.casualties).toBe(model.graves.length)
   })
 
-  it('the SQUAD column is who is still standing, and never a man on the hill', () => {
+  it('the SQUAD column is every man still alive, not the survivors of the mission', () => {
     /**
-     * THE ONE ARRANGEMENT WHERE THE TWO COLUMNS CANNOT NAME THE SAME MAN TWICE.
-     * The caller hands over the squad records it can still find on the LIVING
-     * roster, so a man who fell this mission is a cross and a HEROES row and
-     * nothing else.
+     * TICKET 056, AND IT IS THE ORDINARY CASE RATHER THAN AN EDGE ONE. Level 1
+     * sends two men. Both die. Built from the men who DEPLOYED, the column was
+     * empty — "Nobody came back" — while six recruits stood waiting for the next
+     * mission. The column answers "who have I got", and a man in reserve counts.
      */
-    const before = createCampaign({ seed: 63, recruits: 4 })
+    const before = createCampaign({ seed: 63, recruits: 8 })
     const men = recruitsAvailable(before)
-    const doomed = men[0]!
-    const after = fight(before, 1, [doomed.id])
-    const survivors = recruitsAvailable(after)
-    const model = bootHillModel(after, promotionsBetween(before, after), before, survivors)
-    expect(model.squad.map((m) => m.name)).not.toContain(doomed.name)
-    expect(model.squad.map((m) => m.name)).toEqual(survivors.map((m) => m.name))
+    const after = fight(before, 1, [men[0]!.id, men[1]!.id])
+    const model = bootHillModel(after, promotionsBetween(before, after), before)
+    expect(model.squad).toHaveLength(6)
+    expect(model.graves).toHaveLength(2)
   })
 
-  it('and each standing man carries his rank and his tally', () => {
-    const before = createCampaign({ seed: 64, recruits: 2 })
+  it('and never a man who is on the hill', () => {
+    // It falls out of `recruitsAvailable` reading the LIVING roster rather than
+    // out of a check: a man who fell is a cross and a HEROES row and nothing
+    // else, so the two columns cannot name him twice.
+    const before = createCampaign({ seed: 64, recruits: 4 })
+    const doomed = recruitsAvailable(before)[0]!
+    const after = fight(before, 1, [doomed.id])
+    const model = bootHillModel(after, promotionsBetween(before, after), before)
+    expect(model.squad.map((m) => m.name)).not.toContain(doomed.name)
+    expect(model.graves.map((g) => g.name)).toContain(doomed.name)
+  })
+
+  it('and each man carries his rank and his tally', () => {
+    const before = createCampaign({ seed: 65, recruits: 2 })
     const after = fight(before, 1, [])
-    const survivors = recruitsAvailable(after)
-    const model = bootHillModel(after, promotionsBetween(before, after), before, survivors)
+    const living = recruitsAvailable(after)
+    const model = bootHillModel(after, promotionsBetween(before, after), before)
     expect(model.squad[0]).toEqual({
-      name: survivors[0]!.name,
-      rank: survivors[0]!.rank,
-      kills: survivors[0]!.kills,
+      name: living[0]!.name,
+      rank: living[0]!.rank,
+      kills: living[0]!.kills,
     })
   })
 
-  it('a caller with no squad to name gets an empty column, not the whole roster', () => {
-    // A reload, or a memorial reached before anybody deployed. Showing the
-    // living roster instead would put men in the SQUAD column who never left
-    // the beach.
-    const s = createCampaign({ seed: 65, recruits: 5 })
-    expect(bootHillModel(s, []).squad).toEqual([])
+  it('an empty column means the campaign has no men left at all', () => {
+    // The only way to empty it now, and it is terminal rather than routine.
+    const before = createCampaign({ seed: 66, recruits: 2 })
+    const men = recruitsAvailable(before)
+    const after = fight(before, 1, [men[0]!.id, men[1]!.id])
+    expect(bootHillModel(after, [], before).squad).toEqual([])
   })
 
   it('the squad column is a copy, not a window onto the roster', () => {
     // The same rule every model in this codebase follows: a screen must not be
     // able to reach into the campaign through the thing it was handed to draw.
-    const s = createCampaign({ seed: 66, recruits: 3 })
+    const s = createCampaign({ seed: 67, recruits: 3 })
     const roster = recruitsAvailable(s)
-    const model = bootHillModel(s, [], undefined, roster)
-    expect(model.squad).not.toBe(roster)
+    const model = bootHillModel(s, [])
     expect(model.squad[0]).not.toBe(roster[0])
+    expect(model.squad.map((m) => m.name)).toEqual(roster.map((m) => m.name))
   })
 })

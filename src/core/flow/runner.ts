@@ -366,13 +366,14 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
       // where nobody fell this session. `bootHillModel` makes the same argument
       // about its optional third argument.
       //
-      // THE SQUAD GOES IN EITHER WAY (ticket 054), and `squadRecords` is what
-      // makes it the SURVIVORS: it matches the men who deployed against the
-      // LIVING roster, so the ones who fell are on the hill above rather than in
-      // the column beside it.
+      // THE SQUAD COLUMN IS NOT PASSED IN ANY MORE (ticket 056). It was
+      // `squadRecords()` — the survivors of the mission just fought — and on
+      // level 1, where two men deploy and both can die, that column was empty
+      // while six recruits stood waiting. It is the living roster, which the
+      // model reads off the state it already has.
       before === null
-        ? bootHillModel(state, [], undefined, squadRecords())
-        : bootHillModel(state, promotionsBetween(before, state), before, squadRecords()),
+        ? bootHillModel(state, [])
+        : bootHillModel(state, promotionsBetween(before, state), before),
 
     summary: () => campaignSummary(state),
 
