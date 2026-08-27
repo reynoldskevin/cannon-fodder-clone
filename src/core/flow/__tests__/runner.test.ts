@@ -668,3 +668,142 @@ describe('starting again WIPES, and only when asked in so many words', () => {
     expect(recruitsAvailable(runner.campaign()).map((m) => m.id)).toEqual(before)
   })
 })
+
+describe('BACK TO BASE — the Briefing is no longer a one-way door (ticket 059)', () => {
+  /** Get to the Briefing the ordinary way, with a squad assigned. */
+  function toBriefing(runner: CampaignRunner): void {
+    expect(runner.startCampaign().ok).toBe(true)
+    expect(runner.advanceFromBootHill().ok).toBe(true)
+    expect(runner.screen()).toBe('Briefing')
+  }
+
+  it('takes the player back to Boot Hill', () => {
+    const { runner } = runnerFor(THREE_LEVELS)
+    toBriefing(runner)
+    expect(runner.backToBase().ok).toBe(true)
+    expect(runner.screen()).toBe('BootHill')
+  })
+
+  it('and is refused from every other screen, changing nothing when it is', () => {
+    /**
+     * THE INVARIANT THE WHOLE RUNNER IS BUILT ON, applied to the new command: a
+     * refusal changes NOTHING. Checked from the Menu, where the player has not
+     * started, and from inside a mission — where honouring it would tear down a
+     * live scene.
+     */
+    const { runner, host } = runnerFor(THREE_LEVELS)
+    expect(runner.screen()).toBe('Menu')
+    expect(runner.backToBase().ok).toBe(false)
+    expect(runner.screen()).toBe('Menu')
+
+    deploy(runner)
+    expect(runner.screen()).toBe('Mission')
+    const teardowns = host.teardowns()
+    expect(runner.backToBase().ok).toBe(false)
+    expect(runner.screen()).toBe('Mission')
+    // THE ONE THAT WOULD COST A SCENE. A refused command must not reach
+    // `settle`, and `settle` is what calls `host.teardown`.
+    expect(host.teardowns()).toBe(teardowns)
+  })
+
+  it('and it never starts or tears down a mission even when it IS allowed', () => {
+    // The Briefing is not a mission, so there is nothing to release. A command
+    // that ran teardown here would free the stage the next deploy rebuilds.
+    const { runner, host } = runnerFor(THREE_LEVELS)
+    toBriefing(runner)
+    expect(runner.backToBase().ok).toBe(true)
+    expect(host.calls).toEqual([])
+  })
+
+  it('and it leaves the campaign, the squad and the store exactly as they were', () => {
+    /**
+     * IT IS A SCREEN MOVE AND NOTHING ELSE. The squad in particular must
+     * survive: Boot Hill's own button re-assigns on the way back out, but a
+     * `backToBase` that cleared it would leave the runner holding an empty squad
+     * if anything read it before the player pressed anything.
+     */
+    const { runner, port } = runnerFor(THREE_LEVELS)
+    toBriefing(runner)
+    const campaign = JSON.stringify(runner.campaign())
+    const squad = runner.squad().map((m) => m.id)
+    const writes = port.writes()
+
+    expect(runner.backToBase().ok).toBe(true)
+
+    expect(JSON.stringify(runner.campaign())).toBe(campaign)
+    expect(runner.squad().map((m) => m.id)).toEqual(squad)
+    // NO WRITE. Nothing changed, so there is nothing to save — and a save on
+    // every screen move would put a store failure in front of a player who did
+    // nothing but press Back.
+    expect(port.writes()).toBe(writes)
+  })
+
+  it('and the briefing the player comes back to is the same briefing', () => {
+    const { runner } = runnerFor(THREE_LEVELS)
+    toBriefing(runner)
+    const first = JSON.stringify(runner.briefing())
+    expect(runner.backToBase().ok).toBe(true)
+    expect(runner.advanceFromBootHill().ok).toBe(true)
+    expect(JSON.stringify(runner.briefing())).toBe(first)
+  })
+
+  it('and pacing back and forth recruits nobody', () => {
+    /**
+     * THE REAL RISK IN ADDING THIS LOOP, AND THE REASON IT IS TESTED AT ALL.
+     *
+     * `advanceFromBootHill` calls `assignSquadFor` on every pass, and
+     * `assignSquadFor` goes through `selectSquad` — which AUTO-FILLS a short
+     * roster by ENLISTING new men and issuing them names off the pool. A door
+     * back to Boot Hill turns a once-per-mission call into one the player can
+     * run as many times as he likes, so if that call were not idempotent, pacing
+     * between the two screens would print recruits and burn through the name
+     * pool for free.
+     *
+     * It is idempotent because the enlistment happens only while the living
+     * roster is SHORTER than the level's landing positions — once, on the first
+     * pass — and every later pass finds the men already there. That is a
+     * property of `selectSquad` this test pins from the outside, because nothing
+     * in the runner would notice if it changed.
+     */
+    const { runner } = runnerFor(THREE_LEVELS)
+    toBriefing(runner)
+    const roster = recruitsAvailable(runner.campaign()).map((m) => m.id)
+    const issued = runner.campaign().recruitsIssued
+
+    for (let lap = 0; lap < 10; lap += 1) {
+      expect(runner.backToBase().ok).toBe(true)
+      expect(runner.advanceFromBootHill().ok).toBe(true)
+    }
+
+    expect(recruitsAvailable(runner.campaign()).map((m) => m.id)).toEqual(roster)
+    expect(runner.campaign().recruitsIssued).toBe(issued)
+    expect(runner.screen()).toBe('Briefing')
+  })
+
+  it('and the men who deploy after a round trip are the men the card named', () => {
+    /**
+     * THE POINT OF ALL OF THE ABOVE, stated as the thing the player would see.
+     * A round trip that quietly re-drew the squad would stand different soldiers
+     * on the beach than the briefing he just read listed.
+     */
+    const { runner, host } = runnerFor(THREE_LEVELS)
+    toBriefing(runner)
+    const named = runner.briefing().squad.map((m) => m.id)
+    expect(runner.backToBase().ok).toBe(true)
+    expect(runner.advanceFromBootHill().ok).toBe(true)
+    expect(runner.deploy().ok).toBe(true)
+    const started = host.calls.find((c) => c.kind === 'start')
+    expect(started?.squad).toEqual(named)
+  })
+
+  it('and a player who lost can read the memorial before trying again', () => {
+    // The other route onto the Briefing. A loss lands here, and this is the case
+    // the button was actually asked for.
+    const { runner } = runnerFor(THREE_LEVELS)
+    const squad = deploy(runner)
+    runner.finishMission(missionEvents([1], 'failed'), assignmentFor(squad))
+    expect(runner.screen()).toBe('Briefing')
+    expect(runner.backToBase().ok).toBe(true)
+    expect(runner.screen()).toBe('BootHill')
+  })
+})
