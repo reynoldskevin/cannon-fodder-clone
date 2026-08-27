@@ -307,6 +307,39 @@ describe('the mission card says what the player asked it to say (ticket 040)', (
     }
   })
 
+  it('and the reserve it names is the men who are NOT going (ticket 053)', () => {
+    /**
+     * "13 RECRUITS REMAINING" on the mockup. The card has already said how many
+     * are going one line above, so the number underneath must be what is LEFT —
+     * a card that counted the living would count the landing party twice and
+     * tell a player with eight men and two in the boat that he has eight in
+     * reserve.
+     */
+    const state = createCampaign({ seed: 31, recruits: 8 })
+    const model = briefingModel(level(), squadOf(state, 2), 0, recruitsAvailable(state))
+    expect(model.recruitsRemaining).toBe(6)
+  })
+
+  it('and the reserve is empty when the whole roster deploys', () => {
+    const state = createCampaign({ seed: 32, recruits: 4 })
+    const everybody = recruitsAvailable(state)
+    expect(briefingModel(level(), everybody, 0, everybody).recruitsRemaining).toBe(0)
+  })
+
+  it('and a squad carrying a man the roster does not cannot inflate it', () => {
+    /**
+     * WHY IT IS COMPUTED BY IDENTITY AND NOT BY `roster.length - squad.length`.
+     * A stale assignment or a dead man in the boat makes the subtraction go
+     * NEGATIVE — or, with a smaller squad, report a reserve the campaign does
+     * not have. Counting the men the roster actually has left cannot.
+     */
+    const state = createCampaign({ seed: 33, recruits: 3 })
+    const roster = recruitsAvailable(state)
+    const ghost = { ...roster[0]!, id: 'soldier-ghost' }
+    const model = briefingModel(level(), [...roster, ghost], 0, roster)
+    expect(model.recruitsRemaining).toBe(0)
+  })
+
   it('and still carries the objectives the card lists', () => {
     // The third thing the copy needs. Unchanged by this ticket, pinned here
     // because the card is now the only screen that shows them.
