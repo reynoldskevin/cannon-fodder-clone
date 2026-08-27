@@ -564,8 +564,7 @@ export class EntityRenderer {
    * Release every GPU resource this renderer owns.
    *
    * Ticket 020 rebuilds a scene per mission, so anything skipped here leaks
-   * once per level transition — the texture especially, which is a 2048x2624
-   * atlas, 21.5 MB of VRAM before its mip chain.
+   * once per level transition.
    */
   dispose(): void {
     for (const batch of this.meshes.values()) this.destroy(batch)
@@ -575,7 +574,10 @@ export class EntityRenderer {
     this.facings.clear()
     this.geometry.dispose()
     this.material.dispose()
-    this.visual.dispose()
+    // The unit visual — and so the sprite atlas texture — is NOT disposed here:
+    // it is loaded once at boot and owned by the caller, which may build a
+    // second level from it (ticket 020). Disposing it with the renderer would
+    // release the texture the NEXT level's renderer is already bound to.
     this.group.clear()
   }
 }

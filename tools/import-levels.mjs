@@ -44,13 +44,25 @@ if (levels.length === 0) {
 
 // Imported lazily so a checkout with no levels never pays for (or fails on) the
 // importer's dependencies.
-const { importLevel, MapgenError } = await import('./mapgen/index.ts')
+const { importLevel, MapgenError, writeLevelsManifest, LEVELS_MANIFEST_FILE } = await import(
+  './mapgen/index.ts'
+)
 
 let failed = 0
+/**
+ * The levels that actually reached disk, in the order they were imported —
+ * which is `levels`, and so sorted by name.
+ *
+ * ONLY THE ONES THAT SUCCEEDED. The manifest is a promise that each name can be
+ * fetched, so a level that failed validation must not be in it: the game would
+ * ask for a document the importer refused to write and die on a 404 at boot.
+ */
+const imported = []
 for (const name of levels) {
   const sourceDir = join(sourceRoot, name)
   try {
     const { level, report } = importLevel({ sourceDir, outDir, name })
+    imported.push(name)
     const { avatars, enemies, props, chests } = level.spawns
     console.log(
       `import:levels — ${name}: ${level.size.w}x${level.size.h} tiles, ` +
@@ -112,6 +124,16 @@ for (const name of levels) {
     else throw err
   }
 }
+
+// INTO THE SAME DIRECTORY AS THE DOCUMENTS (ticket 024). `main.ts` fetches the
+// manifest and the levels it names off one base path, so a manifest written
+// anywhere else is a 404 at boot with every unit test still green.
+//
+// WRITTEN BEFORE THE FAILURE EXIT, and listing only what validated: a run with a
+// broken level still leaves the manifest agreeing with the documents on disk,
+// and still exits non-zero so the failure is not mistaken for a clean build.
+writeLevelsManifest(outDir, imported)
+console.log(`import:levels — wrote ${LEVELS_MANIFEST_FILE}: ${imported.join(', ') || '(none)'}`)
 
 if (failed > 0) {
   console.error(`import:levels — ${failed} level(s) failed to import.`)
