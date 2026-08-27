@@ -865,3 +865,57 @@ describe('the memorial the runner hands over (ticket 063)', () => {
     expect(Object.keys(runner.bootHill())).not.toContain('promotions')
   })
 })
+
+describe('sorting Boot Hill does not change who deploys (ticket 065)', () => {
+  it('the next squad is still the first men of the ROSTER, not of the column', () => {
+    /**
+     * THE ONE WAY THIS TICKET COULD HAVE CHANGED THE GAME RATHER THAN THE SCREEN.
+     *
+     * `advanceFromBootHill` fills the next mission's squad with the first
+     * `maxSquadFor(level)` men of `recruitsAvailable(state)` — the same list
+     * `bootHillModel` draws its SQUAD column from. Sorting at that source
+     * instead of in the model would have silently made the game deploy its
+     * highest-ranked men every mission: a real balance change, arriving through
+     * a ticket about the order of some rows, with nothing to flag it.
+     *
+     * So the assertion is against the roster's OWN order, taken before the
+     * memorial is ever built.
+     */
+    const { runner, host } = runnerFor(THREE_LEVELS)
+    expect(runner.startCampaign().ok).toBe(true)
+    const rosterOrder = recruitsAvailable(runner.campaign()).map((m) => m.id)
+
+    // Look at the memorial first — if reading it sorted anything in place, the
+    // deployment below would pick different men.
+    runner.bootHill()
+    expect(runner.advanceFromBootHill().ok).toBe(true)
+    expect(runner.deploy().ok).toBe(true)
+
+    const started = host.calls.find((c) => c.kind === 'start')
+    expect(started?.squad).toEqual(rosterOrder.slice(0, started?.squad.length ?? 0))
+  })
+
+  it('and the column it shows is a different order from the roster', () => {
+    /**
+     * NON-VACUITY FOR THE CASE ABOVE. If every man held the same rank the two
+     * orders would agree and the check would prove nothing, so this pins that
+     * the model really does reorder — using a campaign where one man is a
+     * veteran and the roster deliberately does not lead with him.
+     */
+    const { runner } = runnerFor(THREE_LEVELS)
+    // `deploy` walks Menu -> Mission itself, `startCampaign` included; calling
+    // it first would leave that second call refused and nothing deployed.
+    const squad = deploy(runner)
+    runner.finishMission(missionEvents([], 'complete'), assignmentFor(squad))
+
+    const column = runner.bootHill().squad
+    // The men who fought are ranked above the reserves who did not.
+    expect(column.length).toBeGreaterThan(1)
+    const indices = column.map((m) => m.rankIndex)
+    for (let i = 1; i < indices.length; i += 1) {
+      expect(Number(indices[i])).toBeLessThanOrEqual(Number(indices[i - 1]))
+    }
+    // And it is genuinely a mixed column rather than a flat one.
+    expect(new Set(indices).size).toBeGreaterThan(1)
+  })
+})
