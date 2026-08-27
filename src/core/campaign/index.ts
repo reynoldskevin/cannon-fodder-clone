@@ -49,7 +49,7 @@ export type {
 // Ticket 022. Two pure selectors and NO NEW STATE — Boot Hill is drawn entirely
 // from what 019 already stores, which is the test of the three tickets before it.
 export { bootHillModel, promotionsBetween } from './boothill'
-export type { BootHillModel, Grave, Promotion } from './boothill'
+export type { BootHillModel, Grave, Promotion, Trooper } from './boothill'
 // Ticket 024. Beside `bootHillModel` and for the same reason: the screen that
 // shows the campaign's totals has no tests, so the arithmetic lives here.
 export { campaignSummary } from './boothill'

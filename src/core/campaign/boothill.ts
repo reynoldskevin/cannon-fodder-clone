@@ -19,7 +19,7 @@
  */
 
 import { recruitsAvailable } from './roster'
-import type { CampaignState } from './types'
+import type { CampaignState, Recruit } from './types'
 
 /**
  * One promotion, as the screen announces it.
@@ -49,10 +49,46 @@ export interface Grave {
   readonly kills: number
 }
 
+/**
+ * A living man, as the hill's side panel lists him (ticket 054).
+ *
+ * NAME, RANK AND HIS RECORD — the three things the original's SQUAD column
+ * shows. It is not `SquadMember` from `selection.ts`, which carries no kills,
+ * and not `Recruit`, which carries an id and a status the screen has no use for:
+ * this is a row of a list, and handing a screen an id invites a later ticket to
+ * make the row selectable and put a decision in a `div`.
+ */
+export interface Trooper {
+  readonly name: string
+  readonly rank: string
+  readonly kills: number
+}
+
 /** Everything the Boot Hill screen renders. JSON, like every other model. */
 export interface BootHillModel {
   /** Every man who ever died, OLDEST FIRST. The hill grows; it never resets. */
   readonly graves: readonly Grave[]
+  /**
+   * The men still standing from the last mission — the original's SQUAD column.
+   *
+   * THE SURVIVORS, WHICH IS THE CALLER'S FILTERING RATHER THAN THIS FUNCTION'S.
+   * The runner hands over the squad records it can still find on the living
+   * roster, so a man who fell is on the hill above and not in this list — the
+   * only arrangement in which the two columns cannot name the same man twice.
+   */
+  readonly squad: readonly Trooper[]
+  /**
+   * The scoreboard: enemy killed by this campaign, and men lost to it — the
+   * original's HOME and AWAY, in its own arithmetic.
+   *
+   * TAKEN FROM `campaignSummary` AND NOT RECOMPUTED HERE. The Menu prints these
+   * same two numbers when a campaign ends, and two spellings of "how many did we
+   * kill" is how a memorial and a summary come to disagree about one campaign on
+   * two screens the player sees a minute apart. The sum is not obvious either: a
+   * dead man's kills count, and he is not on the roster to be counted.
+   */
+  readonly enemyKilled: number
+  readonly casualties: number
   /** Earned by THIS mission only. Handed in — see `bootHillModel`. */
   readonly promotions: readonly Promotion[]
   /**
@@ -124,6 +160,15 @@ export function bootHillModel(
   state: CampaignState,
   promotions: readonly Promotion[],
   previous?: CampaignState,
+  /**
+   * The men who went on the last mission and are still alive.
+   *
+   * DEFAULTS TO EMPTY, which is the honest answer for a caller with nothing to
+   * say — a reload, or a memorial reached before anybody has deployed. The
+   * alternative is showing the whole living roster as though it were the squad,
+   * which would put men in the SQUAD column who never left the beach.
+   */
+  squad: readonly Recruit[] = [],
 ): BootHillModel {
   // Oldest first, which is `state.dead`'s own order: ticket 019's dead list is
   // append-only and never re-sorted, so insertion order IS chronological order.
@@ -132,7 +177,19 @@ export function bootHillModel(
   // player replays an earlier level.
   const graves = gravesOf(state)
 
-  return { graves, promotions: [...promotions], fallenThisMission: fallenSince(graves, previous) }
+  const totals = campaignSummary(state)
+
+  return {
+    graves,
+    // A FRESH ROW PER MAN, carrying only what the column prints. Handing back
+    // the roster records would leak `id`, `status` and whatever ticket 019 adds
+    // next into a screen that has no business with any of it.
+    squad: squad.map((man) => ({ name: man.name, rank: man.rank, kills: man.kills })),
+    enemyKilled: totals.kills,
+    casualties: totals.casualties,
+    promotions: [...promotions],
+    fallenThisMission: fallenSince(graves, previous),
+  }
 }
 
 /**
