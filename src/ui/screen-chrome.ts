@@ -1,12 +1,19 @@
 /**
  * THE CHROME EVERY CAMPAIGN SCREEN SHARES (ticket 022b).
  *
- * Ticket 022b adds four screens at once — Menu, Recruitment, Briefing, Debrief —
- * and each of them is the same dimmed backdrop, the same panel and the same
+ * Ticket 022b added four screens at once — Menu, Recruitment, Briefing, Debrief
+ * — and each of them was the same dimmed backdrop, the same panel and the same
  * button as `boot-hill.ts`, which the player walks through in one sitting. Four
  * copies of a twelve-line `cssText` is four things to keep in step, and the
  * first one that drifts is the one screen in the run that looks like a different
  * game. So the panel is built once here and the screens hold only what they say.
+ *
+ * TICKET 040 LEFT IT WITH TWO CALLERS, AND IT IS STILL WORTH ITS FILE. The
+ * Recruitment and Debrief screens are gone and the Briefing now builds its own
+ * full-bleed black — so the shared panel is the Menu's and Boot Hill's. The
+ * button, the colours and the notice are still every screen's, the Briefing's
+ * included, which is what stops the card looking like a different game from the
+ * memorial it follows.
  *
  * IT DECIDES NOTHING AND HOLDS NOTHING. No callbacks, no state, no model — it
  * makes elements and hands them back. Everything that could be wrong about a

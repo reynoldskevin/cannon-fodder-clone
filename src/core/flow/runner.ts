@@ -38,27 +38,24 @@ import {
   maxSquadFor,
   missionReport,
   promotionsBetween,
-  recruitmentModel,
   recruitsAvailable,
   saveCampaign,
   selectSquad,
 } from '../campaign'
 import { advance, campaignComplete, INITIAL_SCREEN, isMissionExit, resolveEntry } from './transitions'
-import { briefingModel, debriefModel } from './screens'
+import { briefingModel } from './screens'
 import type {
   BootHillModel,
   CampaignState,
   CampaignSummary,
-  MissionReport,
   PersistencePort,
   Recruit,
-  RecruitmentModel,
   SquadMember,
 } from '../campaign'
 import type { LevelData } from '../level/types'
 import type { SimEvent } from '../world/events'
 import type { AdvanceResult, FlowEvent, Screen } from './transitions'
-import type { BriefingModel, DebriefModel } from './screens'
+import type { BriefingModel } from './screens'
 
 /**
  * The browser's half of a mission: build one, or release one.
@@ -86,7 +83,8 @@ export interface RunnerOptions {
    * would put a promise in front of every transition and an `await` in every
    * test. The shell loads the documents and hands them over — and `maxSquadFor`
    * needs the real `LevelData` anyway (`spawns.avatars.length` IS the squad
-   * cap), so a manifest of urls could not answer the Recruitment screen.
+   * cap), so a manifest of urls could not tell the runner how many men to
+   * assign.
    */
   readonly levels: readonly LevelData[]
   readonly port: PersistencePort
@@ -109,10 +107,7 @@ export interface CampaignRunner {
   /** The last persistence notice; `null` when the store is behaving. */
   notice(): string | null
 
-  recruitment(chosenIds?: readonly string[]): RecruitmentModel
   briefing(): BriefingModel
-  /** `null` until a mission has been played. */
-  debrief(): DebriefModel | null
   bootHill(): BootHillModel
   /**
    * What the campaign added up to, for the Menu to show when it is over.
@@ -146,10 +141,17 @@ export interface CampaignRunner {
    */
   restartCampaign(seed?: number): AdvanceResult
   demoShortcut(levelIndex: number): AdvanceResult
-  assignSquad(chosenIds: readonly string[]): AdvanceResult
   deploy(): AdvanceResult
   finishMission(events: readonly SimEvent[], assignment: ReadonlyMap<number, string>): AdvanceResult
-  recordCasualties(): AdvanceResult
+  /**
+   * Leave Boot Hill: on to the next briefing with a squad already assigned, or
+   * to the Menu if that was the last level.
+   *
+   * ONE COMMAND FOR BOTH ROWS, because Boot Hill has one button and the player
+   * is not being asked which of them he wants — `campaignComplete` decides. A
+   * screen that picked the event itself would be a second spelling of "the
+   * campaign is finished" in the one layer nothing can test.
+   */
   advanceFromBootHill(): AdvanceResult
 }
 
@@ -188,16 +190,14 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
    * The campaign as it stood BEFORE the mission that just ended, and `null`
    * until one has.
    *
-   * THE STATE NEITHER MODEL CAN RECONSTRUCT. `debriefModel(before, report)` and
-   * `promotionsBetween(before, after)` both need the PRE-application state:
-   * after `applyMissionReport` the dead are off the roster and the survivors
-   * already carry the mission they just survived, so a Debrief built from the
-   * after-state names no casualties and a Boot Hill built from it promotes
-   * everybody. Neither failure raises anything anywhere.
+   * THE STATE THE BOOT HILL MODEL CANNOT RECONSTRUCT.
+   * `promotionsBetween(before, after)` needs the PRE-application state: after
+   * `applyMissionReport` the dead are off the roster and the survivors already
+   * carry the mission they just survived, so a Boot Hill built from the
+   * after-state promotes everybody and carves no fresh stones. That failure
+   * raises nothing anywhere.
    */
   let before: CampaignState | null = null
-  /** The last mission's report, which is what makes `debrief()` answerable. */
-  let report: MissionReport | null = null
 
   /**
    * Which level the RUNNING mission is on, and `null` when none is.
@@ -247,9 +247,9 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
    * Take the move the chart returned, releasing the mission if it is being left.
    *
    * TEARDOWN IS DECIDED BY `isMissionExit` AND NEVER BY A LIST OF SCREENS. Ticket
-   * 020 built that predicate for exactly this. Hand-listing "Debrief and Menu
-   * tear down" would be a second copy of the chart, and the first screen anybody
-   * adds that can leave a mission would leak the whole level.
+   * 020 built that predicate for exactly this. Hand-listing "Boot Hill and the
+   * Briefing tear down" would be a second copy of the chart, and the first screen
+   * anybody adds that can leave a mission would leak the whole level.
    */
   const settle = (moved: AdvanceResult): AdvanceResult => {
     if (!moved.ok) return moved
@@ -267,7 +267,7 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
    * `SquadMember` is deliberately narrower than `Recruit` (ticket 021: no record
    * on it, because a record goes stale the moment the first round lands), and
    * `briefingModel` wants the roster records so the rank it prints is the one
-   * `recruitsAvailable` derives. Matching by id keeps the player's chosen order,
+   * `recruitsAvailable` derives. Matching by id keeps the assignment order,
    * which is the order the men take the avatar spawns.
    */
   const squadRecords = (): readonly Recruit[] => {
@@ -282,6 +282,52 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
 
   const refuse = (reason: string): AdvanceResult => ({ ok: false, reason })
 
+  /**
+   * Fill the squad for `level` off the roster, with nobody asked anything
+   * (ticket 040).
+   *
+   * NOBODY PICKS, SO SOMETHING HAS TO, AND IT MUST PICK THE SAME MEN TWICE.
+   * Ticket 040 dropped the Recruitment screen: the flow goes Boot Hill straight
+   * to the Briefing, and the men are already assigned by the time the player
+   * reads who they are. The rule is the plainest one available — the first
+   * `maxSquadFor(level)` men of the living roster, in roster order — because
+   * every other rule (fittest, freshest, most decorated) is a preference nobody
+   * asked for that a player cannot see or override.
+   *
+   * DETERMINISTIC, WHICH IS NOT DECORATION HERE. `recruitsAvailable` reads a
+   * campaign that was itself built from a seed, so the same roster and the same
+   * level name the same men every time; a squad drawn at random would make two
+   * runs of an identical save diverge, and every determinism test in this
+   * project would be testing the wrong thing.
+   *
+   * IT GOES THROUGH `selectSquad` RATHER THAN BUILDING THE LIST ITSELF, so the
+   * one place that knows what a legal squad is stays the one place — including
+   * the auto-fill that enlists replacements when the roster is smaller than the
+   * level's landing positions, which is the only thing keeping a wiped campaign
+   * playable.
+   *
+   * It answers a REASON OR `null` rather than an `AdvanceResult`, because it is
+   * not a transition: the caller has its own move to make or refuse, and this
+   * only tells it whether a squad could be found.
+   */
+  const assignSquadFor = (level: LevelData): string | null => {
+    const wanted = recruitsAvailable(state)
+      .slice(0, maxSquadFor(level))
+      .map((man) => man.id)
+    const selection = selectSquad(state, level, wanted)
+    if (!selection.ok) return selection.reason
+    // THE CAMPAIGN IT RETURNS IS KEPT, and that is the quiet one. Ticket 019's
+    // name-uniqueness guarantee runs entirely through `recruitsIssued`, so a
+    // caller that kept the squad and dropped the state would reissue the same
+    // names next mission and two gravestones on Boot Hill would read the same
+    // thing.
+    state = selection.state
+    // REPLACED, NOT APPENDED: this runs once per briefing, and the last one is
+    // the squad that deploys.
+    squad = selection.squad
+    return null
+  }
+
   const runner: CampaignRunner = {
     screen: () => screen,
     campaign: () => state,
@@ -292,12 +338,11 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
     squad: () => [...squad],
     notice: () => notice,
 
-    recruitment: (chosenIds: readonly string[] = []) =>
-      recruitmentModel(state, currentLevel(), chosenIds),
-
-    briefing: () => briefingModel(currentLevel(), squadRecords()),
-
-    debrief: () => (report === null || before === null ? null : debriefModel(before, report)),
+    // THE INDEX IS THE RUNNER'S, AND `briefingModel` MAKES IT ONE-BASED. The
+    // card reads "Mission 3"; `levelIndex()` is the 0-based position in the
+    // level array, and converting it in two places is how one of them ends up
+    // saying "Mission 2" over level 3.
+    briefing: () => briefingModel(currentLevel(), squadRecords(), levelIndex()),
 
     bootHill: () =>
       // NO BEFORE-STATE MEANS NO PROMOTIONS AND NO FRESH STONES, which is the
@@ -340,15 +385,14 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
      * releases that mission's GPU resources. Skipping it would leak an entire
      * scene on the one command whose whole point is to throw things away.
      *
-     * THE MISSION'S RECORD GOES WITH THE CAMPAIGN. `before` and `report` are the
-     * last mission's, and a Debrief or a Boot Hill built from them after a wipe
-     * would show the dead of a campaign that no longer exists.
+     * THE MISSION'S RECORD GOES WITH THE CAMPAIGN. `before` is the last
+     * mission's, and a Boot Hill built from it after a wipe would promote and
+     * bury the men of a campaign that no longer exists.
      */
     restartCampaign: (seed: number = FRESH_CAMPAIGN_SEED) => {
       state = createCampaign({ seed })
       squad = []
       before = null
-      report = null
       // BEFORE the screen moves, and its notice kept: a store that refused the
       // write is the one thing the Menu must say out loud, and the player is
       // about to be looking at that very screen.
@@ -357,15 +401,15 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
     },
 
     /**
-     * Straight from the Menu into a mission, bypassing Recruitment and Briefing.
+     * Straight from the Menu into a mission, bypassing Boot Hill and the
+     * Briefing.
      *
-     * IT PICKS ITS OWN SQUAD AND IT CANNOT PICK `[]`. Nobody chose one — that is
-     * what bypassing Recruitment means — and a mission with no men cannot be
-     * played. Handing `selectSquad` an empty selection would not do it: auto-fill
-     * only tops up a roster SMALLER than the squad, so `[]` against a healthy
-     * roster is an under-selection and is refused, which would leave the deep
-     * link dead on every campaign but a wiped one. So it names the first
-     * `maxSquadFor(level)` men itself.
+     * IT ASSIGNS ITS OWN SQUAD, off the same `assignSquadFor` the Briefing route
+     * uses. Nobody was ever going to choose one — that is what bypassing the
+     * Briefing means — and a mission with no men cannot be played. Sharing the
+     * helper is the point: a demo run that filled its squad by some other rule
+     * would deploy a different four men than the campaign does on the same
+     * level, and the shortcut would stop being a shortcut to the real game.
      *
      * IT VALIDATES ITS INDEX. `?demo=1&level=99` is one keystroke from
      * `&level=9`; honouring it would hand the host `undefined` and take the game
@@ -383,52 +427,19 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
       const level = levelAt(index)
       if (level === undefined) return refuse(`There is no level ${String(index)}.`)
 
-      const wanted = recruitsAvailable(state)
-        .slice(0, maxSquadFor(level))
-        .map((man) => man.id)
-      const selection = selectSquad(state, level, wanted)
-      if (!selection.ok) return refuse(selection.reason)
-
       // Committed only now: everything above could refuse, and a refusal that
       // had already recruited the auto-fill would issue names against a campaign
       // that never deployed.
-      state = selection.state
-      squad = selection.squad
+      const denied = assignSquadFor(level)
+      if (denied !== null) return refuse(denied)
       host.start(level, squad)
       missionLevel = index
       return settle(moved)
     },
 
     /**
-     * Take the player's selection, or pass `selectSquad`'s refusal back verbatim.
-     *
-     * THE REASON IS ITS REASON. "This level needs 3 men; only 1 was selected" and
-     * "Hayes was killed in action and cannot deploy" are different things to tell
-     * a player, and a runner that flattened them into "invalid selection" would
-     * have thrown away the only sentence the screen can print.
-     *
-     * THE CAMPAIGN IT RETURNS IS KEPT, and that is the quiet one. When the roster
-     * is no bigger than the squad, `selectSquad` tops it up and returns a NEW
-     * campaign; ticket 019's whole name-uniqueness guarantee runs through
-     * `recruitsIssued`, so a runner that kept the squad and dropped the state
-     * would reissue the same names next mission and two gravestones on Boot Hill
-     * would read the same thing.
-     */
-    assignSquad: (chosenIds: readonly string[]) => {
-      const moved = advance(screen, 'squadAssigned')
-      if (!moved.ok) return moved
-      const selection = selectSquad(state, currentLevel(), chosenIds)
-      if (!selection.ok) return refuse(selection.reason)
-      state = selection.state
-      // REPLACED, NOT APPENDED: a player toggling his selection assigns twice in
-      // a row with no deploy between, and the second is the one that counts.
-      squad = selection.squad
-      return settle(moved)
-    },
-
-    /**
-     * Start exactly one mission, on the level the player is on, with the men he
-     * chose.
+     * Start exactly one mission, on the level the player is on, with the men
+     * assigned to him.
      *
      * THE SECOND CLICK COSTS A WHOLE SCENE, and `Mission` having no `deploy` row
      * is what answers it — so the chart is asked BEFORE the host is touched and
@@ -449,24 +460,36 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
      * campaign, and the campaign decides which screen follows.
      *
      * THE ORDER IS LOAD-BEARING. The pre-application state is kept BEFORE
-     * `applyMissionReport` runs, because both the Debrief and Boot Hill are
-     * differences between two states and only the caller that applied the report
-     * still holds the first one.
+     * `applyMissionReport` runs, because Boot Hill is a difference between two
+     * states and only the caller that applied the report still holds the first
+     * one.
      *
      * THE OUTCOME COMES FROM THE REPORT, NOT FROM A FLAG THE SHELL PASSES.
      * `missionReport` already defaults to `failed` on a stream that never said
      * the mission was won — a crash, a truncation, a mission still running — and
-     * the roster is updated from that same value. The screen routing is NOT what
-     * protects the Debrief from reading "complete" over a campaign that recorded
-     * a loss: `missionComplete` and `missionFailed` both land on `Debrief`, so
-     * the two events differ only in what the chart will accept NEXT. What keeps
-     * the screen honest is `debrief()` building its model through `debriefModel`
-     * from `report.outcome` — the report, again, and never a flag the shell
-     * passes.
+     * the roster is updated from that same value. SINCE TICKET 040 THE ROUTING
+     * READS THE SAME ANSWER: a win goes to Boot Hill and a loss back to the
+     * Briefing, so the screen the player lands on is decided by the report
+     * rather than by anything the shell believes about how the mission went.
      *
      * THE REPORT IS APPLIED ON BOTH OUTCOMES. A retry that resurrected the men
      * who died in the failed attempt would make death optional, which is the one
      * thing permadeath cannot survive.
+     *
+     * WHICH IS WHY A LOSS RE-ASSIGNS THE SQUAD BEFORE THE BRIEFING COMES BACK UP
+     * (ticket 040). The men who fell in the failed attempt are off the roster the
+     * line above, and re-deploying the squad that went in would hand the host
+     * dead recruit ids and stand nobody on their landing positions. Re-assigning
+     * is not "replacements for a mission that was not finished" — it is the same
+     * rule the Briefing is always reached by, applied to the roster as it now
+     * stands.
+     *
+     * A SQUAD THAT CANNOT BE FILLED DOES NOT BLOCK THE TRANSITION, for the same
+     * reason a failed save does not: the mission is over either way, and leaving
+     * the player inside a finished mission with no screen is worse than a
+     * Briefing whose squad is the one that just came back. `assignSquadFor` only
+     * refuses at `MAX_ROSTER`, and `deploy` is the command that would then have
+     * to answer for it.
      *
      * A FAILED SAVE IS NOTICED AND DOES NOT BLOCK THE TRANSITION. Losing the save
      * is bad; losing the mission the player just spent ten minutes on is worse,
@@ -487,30 +510,42 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
 
       before = state
       state = applyMissionReport(before, fresh)
-      report = fresh
       // THE LAST WORD, NOT AN ACCUMULATING LOG: a successful write clears it. A
       // notice that never cleared would sit over the rest of the campaign
       // claiming progress was being lost after that had stopped being true.
       notice = saveCampaign(port, state).notice
+      // The retry's squad, off the roster the loss just left behind. Best
+      // effort, deliberately — see the header.
+      if (moved.state === 'Briefing') assignSquadFor(currentLevel())
       return settle(moved)
     },
 
-    recordCasualties: () => settle(advance(screen, 'casualtiesRecorded')),
-
     /**
-     * Off the hill: to the next level's Recruitment, or to the Menu if that was
-     * the last one.
+     * Off the hill: into the next mission's Briefing with a squad already
+     * assigned, or to the Menu if that was the last level.
      *
      * `campaignComplete` OWNS THE COMPARISON, uses `>` rather than `>=`, and
      * ticket 020 measured why: beating level 4 of 5 leaves `unlockedLevels` at 5,
      * and `>=` would end the campaign before the final mission with every test
      * still green.
+     *
+     * THE SQUAD IS ASSIGNED BEFORE THE MOVE IS TAKEN, AND A SQUAD THAT CANNOT BE
+     * FOUND REFUSES THE WHOLE COMMAND (ticket 040). The Briefing's entire copy is
+     * "with N soldiers you must…", so arriving there with no squad would put a
+     * card up reading "with 0 soldiers" and a Deploy button that stands nobody on
+     * the beach. Refusing keeps the player on Boot Hill with a reason, which is
+     * the invariant this whole file is built on: a refusal changes nothing.
      */
     advanceFromBootHill: () => {
-      const event: FlowEvent = campaignComplete(state.unlockedLevels, levels.length)
-        ? 'campaignComplete'
-        : 'nextLevel'
-      return settle(advance(screen, event))
+      const over = campaignComplete(state.unlockedLevels, levels.length)
+      const event: FlowEvent = over ? 'campaignComplete' : 'squadAssigned'
+      const moved = advance(screen, event)
+      if (!moved.ok) return moved
+      if (!over) {
+        const denied = assignSquadFor(currentLevel())
+        if (denied !== null) return refuse(denied)
+      }
+      return settle(moved)
     },
   }
 

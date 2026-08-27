@@ -99,10 +99,11 @@ describe('the state chart in ARCHITECTURE_DIAGRAM.md', () => {
   })
 
   it('documents both ways out of Boot Hill', () => {
-    // Next level, or the campaign is over. Losing the second leaves a finished
-    // campaign with nowhere to go.
+    // Straight into the next briefing, or the campaign is over. Boot Hill is
+    // the fork: it is where a won mission returns to and where the campaign
+    // ends from. Losing either exit strands a finished campaign.
     const arrows = chartArrows()
-    expect(arrows).toContain('BootHill|Recruitment')
+    expect(arrows).toContain('BootHill|Briefing')
     expect(arrows).toContain('BootHill|Menu')
   })
 })

@@ -102,13 +102,11 @@ describe('the table itself', () => {
 
 describe('every transition the chart promises', () => {
   const valid: readonly [Screen, FlowEvent, Screen][] = [
-    ['Menu', 'startCampaign', 'Recruitment'],
-    ['Recruitment', 'squadAssigned', 'Briefing'],
+    ['Menu', 'startCampaign', 'BootHill'],
+    ['BootHill', 'squadAssigned', 'Briefing'],
     ['Briefing', 'deploy', 'Mission'],
-    ['Mission', 'missionComplete', 'Debrief'],
-    ['Mission', 'missionFailed', 'Debrief'],
-    ['Debrief', 'casualtiesRecorded', 'BootHill'],
-    ['BootHill', 'nextLevel', 'Recruitment'],
+    ['Mission', 'missionComplete', 'BootHill'],
+    ['Mission', 'missionFailed', 'Briefing'],
     ['BootHill', 'campaignComplete', 'Menu'],
     ['Menu', 'demoShortcut', 'Mission'],
   ]
@@ -134,42 +132,97 @@ describe('every transition the chart promises', () => {
     expect(actual).toEqual(expected)
   })
 
-  it('a whole campaign loop returns to Recruitment', () => {
-    // The cycle a player actually walks, end to end, rather than nine isolated
-    // hops that happen to join up on paper.
-    const walk: FlowEvent[] = [
-      'startCampaign',
-      'squadAssigned',
-      'deploy',
-      'missionComplete',
-      'casualtiesRecorded',
-      'nextLevel',
-    ]
-    let screen: Screen = INITIAL_SCREEN
-    for (const event of walk) {
+  const walk = (from: Screen, events: readonly FlowEvent[]): Screen => {
+    let screen = from
+    for (const event of events) {
       const result = advance(screen, event)
       if (!result.ok) throw new Error(`${screen} refused ${event}: ${result.reason}`)
       screen = result.state
     }
-    expect(screen).toBe('Recruitment')
+    return screen
+  }
+
+  it('a won mission loops back to Boot Hill for the next one', () => {
+    // The cycle a player actually walks, end to end, rather than isolated hops
+    // that happen to join up on paper.
+    expect(
+      walk(INITIAL_SCREEN, ['startCampaign', 'squadAssigned', 'deploy', 'missionComplete']),
+    ).toBe('BootHill')
   })
 
-  it('and a lost mission walks the same road', () => {
-    // A defeat is not a different flow. Boot Hill is where you go either way,
-    // which is the whole emotional shape of the campaign.
-    let screen: Screen = 'Mission'
-    for (const event of ['missionFailed', 'casualtiesRecorded'] as FlowEvent[]) {
-      const result = advance(screen, event)
-      if (!result.ok) throw new Error(`${screen} refused ${event}`)
-      screen = result.state
+  it('and from there straight into the next briefing', () => {
+    expect(
+      walk(INITIAL_SCREEN, [
+        'startCampaign',
+        'squadAssigned',
+        'deploy',
+        'missionComplete',
+        'squadAssigned',
+      ]),
+    ).toBe('Briefing')
+  })
+
+  it('but a LOST mission goes back to the briefing, not to Boot Hill', () => {
+    /**
+     * THE ONE ASYMMETRY IN THE CHART, and the reason it is written down twice.
+     *
+     * A defeat means the level was not finished — no ground taken, no
+     * replacements due — so routing it through Boot Hill would promote a fresh
+     * squad for a mission about to be retried. The briefing is also the screen
+     * that says what the mission IS, which is what somebody who has just failed
+     * it wants to read again.
+     */
+    expect(walk('Mission', ['missionFailed'])).toBe('Briefing')
+  })
+
+  it('and a retry can be lost again, forever, without leaving the loop', () => {
+    // The retry has to be a LOOP, not a one-off concession. A chart that let a
+    // player fail once and then stranded them is worse than one that never
+    // offered the retry.
+    expect(walk('Mission', ['missionFailed', 'deploy', 'missionFailed', 'deploy'])).toBe('Mission')
+  })
+
+  it('and Boot Hill is still the way out of the campaign', () => {
+    expect(walk(INITIAL_SCREEN, ['startCampaign', 'campaignComplete'])).toBe('Menu')
+  })
+})
+
+describe('the screens this flow no longer has', () => {
+  it('does not name Recruitment or Debrief anywhere', () => {
+    /**
+     * REMOVED FROM THE UNION, NOT LEFT UNREACHABLE. A screen with no row is a
+     * dead state the runner must still answer about, and `SCREENS`, `EVENTS` and
+     * the view table would all go on describing a game that no longer exists —
+     * which is the drift `diagram.test.ts` exists to prevent, arriving through
+     * the front door instead.
+     *
+     * Two things go with them and neither should vanish quietly: manual squad
+     * picking, and the post-mission summary. Boot Hill is the right home for the
+     * summary — a memorial that does not name the men who just died is not doing
+     * its job — but that is its own ticket.
+     */
+    expect(SCREENS).not.toContain('Recruitment')
+    expect(SCREENS).not.toContain('Debrief')
+    for (const row of rows()) {
+      expect({ row: `${row.from}->${row.to}`, ok: true }).toEqual({
+        row: `${row.from}->${row.to}`,
+        ok: !`${row.from}${row.to}`.includes('Recruitment'),
+      })
     }
-    expect(screen).toBe('BootHill')
+  })
+
+  it('and no longer declares the events that only they used', () => {
+    // `casualtiesRecorded` and `nextLevel` were Debrief's and Boot Hill's rows
+    // into Recruitment. An event left in `EVENTS` with no row is a button the
+    // machine will always refuse.
+    expect(EVENTS).not.toContain('casualtiesRecorded')
+    expect(EVENTS).not.toContain('nextLevel')
   })
 })
 
 describe('an invalid transition is refused, not ignored', () => {
   it('refuses an event the screen has no row for', () => {
-    const result = advance('Debrief', 'deploy')
+    const result = advance('BootHill', 'deploy')
     expect(result.ok).toBe(false)
   })
 
@@ -180,7 +233,7 @@ describe('an invalid transition is refused, not ignored', () => {
      * Debrief screen, nothing happens, and there is nothing to log or show. A
      * reason is what turns that into something diagnosable.
      */
-    const result = advance('Debrief', 'deploy')
+    const result = advance('BootHill', 'deploy')
     if (result.ok) throw new Error('expected a refusal')
     expect(typeof result.reason).toBe('string')
     expect(result.reason.length).toBeGreaterThan(10)
@@ -281,13 +334,13 @@ describe('leaving a mission', () => {
      * transitions must release resources is a decision, and a decision belongs
      * where it can be tested. `main.ts` calls `teardown()` on this predicate.
      */
-    expect(isMissionExit('Mission', 'Debrief')).toBe(true)
+    expect(isMissionExit('Mission', 'BootHill')).toBe(true)
   })
 
   it('is false for transitions that never touched a mission', () => {
-    expect(isMissionExit('Menu', 'Recruitment')).toBe(false)
-    expect(isMissionExit('Debrief', 'BootHill')).toBe(false)
-    expect(isMissionExit('BootHill', 'Recruitment')).toBe(false)
+    expect(isMissionExit('Menu', 'BootHill')).toBe(false)
+    expect(isMissionExit('BootHill', 'Briefing')).toBe(false)
+    expect(isMissionExit('BootHill', 'Menu')).toBe(false)
   })
 
   it('is false for entering a mission', () => {

@@ -56,7 +56,7 @@ are named explicitly below; none are built, but none are designed out of reach.
 - Faithful Cannon Fodder core loop: point-and-click squad movement, click-to-shoot, a
   scrolling battlefield seen square-on from above, mission objectives, permadeath.
 - Grenades and rockets as selectable ordnance (brief-confirmed fidelity level).
-- Recruitment / Boot Hill screen with progression across levels.
+- Boot Hill screen with progression across levels, and a squad assigned by the game rather than picked (ticket 040).
 - Five levels imported from the supplied annotated map images.
 - Modern graphics: real 3D lighting, voxel-extruded units, post-processing, particles.
 - Audio: weapon SFX, explosions, ambience, music.
@@ -85,7 +85,7 @@ are named explicitly below; none are built, but none are designed out of reach.
 | Five levels | Platform | Same pipeline, five inputs. Level count is data, not code. |
 | Modern graphics and animations | Criterion (graphics) | Voxel-extruded meshes, PBR-lit scene, `InstancedMesh` batching, `PostFX` chain, particle FX, procedural recoil/bob animation. |
 | Grenades and rockets | MVP fidelity | `OrdnanceSystem` — a data-driven table of projectile definitions (arc, blast radius, damage falloff, cooldown); adding a type is a table row. |
-| Recruitment screen | MVP fidelity | `ui/RecruitmentScreen` reads `core/campaign` roster state. |
+| Squad assignment | MVP fidelity | Ticket 040 removed the recruitment screen: the runner fills the squad off the `core/campaign` roster, deterministically, and the player reads who is going on the mission card. |
 | Boot Hill / casualty progression | Extra (confirmed) | `core/campaign` holds persistent recruits, ranks and the dead list; `localStorage` adapter behind a `PersistencePort` interface. |
 | Audio (SFX + music) | Extra (confirmed) | `audio/AudioBus` subscribes to sim events; no gameplay code touches Web Audio directly. |
 | Post-processing polish pass | Extra (confirmed) | `render/PostFX` — `EffectComposer` chain behind a quality setting. |
@@ -193,12 +193,11 @@ All names below match `ARCHITECTURE_DIAGRAM.md`.
 |---|---|
 | `PointerController` | Raycasts pointer to the ground plane; left-click → move order, right-click / hold → fire order, scroll-wheel or hotkey → ordnance select. Emits `Command`s only — never touches `World` directly. |
 | `HUD` | Squad roster strip, ammo counts, ordnance selector, objective tracker, mission timer. DOM overlay, not WebGL — faster to build and to polish. |
-| `RecruitmentScreen` | Pre-mission recruit assignment from the `Campaign` roster. |
 | `BootHill` | Post-mission memorial: gravestones for the fallen, promotions for survivors. |
-| `Briefing` / `Debrief` | Mission intro and outcome screens. |
+| `Briefing` | The mission card, on black: `Mission <n>. With <N> soldiers you must: <objectives>`. The Debrief screen went with the Recruitment screen in ticket 040; the post-mission summary is owed to `BootHill`. |
 | `AudioBus` | Subscribes to `SimEvent`s; pooled Web Audio playback for SFX, ducked music bed, spatial panning by screen position. |
 | `GameLoop` | Fixed-timestep accumulator: steps `World` at 60 Hz, renders with interpolation at display rate. Decouples sim determinism from framerate. |
-| `StateMachine` | `Menu → Recruitment → Briefing → Mission → Debrief → BootHill → next level`. Accepts a URL-encoded entry state for the demo shortcut. |
+| `StateMachine` | `Menu → BootHill → Briefing → Mission`, a win returning to `BootHill` for the next mission and a loss to `Briefing` to try again. Accepts a URL-encoded entry state for the demo shortcut. |
 
 ### `tools/` — offline, Node-side, never shipped to the browser
 
@@ -339,8 +338,8 @@ caching a small number of concurrent fields.
 
 **DOM overlay HUD over in-canvas UI.** Rejected in-canvas UI (troika-text, sprite-based
 panels): slower to build, harder to style, worse text rendering. Cost: two rendering worlds to
-keep visually consistent. Accepted for build speed and polish-per-hour on the recruitment and
-Boot Hill screens especially.
+keep visually consistent. Accepted for build speed and polish-per-hour on the campaign screens
+— the Menu, the mission card and Boot Hill — especially.
 
 **Offline pipelines over runtime import.** Rejected runtime image parsing: slow load, untestable,
 impossible to hand-tune. Cost: a build step and committed generated artifacts. Accepted —
