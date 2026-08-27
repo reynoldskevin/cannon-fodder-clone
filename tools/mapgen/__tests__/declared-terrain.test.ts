@@ -370,6 +370,31 @@ describe('through the real importer', () => {
     expect(level.walkable[6]?.[5]).toBe(false)
   })
 
+  it('survives ticket 035`s shoreline rule, which every deck tile is subject to', () => {
+    /**
+     * THE COLLISION BETWEEN TWO TICKETS, PINNED WHERE IT CAN BE SEEN. 035
+     * reclassifies a non-water tile that touches water from the modal class of
+     * its LAND pixels — and a bridge runs across a river, so EVERY deck tile
+     * touches water and every one of them is a shoreline tile. A deck is also
+     * mostly a thin strip flanked by river, which is exactly the shape whose
+     * land vote is least reliable.
+     *
+     * So the declaration has to be checked first and a declared tile never
+     * re-judged. Without that ordering, ticket 033 is undone by ticket 035 on
+     * the only level either of them is about, and nothing else in the suite
+     * would say so.
+     */
+    build(true)
+    const { level } = importLevel({ sourceDir: dir, outDir, name: 'declared' })
+    for (const x of [5, 6]) {
+      expect({ x, terrain: level.terrain[6]?.[x], walkable: level.walkable[6]?.[x] }).toEqual({
+        x,
+        terrain: TILE.BRIDGE,
+        walkable: true,
+      })
+    }
+  })
+
   it('and is idempotent — the same source imports byte-identically twice', () => {
     build(true)
     const first = importLevel({ sourceDir: dir, outDir, name: 'declared' }).level

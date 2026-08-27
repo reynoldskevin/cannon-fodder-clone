@@ -226,6 +226,122 @@ export function tileAverages(
   }
 }
 
+/**
+ * Re-measure every tile at the WATERLINE from its land alone.
+ *
+ * WHY (ticket 035). `classifyTile` reads one averaged colour per tile, and at a
+ * boundary that average is a blend of two terrains and describes neither. Level 2
+ * makes it worse: the artist painted a dark red stroke along the whole water's
+ * edge — `rgb(80,0,0)` and neighbours, 14.6% of every shoreline tile's pixels,
+ * and nowhere near a declared marker colour, so nothing masks it out. The
+ * measured result is a shoreline averaging `rgb(45,42,20)` at luma 40 against a
+ * walkable cut of 55 and open grass at 83: every blocked shoreline tile falls
+ * under the cut, and the bank renders as a ragged line of trees and grey blocks.
+ *
+ * THE RULE IS A MODAL VOTE OVER THE LAND PIXELS, AND IT KNOWS NOTHING ABOUT RED.
+ * That is the whole design. The obvious alternative — "also drop reddish pixels"
+ * — needs a hand-tuned constant, and `image.ts` documents genuine dark red
+ * foliage around `rgb(178,64,0)` in this very artwork, so any test tuned to catch
+ * the stroke catches the foliage too. A vote needs no such constant: the stroke
+ * is a minority of a tile's land, so it loses, and a tile whose land really is
+ * red keeps that answer. It is self-calibrating, which is what makes it safe on
+ * artwork nobody has looked at.
+ *
+ * THE WATER TEST IS `classifyTile`'S OWN, called rather than restated. A second
+ * `b > r && b > g` here would be a second definition of water free to drift from
+ * the first, and the drift would show up as a shoreline that moved without the
+ * artwork changing.
+ *
+ * SCOPE IS THE SAFETY ARGUMENT. A tile with no four-connected water neighbour is
+ * not touched at all — not recomputed and found to agree, but skipped — so a
+ * level with no water anywhere (level 1) comes out byte-identical by construction
+ * rather than by luck. Four-connected matches every other neighbourhood in this
+ * pipeline; a tile touching water only at a corner shares no edge with it and
+ * cannot have caught any of it.
+ *
+ * A DECLARED TILE IS NEVER RE-JUDGED (ticket 033), and the ordering is
+ * load-bearing rather than tidy: a bridge runs ACROSS a river, so every deck tile
+ * touches water and every one of them would otherwise be a shoreline tile — a
+ * thin strip flanked by river, which is exactly the shape whose land vote is
+ * least reliable. Run this first and ticket 033 is silently undone on the only
+ * level either ticket is about.
+ *
+ * Returns a NEW grid and never writes into `averages`: the caller still needs the
+ * plain means for the declared-colour mask and the ink-fill report.
+ */
+export function shorelineAdjustedAverages(
+  image: Image,
+  tileSize: number,
+  averages: readonly (readonly RGB[])[],
+  walkableMinLuminance: number,
+  /** Annotation ink, skipped exactly as `tileAverages` skips it. */
+  inkMask?: Uint8Array,
+  /** True where `legend.json` declared the tile's colour. */
+  declaredMask?: readonly (readonly boolean[])[],
+): RGB[][] {
+  const h = averages.length
+  const w = averages[0]?.length ?? 0
+  // Classified from the PLAIN averages, so "which tiles are water" is settled
+  // before anything is adjusted. Reading a half-updated grid would make the
+  // result depend on scan order.
+  const classes = averages.map((row) => row.map((c) => classifyTile(c, walkableMinLuminance)))
+  const out: RGB[][] = averages.map((row) => [...row])
+
+  for (let ty = 0; ty < h; ty += 1) {
+    for (let tx = 0; tx < w; tx += 1) {
+      if (classes[ty]?.[tx] === TILE.WATER) continue
+      if (declaredMask?.[ty]?.[tx] === true) continue
+      const touchesWater = ([
+        [tx - 1, ty],
+        [tx + 1, ty],
+        [tx, ty - 1],
+        [tx, ty + 1],
+      ] as const).some(([nx, ny]) => classes[ny]?.[nx] === TILE.WATER)
+      if (!touchesWater) continue
+
+      // Sum per class as we go: r, g, b, count.
+      const votes = new Map<number, [number, number, number, number]>()
+      for (let y = ty * tileSize; y < (ty + 1) * tileSize; y += 1) {
+        for (let x = tx * tileSize; x < (tx + 1) * tileSize; x += 1) {
+          if (inkMask && inkMask[y * image.width + x] === 1) continue
+          const c = pixelAt(image, x, y)
+          const id = classifyTile(c, walkableMinLuminance)
+          if (id === TILE.WATER) continue
+          const acc = votes.get(id)
+          if (acc === undefined) votes.set(id, [c[0], c[1], c[2], 1])
+          else {
+            acc[0] += c[0]
+            acc[1] += c[1]
+            acc[2] += c[2]
+            acc[3] += 1
+          }
+        }
+      }
+
+      let winner: number | undefined
+      let best: [number, number, number, number] | undefined
+      for (const [id, acc] of votes) {
+        // Ties break on the LOWER id, never on `Map` insertion order, so the
+        // answer is a function of the image and not of the scan that read it —
+        // this pipeline's standing determinism rule.
+        if (best === undefined || acc[3] > best[3] || (acc[3] === best[3] && id < (winner ?? id))) {
+          winner = id
+          best = acc
+        }
+      }
+      // No land left at all. Averaging an empty set is NaN, a NaN colour falls
+      // through `classifyTile` to `unknown`, and an `unknown` tile draws as a
+      // hole in the map — so keep the plain average, which at least describes
+      // the image.
+      if (best === undefined || best[3] === 0) continue
+      const row = out[ty]
+      if (row !== undefined) row[tx] = [best[0] / best[3], best[1] / best[3], best[2] / best[3]]
+    }
+  }
+
+  return out
+}
+
 export function classifyTile(colour: RGB, walkableMinLuminance: number): number {
   const [r, g, b] = colour
   if (Math.max(r, g, b) < 12) return TILE.UNKNOWN // effectively black: no information
