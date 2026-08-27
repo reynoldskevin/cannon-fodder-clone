@@ -118,6 +118,19 @@ export interface AudioBus {
    * whole mission with it.
    */
   play(request: CueRequest, listener: AudioListener): void
+  /**
+   * Drive the ONE sustained voice for this frame (ticket 044).
+   *
+   * CALLED EVERY FRAME, INCLUDING WITH `null`. This is not an event handler —
+   * `null` is an instruction to stop, and a caller that only called it when
+   * somebody was firing would never turn the gunfire off. `core`'s `firingCue`
+   * produces the argument.
+   *
+   * Idempotent: passing a request while one is already sounding moves the
+   * existing voice rather than starting a second, so holding the trigger is one
+   * continuous loop and not a new voice per frame.
+   */
+  sustain(request: CueRequest | null, listener: AudioListener): void
   /** Master mute. Persisted across sessions. */
   setMuted(muted: boolean): void
   /** Master volume in `[0, 1]`. Persisted across sessions. */
@@ -434,8 +447,108 @@ export function createAudioBus(): AudioBus {
     source.start(now)
   }
 
+  /**
+   * The one sustained voice, or `undefined` while nothing is sounding.
+   *
+   * OUTSIDE `live[]` AND OUTSIDE THE LIMITER, deliberately. The limiter is a
+   * policy for one-shots — oldest-first stealing among voices that each end by
+   * themselves — and this voice ends only when told to. Putting it in the pool
+   * would let a volley of deaths steal the gunfire mid-loop and leave the
+   * trigger held with nothing sounding, and its slot would never be released by
+   * an `onended` that is never going to run.
+   */
+  let sustained:
+    | { readonly source: AudioBufferSourceNode; readonly gain: GainNode; readonly panner: StereoPannerNode }
+    | undefined
+
+  /** Stop the sustained voice, fading rather than cutting. See `GAIN_RAMP_SECONDS`. */
+  function stopSustained(now: number): void {
+    const voice = sustained
+    if (voice === undefined) return
+    sustained = undefined
+    // RAMPED, NOT CUT. A looping burst killed outright is a step in a running
+    // waveform, which is a click — on every trigger release, which is far more
+    // often than the mute button this constant was written for.
+    voice.gain.gain.cancelScheduledValues(now)
+    voice.gain.gain.setValueAtTime(voice.gain.gain.value, now)
+    voice.gain.gain.linearRampToValueAtTime(0, now + GAIN_RAMP_SECONDS)
+    try {
+      // Stopped AFTER the ramp has run, or the fade never gets to happen.
+      voice.source.stop(now + GAIN_RAMP_SECONDS)
+    } catch {
+      // Already stopped, or never started. Nothing left to stop either way.
+    }
+    voice.source.onended = () => {
+      voice.source.disconnect()
+      voice.gain.disconnect()
+      voice.panner.disconnect()
+    }
+  }
+
+  function sustain(request: CueRequest | null, listener: AudioListener): void {
+    if (ctx === undefined || master === undefined) return
+    const now = ctx.currentTime
+    if (request === null) {
+      stopSustained(now)
+      return
+    }
+    const samples = decoded.get(request.cue)
+    // Not decoded yet — the first firefight can begin before 10 MB of audio has
+    // finished arriving — or no asset at all. Silence, and no throw.
+    if (samples === undefined || samples.length === 0) return
+    const buffer = samples[request.variant % samples.length]
+    if (buffer === undefined) return
+
+    const positional =
+      CUE_IS_POSITIONAL[request.cue] && request.x !== undefined && request.z !== undefined
+    let pan = 0
+    let gain = 1
+    if (positional && request.x !== undefined && request.z !== undefined) {
+      pan = panFor(request.x, listener.x, listener.halfWidth)
+      gain = gainFor(Math.hypot(request.x - listener.x, request.z - listener.z))
+    }
+
+    if (sustained !== undefined) {
+      // ALREADY RUNNING: move it, do not start another. This is what makes a held
+      // trigger one continuous loop instead of sixty voices a second.
+      //
+      // Ramped for the same reason the stop is: the nearest firing man can change
+      // from one frame to the next — he dies, or somebody closer opens up — and
+      // stepping the pan and gain across that gap is an audible click on a signal
+      // that is already at full amplitude.
+      const voice = sustained
+      voice.gain.gain.setTargetAtTime(gain, now, GAIN_RAMP_SECONDS)
+      voice.panner.pan.setTargetAtTime(pan, now, GAIN_RAMP_SECONDS)
+      return
+    }
+
+    const source = ctx.createBufferSource()
+    source.buffer = buffer
+    // THE WHOLE POINT OF THIS PATH. `gunfire.wav` was measured as a continuous
+    // automatic burst with no decay — full amplitude at 1.45 s of a 1.492 s file
+    // — so it loops seamlessly enough to hold a trigger down on. A one-shot of
+    // the same buffer is the bug this ticket exists to fix.
+    source.loop = true
+    const voiceGain = ctx.createGain()
+    // FROM SILENCE, NOT FROM FULL. The attack of the sample is itself a gunshot,
+    // so a ramp this short is inaudible as a fade and still avoids the click of
+    // starting a loop at full gain mid-block.
+    voiceGain.gain.value = 0
+    voiceGain.gain.setTargetAtTime(gain, now, GAIN_RAMP_SECONDS)
+    const panner = ctx.createStereoPanner()
+    // `panFor` is bounded to [-1, 1] and never NaN — this setter throws on either
+    // — and `firingCue` has already dropped any source without a finite position.
+    panner.pan.value = pan
+    source.connect(voiceGain)
+    voiceGain.connect(panner)
+    panner.connect(master)
+    sustained = { source, gain: voiceGain, panner }
+    source.start(now)
+  }
+
   return {
     play,
+    sustain,
     setMuted(next: boolean): void {
       muted = next
       writeStored(MUTED_KEY, next ? 'true' : 'false')
@@ -456,6 +569,24 @@ export function createAudioBus(): AudioBus {
       disposed = true
       detach()
       for (let slot = 0; slot < live.length; slot += 1) release(slot)
+      // THE SUSTAINED VOICE IS NOT IN `live`, so the loop above does not touch
+      // it — and it is the one voice in the graph that would otherwise play
+      // FOREVER, because nothing but a caller ever ends it. Cut rather than
+      // ramped: the context is closing on the next line and there is no
+      // remaining moment for a fade to be heard in.
+      if (sustained !== undefined) {
+        const voice = sustained
+        sustained = undefined
+        voice.source.onended = null
+        try {
+          voice.source.stop()
+        } catch {
+          // Already stopped, or never started.
+        }
+        voice.source.disconnect()
+        voice.gain.disconnect()
+        voice.panner.disconnect()
+      }
       master?.disconnect()
       master = undefined
       // `close()` releases the audio hardware. It rejects on a context that is

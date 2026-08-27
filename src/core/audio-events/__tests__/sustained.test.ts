@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { firingCue, cueFor, AUDIO_REACH_TILES, type FiringSource } from '../index'
 
+/** The bus stamps every event; `cueFor` ignores it but the type requires it. */
+const stamp = { tick: 0, seq: 0 }
+
 /**
  * Ticket 044 — gunfire is a sustained sound, not a one-shot per round.
  *
@@ -100,6 +103,7 @@ describe('a round no longer asks for a cue of its own', () => {
      */
     expect(
       cueFor({
+        ...stamp,
         type: 'ShotFired',
         shooterId: 1,
         targetId: 2,
@@ -116,6 +120,7 @@ describe('a round no longer asks for a cue of its own', () => {
   it('and so is an enemy round, which is the same weapon table', () => {
     expect(
       cueFor({
+        ...stamp,
         type: 'ShotFired',
         shooterId: 1,
         targetId: 2,
@@ -133,7 +138,7 @@ describe('a round no longer asks for a cue of its own', () => {
     // The control. A `cueFor` that returned null for everything passes both
     // cases above.
     expect(
-      cueFor({ type: 'Explosion', x: 1, y: 0, z: 1, radiusTiles: 3, ordnance: 'grenade', sourceId: 1 }),
+      cueFor({ ...stamp, type: 'Explosion', x: 1, y: 0, z: 1, radiusTiles: 3, ordnance: 'grenade', sourceId: 1 }),
     ).not.toBeNull()
   })
 })
