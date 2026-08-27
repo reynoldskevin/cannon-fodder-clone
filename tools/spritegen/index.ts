@@ -69,6 +69,43 @@ export const PROPS = [
 export type PropName = (typeof PROPS)[number]
 
 /**
+ * The effects, in a fixed order (ticket 064).
+ *
+ * THE THIRD CATEGORY, AND IT EARNED ITS PLACE. A `unit` is eight facings by N
+ * frames; a `prop` is one frame and no facings — which is why ticket 053 could
+ * add the grenade and the rocket by writing two filenames into `PROPS`. An
+ * effect is N FRAMES AND NO FACINGS, which is neither, and there is no way to
+ * spell it in the other two: as a prop it would be one frame of three, and as a
+ * unit it would need eight copies of a fireball that looks the same from every
+ * side.
+ *
+ * THE FRAME COUNT IS DECLARED, NOT INFERRED FROM THE FILE. `explosion.png` is
+ * 3072x1024, which divides just as evenly into one cell, three, or six; a
+ * pipeline that guessed would guess differently the first time somebody
+ * repainted the strip at a different width.
+ */
+export const EFFECTS = ['explosion'] as const
+export type EffectName = (typeof EFFECTS)[number]
+
+/** How many frames each effect's strip holds, left to right. */
+const EFFECT_FRAMES: Record<EffectName, number> = { explosion: 3 }
+
+/**
+ * Playback rate per effect.
+ *
+ * 12fps ACROSS THREE FRAMES IS A QUARTER OF A SECOND, which is about as long as
+ * a blast can hold the eye before it stops reading as an impact and starts
+ * reading as a fire. It is the same rate the soldier's walk and fire cycles run
+ * at, so nothing on screen is animating on a visibly different clock.
+ *
+ * THIS NUMBER CROSSES A WIRE. `core/session` decides how many TICKS to keep a
+ * blast alive and cannot see this file; the two are pinned together by a
+ * contract test in `src/core/session/__tests__/blast-drawn.test.ts` that reads
+ * the generated manifest. Change it here and that test is what fails.
+ */
+const EFFECT_FPS: Record<EffectName, number> = { explosion: 12 }
+
+/**
  * Playback rate per animation. Four frames each, so these are the whole timing
  * story: a walk cycle at 12fps is a third of a second per stride, `fire` reads
  * as a single snappy recoil, and `die` is deliberately slower so the fall
@@ -258,6 +295,20 @@ export interface PropEntry {
   cell: { width: number; height: number }
 }
 
+/**
+ * One effect: an ordered run of frames and the rate they play at (ticket 064).
+ *
+ * THE FRAMES ARE AN ARRAY AND THE ORDER IS THE ANIMATION. Each entry is shaped
+ * exactly like a `PropEntry` because a frame of an effect IS a prop-shaped
+ * thing — a rect, an offset, an anchor and the cell it was trimmed out of — and
+ * inventing a parallel shape would mean a second `resolve` in the runtime
+ * reader.
+ */
+export interface EffectEntry {
+  fps: number
+  frames: PropEntry[]
+}
+
 export interface GroundEntry {
   /** Emitted as its own texture — see `buildSprites`. */
   file: string
@@ -287,6 +338,8 @@ export interface SpriteManifest {
   atlas: { file: string; width: number; height: number; padding: number }
   units: { soldier: UnitEntry }
   props: Record<string, PropEntry>
+  /** The multi-frame, facing-less effects (ticket 064). */
+  effects: Record<string, EffectEntry>
   /**
    * The tileable ground textures, keyed by surface (ticket 034).
    *
@@ -504,6 +557,49 @@ export function buildSprites(options: BuildOptions): BuildResult {
     })
   }
 
+  // --- effects ------------------------------------------------------------
+  // ONE PENDING ENTRY PER FRAME, ids `effect/<name>/<index>`. The packer knows
+  // nothing about animation and does not need to: the ORDER lives in the
+  // manifest below, which reads the frames back by index.
+  for (const effect of EFFECTS) {
+    const path = join(sourceDir, `${effect}.png`)
+    if (!existsSync(path)) throw new SpritegenError(`effect is missing: ${path}`)
+    const { image, decision } = stripLightMatte(
+      `effect/${effect}`,
+      decodePngFile(path, `effect ${effect}`),
+      options.matte?.[`effect/${effect}`],
+    )
+    matteDecisions.push(decision)
+    const count = EFFECT_FRAMES[effect]
+    // A STRIP, SO ONE ROW. `sliceGrid` refuses a sheet that does not divide
+    // evenly, which is the check that catches a repainted strip of the wrong
+    // width before it becomes three frames sliced off-centre.
+    const cells = sliceGrid(image, { cols: count, rows: 1 })
+    const dstW = scaled(image.width / count, scale)
+    const dstH = scaled(image.height, scale)
+    for (const [index, cell] of cells.entries()) {
+      const small = resampleRegion(image, cell, dstW, dstH)
+      const trimmed = trimFrame(small, { originX: 0, originY: 0, width: dstW, height: dstH })
+      if (trimmed.empty) {
+        throw new SpritegenError(
+          `effect ${effect} frame ${String(index)} has no opaque pixels: ${path}`,
+        )
+      }
+      pending.push({
+        id: `effect/${effect}/${String(index)}`,
+        image: cropImage(small, {
+          originX: trimmed.offsetX,
+          originY: trimmed.offsetY,
+          width: trimmed.width,
+          height: trimmed.height,
+        }),
+        offset: { x: trimmed.offsetX, y: trimmed.offsetY },
+        anchor: cellAnchor({ width: dstW, height: dstH }),
+        cell: { width: dstW, height: dstH },
+      })
+    }
+  }
+
   // --- pack ---------------------------------------------------------------
   const inputs: PackInput[] = pending.map((p) => ({
     id: p.id,
@@ -580,6 +676,28 @@ export function buildSprites(options: BuildOptions): BuildResult {
     }
   }
 
+  const effects: Record<string, EffectEntry> = {}
+  for (const effect of EFFECTS) {
+    const frames: PropEntry[] = []
+    for (let index = 0; index < EFFECT_FRAMES[effect]; index += 1) {
+      const id = `effect/${effect}/${String(index)}`
+      const src = byId.get(id)
+      if (!src) throw new SpritegenError(`missing effect frame ${id}`)
+      // BY INDEX, NOT BY ITERATING THE PACKER'S OUTPUT. The placements are
+      // sorted by id string so the atlas bytes are stable, and that sort is
+      // lexicographic — which for a ten-frame effect would run 0, 1, 10, 2.
+      // Reading the frames back by number is what keeps the animation in the
+      // order it was painted.
+      frames.push({
+        rect: take(id),
+        offset: src.offset,
+        anchor: src.anchor,
+        cell: src.cell,
+      })
+    }
+    effects[effect] = { fps: EFFECT_FPS[effect], frames }
+  }
+
   // --- ground textures ------------------------------------------------------
   // Each stays OUT of the atlas and is emitted as its own texture. They are the
   // textures that need GPU wrapping, and wrapping is a property of the whole
@@ -638,6 +756,7 @@ export function buildSprites(options: BuildOptions): BuildResult {
     atlas: { file: 'atlas.png', width: packed.width, height: atlasHeight, padding: PADDING },
     units: { soldier: { cell: unitCell, animations } },
     props,
+    effects,
     ground,
   }
 

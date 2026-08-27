@@ -165,3 +165,83 @@ describe('failure handling', () => {
     expect(() => buildSprites({ sourceDir: join(dir, 'nope'), outDir: dir })).toThrow()
   })
 })
+
+describe('effects — the third category (ticket 064)', () => {
+  /**
+   * A UNIT IS EIGHT FACINGS x N FRAMES. A PROP IS ONE FRAME AND NO FACINGS.
+   * An effect is N frames and no facings, which is neither of those, and it is
+   * why this ticket had to touch the packer rather than just add a filename to
+   * `PROPS` the way ticket 053 did for the grenade and the rocket.
+   *
+   * `explosion.png` is 3072x1024 — three 1024 cells, small then medium then
+   * large, on a transparent background. Every number here was measured off the
+   * file before any pipeline code was written, so it is independent of what the
+   * pipeline decided to do.
+   */
+
+  it('emits the explosion', () => {
+    expect(out.manifest.effects.explosion).toBeDefined()
+  })
+
+  it('as THREE frames, which is what is painted on the sheet', () => {
+    // Not "more than one": three, because three is what the artwork has, and a
+    // slicer that read the strip as one cell or as four would still produce
+    // something that drew.
+    expect(out.manifest.effects.explosion?.frames).toHaveLength(3)
+  })
+
+  it('each with its own rect in the atlas', () => {
+    /**
+     * THREE DISTINCT RECTS. A packer that placed one rect and pointed all three
+     * frames at it would animate nothing at all — and would pass a frame-count
+     * check, which is exactly why the rects are compared and not just counted.
+     */
+    const frames = out.manifest.effects.explosion?.frames ?? []
+    const rects = frames.map((f) => `${String(f.rect.x)},${String(f.rect.y)}`)
+    expect(new Set(rects).size).toBe(3)
+    for (const frame of frames) {
+      expect(frame.rect.width).toBeGreaterThan(0)
+      expect(frame.rect.height).toBeGreaterThan(0)
+      expect(frame.anchor).toBeDefined()
+    }
+  })
+
+  it('and the LAST frame is the biggest, because the blast ends widest', () => {
+    /**
+     * THE ORDER IS THE ANIMATION. The sheet is painted left to right as a
+     * fireball expanding, so a slicer that reversed the strip, or read the
+     * frames back in the packer's own (lexicographic) id order, would play the
+     * explosion backwards — three frames of fire that look fine at a glance.
+     *
+     * THE OBVIOUS CHECK IS WRONG HERE AND IT IS WORTH SAYING WHY. "Each frame is
+     * bigger than the last" fails on this artwork: the trimmed boxes measure
+     * 443520, 333234 and 523827 square source pixels. Frame 0 is a SMALL
+     * fireball surrounded by flung debris — a stray star up and left, specks
+     * top-right — and those specks push its bounding box wider than frame 1's
+     * compact starburst. The fireball grows monotonically; its bounding box does
+     * not, and only the opaque-pixel count would (159098, 163937, 249453), which
+     * the manifest does not carry.
+     *
+     * So the property asserted is the one that is true AND still catches a
+     * reversal: the last frame is the largest of the three. Reversed, the 523827
+     * box lands first and this fails on the very first comparison.
+     */
+    const areas = (out.manifest.effects.explosion?.frames ?? []).map(
+      (f) => f.rect.width * f.rect.height,
+    )
+    expect(areas[2]).toBeGreaterThan(Number(areas[0]))
+    expect(areas[2]).toBeGreaterThan(Number(areas[1]))
+  })
+
+  it('and carries the rate they play at', () => {
+    // The renderer needs it and `core/session` has to agree with it — see the
+    // contract test in `src/core/session/__tests__/blast-drawn.test.ts`.
+    expect(out.manifest.effects.explosion?.fps).toBeGreaterThan(0)
+  })
+
+  it('and the effect is NOT also packed as a prop', () => {
+    // The two categories are packed by different code down different paths. A
+    // filename that reached both would be in the atlas twice.
+    expect(out.manifest.props['explosion']).toBeUndefined()
+  })
+})

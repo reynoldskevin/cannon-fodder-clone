@@ -369,6 +369,51 @@ const PROP_ID_BASE = 2_000_000
 const ORDNANCE_ID_BASE = 3_000_000
 
 /**
+ * Where blast ids begin — the fourth and last id space (ticket 064).
+ *
+ * The same argument `ORDNANCE_ID_BASE` makes one space down. A blast is keyed on
+ * `ExplosionEvent.seq`, which is strictly increasing across the whole mission
+ * and never reset, so it is already a unique number — it is just a SMALL one,
+ * from the same range `World` issues to soldiers. Unoffset, the fourth event of
+ * a mission and soldier 4 would share the renderer's animation phase, and the
+ * man would inherit the fireball's.
+ */
+const BLAST_ID_BASE = 4_000_000
+
+/**
+ * The synthetic animation a detonation answers to (ticket 064).
+ *
+ * Spelled here rather than imported from `src/render`, like every other clip
+ * name in this file — `core` may not reach into the render layer. The matching
+ * literal is `BURST_CLIP` in `src/render/sprite-atlas.ts`, and
+ * `blast-drawn.test.ts` is what holds the two spellings together.
+ */
+export const BLAST_ANIMATION = 'burst'
+
+/**
+ * The blast's three frames and the rate they play at.
+ *
+ * DUPLICATED FROM THE MANIFEST ON PURPOSE, AND PINNED TO IT BY A TEST. The
+ * numbers belong to `tools/spritegen`, which writes them into
+ * `sprites.manifest.json`; `core` cannot read a file and must not import the
+ * tool, but it does have to know how long to keep a blast alive. Two copies is
+ * the honest cost, and `blast-drawn.test.ts` reads the SHIPPED manifest and
+ * fails if they drift — which they otherwise would silently, leaving the blast
+ * either cut off mid-bang or frozen on the fireball.
+ */
+export const BLAST_FRAMES = 3
+export const BLAST_FPS = 12
+
+/**
+ * How many ticks a blast stays on the field.
+ *
+ * ROUNDED UP, so the last frame is shown rather than clipped: at 12fps three
+ * frames take 0.25s, which is exactly 15 ticks, and a `floor` here would drop
+ * the frame the whole animation builds to.
+ */
+const BLAST_TICKS = Math.ceil((BLAST_FRAMES / BLAST_FPS) / FIXED_TIMESTEP)
+
+/**
  * The synthetic animation a round in the air answers to.
  *
  * The same string `session/props.ts` uses and for the same reason: `UnitVisual`
@@ -523,6 +568,22 @@ interface Corpse {
   readonly x: number
   readonly z: number
   readonly diedAtTick: number
+}
+
+/**
+ * A detonation, for as long as its animation runs (ticket 064).
+ *
+ * NOT WHERE THE ROUND WAS — where the EXPLOSION was. The event carries the point
+ * of impact, and `ExplosionEvent.y` (the height it went off at) is deliberately
+ * not kept: a grenade that detonates on its fuse goes off in the air, and a
+ * fireball hanging above the ground reads as a bug. The blast belongs where the
+ * damage is.
+ */
+interface Blast {
+  readonly seq: number
+  readonly x: number
+  readonly z: number
+  readonly atTick: number
 }
 
 /**
@@ -770,6 +831,16 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
   const corpses: Corpse[] = []
 
   /**
+   * The detonations still burning (ticket 064).
+   *
+   * PRUNED, UNLIKE `corpses`. A body stays for the mission because a battlefield
+   * keeps its dead; a fireball that never went out would be a campfire, and the
+   * renderer holds a one-shot clip's last frame forever, so nothing downstream
+   * would end it.
+   */
+  const blasts: Blast[] = []
+
+  /**
    * The authored facing of every unit that has not moved yet, by entity id.
    *
    * Per-unit state that has to outlive the tick it was read on, because a unit
@@ -843,6 +914,19 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
       if (event === undefined) continue
       pending.push(event)
       if (event.type === 'ShotFired') lastFiredTick.set(event.shooterId, world.tickCount)
+      /**
+       * A DETONATION BECOMES A PICTURE (ticket 064). Recorded off the same drain
+       * the corpses are, and for the same reason: `drainEvents` empties the bus,
+       * so anything that wants to see an event has to be told here.
+       *
+       * `seq` IS THE ID. It is strictly increasing across the whole mission and
+       * never reset, so two grenades that go off on the same tick are two
+       * blasts — which a key built from the tick, or from the position, would
+       * merge into one.
+       */
+      if (event.type === 'Explosion') {
+        blasts.push({ seq: event.seq, x: event.x, z: event.z, atTick: world.tickCount })
+      }
       if (event.type !== 'UnitDied') continue
       const track = tracks.get(event.id)
       corpses.push({
@@ -852,6 +936,25 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
         z: track?.z ?? 0,
         diedAtTick: world.tickCount,
       })
+    }
+    /**
+     * PUT OUT THE FIRES THAT HAVE BURNED OUT (ticket 064).
+     *
+     * HERE AND NOT IN `renderEntities`, which is a pure read that a frame may
+     * call, may call twice, or may not call at all. Pruning there would make the
+     * list's contents depend on how often somebody drew — and a headless run,
+     * which is what most of the test suite is, would accumulate every blast of
+     * the mission.
+     *
+     * A BACKWARD SPLICE, because the list is in tick order and the expired ones
+     * are always at the front; removing from the front forward would renumber
+     * the entries still being examined.
+     */
+    for (let i = blasts.length - 1; i >= 0; i -= 1) {
+      const blast = blasts[i]
+      if (blast !== undefined && world.tickCount - blast.atTick >= BLAST_TICKS) {
+        blasts.splice(i, 1)
+      }
     }
   }
 
@@ -1291,6 +1394,39 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
         // NOT SUBMERGED, whatever it is over. A grenade in the air above a river
         // is not in the river, and the tile lookup that decides submersion for a
         // man standing on it says nothing about a round eight units above it.
+        submersion: 0,
+      })
+    }
+
+    /**
+     * THE FIREBALLS (ticket 064).
+     *
+     * ON THE GROUND, at the explosion's own x and z. See `Blast` for why the
+     * event's `y` — the height the round went off at — is not used.
+     *
+     * `animationStart` IS WHEN IT WENT OFF, which is what makes the clip play
+     * from its first frame. Left at 0 the renderer would compute the phase from
+     * the mission clock, and a blast at forty seconds would open on whichever
+     * frame the cycle happened to be on — usually the last, so the explosion
+     * would play its own ending.
+     *
+     * NO HEADING. A fireball has no nose; `dx`/`dz` at zero is what stops the
+     * renderer turning it, and is the one line that keeps this from inheriting
+     * the rocket's spin (ticket 055).
+     */
+    for (const blast of blasts) {
+      const tile = tileOf(blast.x, blast.z)
+      out.push({
+        id: BLAST_ID_BASE + blast.seq,
+        unit: 'explosion',
+        animation: BLAST_ANIMATION,
+        x: blast.x,
+        z: blast.z,
+        y: groundHeightAt(tile.x, tile.y),
+        dx: 0,
+        dz: 0,
+        animationStart: blast.atTick * FIXED_TIMESTEP,
+        // A blast over a river is a blast, not a swimmer.
         submersion: 0,
       })
     }
