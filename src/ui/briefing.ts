@@ -14,12 +14,13 @@
  * built from the very list the model returns, and a screen that derived its own
  * would be a second answer to the only number on the card.
  *
- * IT IS BLACK, NOT THE SHARED CHROME. Every other campaign screen is a panel
- * floating on a dimmed canvas — see `screen-chrome.ts` — and this one is
- * deliberately not: the card is a beat between the memorial and the beach, and a
- * translucent panel with the last mission's terrain showing through it is not a
- * beat, it is a dialog. So it builds its own full-bleed backdrop, and that is
- * the one thing this screen does differently from its siblings.
+ * IT IS BLACK, AND SINCE TICKET 043 SO IS EVERY OTHER CAMPAIGN SCREEN. This file
+ * used to be the exception — the Menu and Boot Hill were panels floating on a
+ * dimmed canvas with the level showing through, and this one was not, on the
+ * reasoning that the card is a beat between the memorial and the beach and a
+ * translucent dialog is not a beat. That reasoning was right and it applied to
+ * all three, so the other two moved onto this look rather than this one moving
+ * back. The value now lives in `screen-chrome.ts` and this screen reads it.
  *
  * THERE IS NO WAY BACK, AND THAT IS THE CHART'S DOING RATHER THAN THIS FILE'S.
  * `ARCHITECTURE_DIAGRAM.md` has no row out of `Briefing` except `deploy`, so a
@@ -28,7 +29,7 @@
  * screen.
  */
 
-import { createButton, TEXT } from './screen-chrome'
+import { createButton, createChrome } from './screen-chrome'
 import { objectiveLabel } from './hud'
 import type { BriefingModel } from '../core/flow'
 
@@ -62,34 +63,17 @@ export function missionLine(levelNumber: number, soldierCount: number): string {
   return `Mission ${String(levelNumber)}. With ${men} you must:`
 }
 
-/** The full-bleed black the card sits on. Not `screen-chrome`'s dimmed panel. */
-const CARD_STYLE = [
-  'position:fixed',
-  'inset:0',
-  'z-index:60',
-  'display:flex',
-  'flex-direction:column',
-  'align-items:flex-start',
-  'justify-content:center',
-  'gap:1.25rem',
-  'padding:2rem clamp(2rem, 12vw, 10rem)',
-  // Opaque, and the point of the screen. See the header.
-  'background:#000',
-  'font:15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif',
-  `color:${TEXT}`,
-].join(';')
-
 export function createBriefing(mount: HTMLElement, options: BriefingOptions): BriefingScreen {
   const { model } = options
 
-  const backdrop = document.createElement('div')
-  backdrop.setAttribute('role', 'dialog')
-  // `aria-modal="false"` deliberately, as Boot Hill and the Menu have it: the
-  // canvas is still on the page underneath, and claiming a modal would tell a
-  // screen reader the rest of it had gone away when it has not.
-  backdrop.setAttribute('aria-modal', 'false')
-  backdrop.setAttribute('aria-label', 'Mission briefing')
-  backdrop.style.cssText = CARD_STYLE
+  // `createChrome` sets the role, the `aria-modal="false"` this screen used to
+  // set by hand, and the label. It is also what puts the content in a COLUMN
+  // rather than straight onto the backdrop — which is not cosmetic: the shared
+  // backdrop carries `pointer-events:none` so a stray click is swallowed, and
+  // that inherits, so the Start button appended directly to it could not be
+  // clicked at all. This screen's own backdrop never had that rule, so the bug
+  // arrived with the convergence and was caught by pressing the button.
+  const { backdrop, panel } = createChrome('Mission briefing')
 
   const line = document.createElement('h1')
   line.textContent = missionLine(model.levelNumber, model.soldierCount)
@@ -108,7 +92,7 @@ export function createBriefing(mount: HTMLElement, options: BriefingOptions): Br
 
   const deploy = createButton('Start')
 
-  backdrop.append(line, objectives, deploy)
+  panel.append(line, objectives, deploy)
   mount.append(backdrop)
   // Focused, so the keyboard alone can start the mission — and so the player's
   // next click does not go to the canvas underneath by accident.
