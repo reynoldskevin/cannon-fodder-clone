@@ -764,17 +764,31 @@ describe('BACK TO BASE — the Briefing is no longer a one-way door (ticket 059)
      * pass — and every later pass finds the men already there. That is a
      * property of `selectSquad` this test pins from the outside, because nothing
      * in the runner would notice if it changed.
+     *
+     * THE FIXTURE HAS TO FORCE THE AUTO-FILL OR THIS CASE PROVES NOTHING. The
+     * campaign starts with `DEFAULT_RECRUITS` (8) men and the levels used
+     * everywhere else in this file land 3, so `selectSquad` takes its early
+     * return and never reaches `autoFill` — a version of this test written
+     * against those levels passes on a runner that recruits a fresh platoon
+     * every lap, because there is nothing left to recruit. TEN landing positions
+     * against eight men is what makes the first pass enlist, and the assertion
+     * below that it DID is the non-vacuity check.
      */
-    const { runner } = runnerFor(THREE_LEVELS)
+    const { runner } = runnerFor([makeLevel('Overlord', 10)])
+    const fresh = runner.campaign().recruitsIssued
     toBriefing(runner)
     const roster = recruitsAvailable(runner.campaign()).map((m) => m.id)
     const issued = runner.campaign().recruitsIssued
+    // The fixture works: getting to the briefing at all had to enlist.
+    expect(issued).toBeGreaterThan(fresh)
+    expect(roster).toHaveLength(10)
 
     for (let lap = 0; lap < 10; lap += 1) {
       expect(runner.backToBase().ok).toBe(true)
       expect(runner.advanceFromBootHill().ok).toBe(true)
     }
 
+    // Ten round trips later: the same men, and not one name issued.
     expect(recruitsAvailable(runner.campaign()).map((m) => m.id)).toEqual(roster)
     expect(runner.campaign().recruitsIssued).toBe(issued)
     expect(runner.screen()).toBe('Briefing')

@@ -164,6 +164,16 @@ export interface CampaignRunner {
    * campaign is finished" in the one layer nothing can test.
    */
   advanceFromBootHill(): AdvanceResult
+  /**
+   * Leave the Briefing without deploying, back to Boot Hill (ticket 059).
+   *
+   * A SCREEN MOVE AND NOTHING ELSE — the one command in this interface that
+   * touches no campaign, no squad, no store and no host. The squad in particular
+   * is KEPT: `advanceFromBootHill` re-assigns on the way back out, so clearing
+   * it here would be a second answer to who is deploying, and the loser would be
+   * whatever read `squad()` in between.
+   */
+  backToBase(): AdvanceResult
 }
 
 /**
@@ -570,6 +580,27 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
       }
       return settle(moved)
     },
+
+    /**
+     * Back to the hill (ticket 059).
+     *
+     * THE WHOLE COMMAND IS `settle(advance(...))`, AND THAT IS THE POINT. It is
+     * the only one here with nothing else to do: the chart refuses it from
+     * anywhere but the Briefing, `settle` runs no teardown because the Briefing
+     * is not a mission, and everything the player would come back to — the
+     * campaign, the squad, the save — is already exactly right.
+     *
+     * IT DELIBERATELY DOES NOT CLEAR THE SQUAD. The temptation is to say "he has
+     * gone back to choose again", but nobody chooses any more (ticket 040) and
+     * `advanceFromBootHill` re-assigns off the roster on the way back out
+     * anyway. Clearing here would leave a window where `squad()` and
+     * `briefing()` disagree about who is deploying, for no gain.
+     *
+     * AND IT WRITES NOTHING. A save on a screen move would put a store failure
+     * in front of a player who did nothing but press Back — and there would be
+     * nothing new in it to write.
+     */
+    backToBase: () => settle(advance(screen, 'backToBase')),
   }
 
   return runner

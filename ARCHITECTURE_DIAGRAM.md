@@ -173,6 +173,7 @@ stateDiagram-v2
   Mission --> Briefing: MissionFailed
   BootHill --> Menu: campaign complete
   Menu --> Mission: ?demo=1&level=N (demo shortcut)
+  Briefing --> BootHill: back to base
 ```
 
 Four screens: the title, Boot Hill with the squad assigned FOR the player, the
@@ -184,6 +185,12 @@ finished, so no ground was taken and no replacements are due — routing a defea
 through Boot Hill would promote a fresh squad for a mission about to be retried.
 The Briefing is also the screen that says what the mission is, which is what
 somebody who has just failed it wants to read again.
+
+`Briefing --> BootHill` is the **only edge that goes backwards**, and it exists
+because both routes into the Briefing used to leave the player with deploy as his
+only move. It is a door on one screen and not a general Back: the same event from
+a Mission would tear down a live scene, and from the Menu it would open the
+memorial of a campaign that has not been started.
 
 ## Build & deploy boundary
 

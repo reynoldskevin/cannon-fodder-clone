@@ -33,6 +33,7 @@ export type FlowEvent =
   | 'missionFailed'
   | 'campaignComplete'
   | 'demoShortcut'
+  | 'backToBase'
 
 /** One row of the chart: pressing `event` on `from` lands on `to`. */
 export interface Transition {
@@ -65,6 +66,7 @@ export const EVENTS: readonly FlowEvent[] = [
   'missionFailed',
   'campaignComplete',
   'demoShortcut',
+  'backToBase',
 ]
 
 /**
@@ -93,6 +95,21 @@ export const TRANSITIONS: readonly Transition[] = [
   { from: 'Mission', event: 'missionFailed', to: 'Briefing' },
   { from: 'BootHill', event: 'campaignComplete', to: 'Menu' },
   { from: 'Menu', event: 'demoShortcut', to: 'Mission' },
+  /**
+   * THE ONLY ROW THAT GOES BACKWARDS (ticket 059).
+   *
+   * The Briefing was a one-way door: both routes in — a squad assigned on Boot
+   * Hill, and a mission failed — left the player with deploy as the only thing
+   * he could do. Somebody who wanted to look at the roster again, or who landed
+   * here by losing and wanted to read the memorial before retrying, had to
+   * reload the page.
+   *
+   * IT IS NOT A GENERAL BACK BUTTON AND MUST NOT BECOME ONE. The same event from
+   * a Mission would tear down a live scene mid-firefight; from the Menu it would
+   * open the memorial of a campaign that has not been started. One row, one
+   * door.
+   */
+  { from: 'Briefing', event: 'backToBase', to: 'BootHill' },
 ]
 
 const isScreen = (value: unknown): value is Screen =>
