@@ -19,7 +19,7 @@
  */
 
 import { recruitsAvailable } from './roster'
-import type { CampaignState, Recruit } from './types'
+import type { CampaignState } from './types'
 
 /**
  * One promotion, as the screen announces it.
@@ -69,12 +69,25 @@ export interface BootHillModel {
   /** Every man who ever died, OLDEST FIRST. The hill grows; it never resets. */
   readonly graves: readonly Grave[]
   /**
-   * The men still standing from the last mission — the original's SQUAD column.
+   * The men available for the NEXT mission — the original's SQUAD column.
    *
-   * THE SURVIVORS, WHICH IS THE CALLER'S FILTERING RATHER THAN THIS FUNCTION'S.
-   * The runner hands over the squad records it can still find on the living
-   * roster, so a man who fell is on the hill above and not in this list — the
-   * only arrangement in which the two columns cannot name the same man twice.
+   * THE LIVING ROSTER, NOT THE SURVIVORS OF THE LAST MISSION (ticket 056). It
+   * was the survivors, and the bug that exposes is the ordinary case rather than
+   * an edge one: level 1 sends two men, both die, and a player who still had six
+   * recruits waiting was shown an empty column reading "Nobody came back". The
+   * column answers "who have I got", and a man in reserve counts.
+   *
+   * NOBODY ON THE HILL IS EVER IN IT, and that falls out of the shape rather
+   * than out of a check: it is `recruitsAvailable`, which reads the LIVING
+   * roster, so a man who fell is a cross and a HEROES row and cannot be in both
+   * columns.
+   *
+   * THE NEXT SQUAD IS NOT ASSIGNED YET AND THIS IS NOT A PREDICTION OF IT.
+   * Assignment happens on the way out of this screen (`advanceFromBootHill` ->
+   * `selectSquad`), and it takes `maxSquadFor(level)` men off the front of this
+   * very list. Listing the first N here as though they were chosen would be a
+   * second copy of that rule, in a screen that cannot be tested, disagreeing
+   * with the real one the day a level changes its avatar count.
    */
   readonly squad: readonly Trooper[]
   /**
@@ -160,15 +173,6 @@ export function bootHillModel(
   state: CampaignState,
   promotions: readonly Promotion[],
   previous?: CampaignState,
-  /**
-   * The men who went on the last mission and are still alive.
-   *
-   * DEFAULTS TO EMPTY, which is the honest answer for a caller with nothing to
-   * say — a reload, or a memorial reached before anybody has deployed. The
-   * alternative is showing the whole living roster as though it were the squad,
-   * which would put men in the SQUAD column who never left the beach.
-   */
-  squad: readonly Recruit[] = [],
 ): BootHillModel {
   // Oldest first, which is `state.dead`'s own order: ticket 019's dead list is
   // append-only and never re-sorted, so insertion order IS chronological order.
@@ -181,10 +185,23 @@ export function bootHillModel(
 
   return {
     graves,
-    // A FRESH ROW PER MAN, carrying only what the column prints. Handing back
-    // the roster records would leak `id`, `status` and whatever ticket 019 adds
-    // next into a screen that has no business with any of it.
-    squad: squad.map((man) => ({ name: man.name, rank: man.rank, kills: man.kills })),
+    /**
+     * READ OFF THE STATE, NOT PASSED IN (ticket 056). It was an argument while
+     * it meant "the men who went on the last mission", which is knowledge only
+     * the runner has. The living roster is not: it is `recruitsAvailable(state)`
+     * and nothing else, so taking it as a parameter could only ever let a caller
+     * hand over a different answer — which is exactly what happened, and how a
+     * player with six men in reserve was told nobody came back.
+     *
+     * A FRESH ROW PER MAN, carrying only what the column prints. Handing back
+     * the roster records would leak `id`, `status` and whatever ticket 019 adds
+     * next into a screen that has no business with any of it.
+     */
+    squad: recruitsAvailable(state).map((man) => ({
+      name: man.name,
+      rank: man.rank,
+      kills: man.kills,
+    })),
     enemyKilled: totals.kills,
     casualties: totals.casualties,
     promotions: [...promotions],
