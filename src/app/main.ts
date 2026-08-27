@@ -76,18 +76,6 @@ const SPRITES_URL = './generated/sprites/sprites.manifest.json'
 /** Longest a frame may claim to be, so a backgrounded tab doesn't teleport the camera. */
 const MAX_FRAME_DT = 1 / 15
 
-/**
- * Scorch marks a level may carry at once (ticket 025).
- *
- * BIGGER THAN THE EFFECTS POOL AND FOR A DIFFERENT REASON. A burst pool is sized
- * for "how much can be going off in the same instant"; a scar lives for 45 s, so
- * this is sized for how much ordnance a squad can spend crossing a level. Both
- * grenade and rocket cost ammunition the armoury issues per mission, so this sits
- * comfortably above what a full loadout can produce — which is what makes
- * eviction a safety net rather than something the player watches happen.
- */
-const DECAL_POOL_CAPACITY = 128
-
 function mountPoint(): HTMLElement {
   const existing = document.querySelector<HTMLElement>('#app')
   if (existing) return existing
@@ -413,18 +401,6 @@ async function boot(): Promise<void> {
   let effects = createFxBuffer()
 
   /**
-   * The scorch marks, in a POOL OF THEIR OWN.
-   *
-   * A scar lives for 45 s and a burst for 0.4, so one shared ring would let a
-   * single busy second evict every mark on the map and the ground would go clean
-   * while the player watched. The argument is about capacity, not about code —
-   * see `createFxBuffer` — so this is a second instance of the same ring with a
-   * cap that means "how many marks a map may carry" rather than "how much can be
-   * happening at once".
-   */
-  let scars = createFxBuffer({ capacity: DECAL_POOL_CAPACITY })
-
-  /**
    * EVERYTHING ON SCREEN THAT BELONGS TO ONE LEVEL (ticket 024).
    *
    * A `let`, and rebuilt by `startMission` when the campaign moves to a level
@@ -452,7 +428,6 @@ async function boot(): Promise<void> {
     readonly built: BuiltScene
     readonly tracerFx: TracerRenderer
     readonly effectFx: FxRenderer
-    readonly decalFx: FxRenderer
     readonly rig: CameraRig
     readonly pan: PanController
     readonly zoom: ZoomController
@@ -473,16 +448,12 @@ async function boot(): Promise<void> {
     })
     built.scene.add(tracerFx.object)
 
-    // THE SCARS FIRST AND THE FLASHES SECOND, which is the order they are added
-    // to the scene and — both meshes writing no depth at the same `renderOrder`
-    // — the order they are composited in. A burst over its own scorch mark is
-    // right; the mark over the burst is a hole in the explosion.
-    //
-    // Two renderers rather than one fed both pools, because the two differ in
-    // the one thing a material cannot vary per effect: a scar is PAINT and a
-    // flash is LIGHT. Additively blending something almost black draws nothing
-    // at all. Each is sized from its own buffer's capacity, which is what lets
-    // both geometries be allocated once and never grown.
+    // ONE RENDERER SINCE TICKET 047. There were two, added in a fixed order so a
+    // burst composited over its own scorch mark rather than under it, and they
+    // could not be one because they differed in the thing a material cannot vary
+    // per effect: a scar was PAINT and a flash is LIGHT. The scars are gone and
+    // everything left is light. Sized from its buffer's capacity, which is what
+    // lets the geometry be allocated once and never grown.
     //
     // `built.terrain` directly and not `groundHeightAt`, which reads `stage` —
     // still the OLD stage while this runs.
@@ -490,13 +461,7 @@ async function boot(): Promise<void> {
       size: level.size,
       heightAt: (tileX: number, tileY: number) => built.terrain.heightAt(tileX, tileY),
     }
-    const decalFx = createFxRenderer({
-      capacity: scars.capacity,
-      ground: fxGround,
-      blending: 'normal',
-    })
     const effectFx = createFxRenderer({ capacity: effects.capacity, ground: fxGround })
-    built.scene.add(decalFx.object)
     built.scene.add(effectFx.object)
 
     // The rig reasons about the level's SILHOUETTE, not its footprint: the
@@ -519,7 +484,7 @@ async function boot(): Promise<void> {
     // step for the rest of the page's life.
     const pan = new PanController(rig)
     const zoom = new ZoomController(rig, window, renderer.domElement)
-    return { level, built, tracerFx, effectFx, decalFx, rig, pan, zoom }
+    return { level, built, tracerFx, effectFx, rig, pan, zoom }
   }
 
   /**
@@ -535,7 +500,6 @@ async function boot(): Promise<void> {
     // `built.dispose()` does not know about them.
     old.tracerFx.dispose()
     old.effectFx.dispose()
-    old.decalFx.dispose()
     old.built.dispose()
   }
 
@@ -952,12 +916,11 @@ async function boot(): Promise<void> {
     // would never fade.
     tracers = createTracerBuffer()
     // AND THE EFFECTS WITH THEM, for exactly the reason above: an effect's age is
-    // `elapsed - spawnedAt`, so a scar from the mission that just ended would sit
+    // `elapsed - spawnedAt`, so a burst from the mission that just ended would sit
     // at a `spawnedAt` in the future of a clock that has just gone back to zero —
     // an age the buffer floors to "brand new" and which therefore never fades.
     // The new level would open under the last one's explosions.
     effects = createFxBuffer()
-    scars = createFxBuffer({ capacity: DECAL_POOL_CAPACITY })
     // THE STAGE, IF THE LEVEL CHANGED (ticket 024). Compared by identity, which
     // is exact here: `levels` holds one object per published level and the
     // runner hands back an element of it, so "the same level" is the same
@@ -977,7 +940,6 @@ async function boot(): Promise<void> {
     // Emptied on the same frame the buffers were, so a stage that was NOT rebuilt
     // — the campaign replaying the level it is already showing — does not keep
     // last mission's geometry on screen until the first frame that draws.
-    stage.decalFx.update(scars.visible(elapsed))
     stage.effectFx.update(effects.visible(elapsed))
     previous = performance.now()
     roster = playerIds()
@@ -1403,9 +1365,12 @@ async function boot(): Promise<void> {
           // flash says who fired it, and a miss fires both — see `ShotFired.hit`.
           effects.add({ kind: 'muzzle', x: event.originX, z: event.originZ, scale: 1 }, elapsed)
         }
-        // A BURST, A SCAR AND A KICK, all from the one event and none of them
-        // asking the world anything: `Explosion` already carries the position it
-        // actually went off at and the radius it went off with (ticket 015).
+        // A BURST AND A KICK, both from the one event and neither asking the
+        // world anything: `Explosion` already carries the position it actually
+        // went off at and the radius it went off with (ticket 015). There was a
+        // scar between them until ticket 047 — a dark quad stamped on the ground
+        // for 45 s, which read as a coloured square rather than as scorched
+        // earth.
         else if (onMission && event.type === 'Explosion') {
           // SCALED BY THE BLAST'S OWN RADIUS, so a rocket and a grenade are
           // visibly different sizes and the effect covers the ground the
@@ -1414,13 +1379,10 @@ async function boot(): Promise<void> {
           // impact detonates in mid-air, and `ExplosionEvent` says in capitals
           // that an airburst reported on the ground hides the whole mechanic —
           // so the one thing the event goes out of its way to carry is drawn.
-          // The scar stays on the terrain regardless; a scorch mark hanging in
-          // the sky is over ground nothing burned.
           effects.add(
             { kind: 'burst', x: event.x, y: event.y, z: event.z, scale: event.radiusTiles },
             elapsed,
           )
-          scars.add({ kind: 'decal', x: event.x, z: event.z, scale: event.radiusTiles }, elapsed)
           // THE CALL `camera-rig.ts` HAS BEEN WAITING FOR SINCE TICKET 013. The
           // distance is measured from where the camera is looking NOW rather
           // than from the level's centre: a blast under the squad the player is
@@ -1502,7 +1464,6 @@ async function boot(): Promise<void> {
       // AND THE EFFECTS, on the same clock and for the same reason: a burst
       // fades on the display's clock, so a frame that ran no simulation step
       // still has to redraw it a little dimmer than it found it.
-      stage.decalFx.update(scars.visible(elapsed))
       stage.effectFx.update(effects.visible(elapsed))
       // BEFORE the render, so this frame draws what this frame decided. Absent
       // `?debug=1` this is one optional-call check per frame and no debug module

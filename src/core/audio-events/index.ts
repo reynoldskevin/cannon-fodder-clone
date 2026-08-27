@@ -191,7 +191,7 @@ export function cueFor(event: SimEvent): CueRequest | null {
     /**
      * WHERE IT ACTUALLY WENT OFF. `ExplosionEvent` carries the detonation point
      * so nothing downstream has to look anything up, and the same position drives
-     * the burst and the scar in `main.ts`.
+     * the burst in `main.ts`.
      *
      * THE HEIGHT IS DROPPED, DELIBERATELY, and it is the one field an FX layer
      * uses that this one does not: `panFor` is a question about the horizontal

@@ -59,15 +59,14 @@ const FRAMES = 400
 function play(seed: number, withFx: boolean): { hash: number; deaths: number; booms: number } {
   const s = createSession(script(), { seed })
   const effects = createFxBuffer()
-  const scars = createFxBuffer({ capacity: 128 })
   let deaths = 0
   let booms = 0
   let clock = 0
   /**
    * A GRENADE IS THROWN ON PURPOSE. Without it the `Explosion` branch below is
-   * dead code and this suite would report that it covers the burst, the decal
-   * and the shake while never once producing any of them — the vacuous-fixture
-   * trap this project has hit repeatedly. `booms` is asserted, not assumed.
+   * dead code and this suite would report that it covers the burst and the
+   * shake while never once producing either — the vacuous-fixture trap this
+   * project has hit repeatedly. `booms` is asserted, not assumed.
    */
   const thrower = s.world.entities.find((e) => e.team === 'player')
   for (let frame = 0; frame < FRAMES; frame += 1) {
@@ -84,8 +83,10 @@ function play(seed: number, withFx: boolean): { hash: number; deaths: number; bo
       if (event.type === 'ShotFired') {
         effects.add({ kind: 'muzzle', x: event.originX, z: event.originZ, scale: 1 }, clock)
       } else if (event.type === 'Explosion') {
+        // A BURST AND NOTHING ELSE since ticket 047. There used to be a second
+        // `scars.add` on this line's heels, feeding a second pool with a decal;
+        // the mark is gone and so is the pool, and `main.ts` matches.
         effects.add({ kind: 'burst', x: event.x, z: event.z, scale: event.radiusTiles }, clock)
-        scars.add({ kind: 'decal', x: event.x, z: event.z, scale: event.radiusTiles }, clock)
         // The shake request too, since that is the one FX number computed from
         // event data rather than merely stored.
         void shakeFor(Math.hypot(event.x, event.z), event.radiusTiles)
@@ -97,7 +98,6 @@ function play(seed: number, withFx: boolean): { hash: number; deaths: number; bo
     // as a pure query; if it were not, this is where the difference would enter.
     if (withFx) {
       effects.visible(clock)
-      scars.visible(clock)
     }
   }
   return { hash: s.world.stateHash(), deaths, booms }
@@ -120,7 +120,7 @@ describe('a mission runs identically whether or not anybody is drawing it', () =
      */
     const run = play(1, true)
     expect(run.deaths).toBeGreaterThan(0)
-    // And the grenade really detonated, so the burst/decal/shake path above was
+    // And the grenade really detonated, so the burst/shake path above was
     // exercised rather than skipped.
     expect(run.booms).toBeGreaterThan(0)
   })

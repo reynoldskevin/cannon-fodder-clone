@@ -85,7 +85,7 @@ describe('every kind the buffer can produce is drawable', () => {
     // the effect is simply missing — which looks exactly like the bug this whole
     // ticket exists to fix.
     const r = createFxRenderer()
-    for (const kind of ['muzzle', 'burst', 'death', 'decal'] as const) {
+    for (const kind of ['muzzle', 'burst', 'death'] as const) {
       r.update([fx({ kind })])
       expect({ kind, drawn: r.drawnCount }).toEqual({ kind, drawn: 1 })
     }
@@ -177,17 +177,20 @@ describe('and it fades as the buffer says it has', () => {
   })
 })
 
-describe('and it is composited the way a scar needs', () => {
-  it('normal blending is honoured, or every decal is invisible', () => {
+describe('and it is composited as light, which is the only way it composites', () => {
+  it('additively, so a flash brightens the jungle instead of stamping a patch on it', () => {
     /**
-     * A scorch mark is DARK. Under additive blending, dark plus background is
-     * the background — so a renderer that ignored this option would draw every
-     * decal in the game as nothing at all, which is indistinguishable from the
-     * decals never being written. Acceptance criterion 2 goes with it.
+     * TICKET 047 REMOVED THE CHOICE. This described a `blending` option with two
+     * settings, and the case that lived here asserted the `'normal'` one — which
+     * existed for exactly one caller, the decal pool, because a scorch mark is
+     * dark and additively blended dark is invisible. The decals are gone, so
+     * `'normal'` had no caller left; an option no caller can select is a branch
+     * nothing exercises and the next reader has to reason about anyway.
+     *
+     * What survives is the assertion that still has a subject: every effect is
+     * LIGHT. A muzzle flash that stamped an opaque quad over the ground would be
+     * a worse version of the thing this ticket was asked to delete.
      */
-    expect((createFxRenderer({ blending: 'normal' }).object as THREE.Mesh).material).toMatchObject({
-      blending: THREE.NormalBlending,
-    })
     expect((createFxRenderer().object as THREE.Mesh).material).toMatchObject({
       blending: THREE.AdditiveBlending,
     })
@@ -270,14 +273,28 @@ describe('an airburst is drawn in the air', () => {
     expect(attr(high, 'position').getY(0)).toBeCloseTo(attr(low, 'position').getY(0) + 4, 5)
   })
 
-  it('but a scar stays on the ground however high the blast was', () => {
-    // A scorch mark is on the terrain by definition. A decal that inherited the
-    // airburst's height would hang in the sky where nothing burned.
+  it('and there is no kind exempt from that any more', () => {
+    /**
+     * THE CASE THIS REPLACES asserted that a scar ignored the airburst height —
+     * a scorch mark is on the terrain by definition, and one that inherited the
+     * blast's altitude would hang in the sky where nothing burned. Ticket 047
+     * deleted the kind, and the `effect.kind === 'decal' ? 0 : effect.y` special
+     * case in the renderer went with it.
+     *
+     * So the rule is now uniform, and this says so: every remaining kind lifts
+     * with the height it is given. A special case reintroduced for one of them
+     * would fail here rather than be discovered on screen.
+     */
     const ground = { size: { w: 21, h: 21 }, heightAt: () => 0 }
-    const flat = createFxRenderer({ ground, blending: 'normal' })
-    flat.update([fx({ kind: 'decal' })])
-    const above = createFxRenderer({ ground, blending: 'normal' })
-    above.update([fx({ kind: 'decal', y: 4 })])
-    expect(attr(above, 'position').getY(0)).toBeCloseTo(attr(flat, 'position').getY(0), 5)
+    for (const kind of ['muzzle', 'burst', 'death'] as const) {
+      const low = createFxRenderer({ ground })
+      low.update([fx({ kind })])
+      const high = createFxRenderer({ ground })
+      high.update([fx({ kind, y: 4 })])
+      expect({
+        kind,
+        lifted: attr(high, 'position').getY(0) - attr(low, 'position').getY(0),
+      }).toEqual({ kind, lifted: expect.closeTo(4, 5) })
+    }
   })
 })

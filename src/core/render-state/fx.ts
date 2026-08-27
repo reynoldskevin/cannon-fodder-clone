@@ -46,16 +46,19 @@
  * without being handed a list that has drifted from the type. Adding a kind here
  * is a compile error everywhere it has to be handled, which is the point.
  */
-export const FX_KINDS = ['muzzle', 'burst', 'death', 'decal'] as const
+export const FX_KINDS = ['muzzle', 'burst', 'death'] as const
 
 export type FxKind = (typeof FX_KINDS)[number]
 
 /**
  * How long each kind stays on screen, in real seconds.
  *
- * PER KIND, NOT ONE SHARED NUMBER. A muzzle flash is a blink and a scorch mark
- * is furniture; one lifetime tuned for either makes the other look broken, and
- * it reads as "the effects are bad" rather than as a number somebody chose.
+ * PER KIND, NOT ONE SHARED NUMBER. A muzzle flash is a blink at 0.05 s and a
+ * death puff hangs for 1.2; one lifetime tuned for either makes the other look
+ * broken, and it reads as "the effects are bad" rather than as a number somebody
+ * chose. The spread was wider still while the 45-second scorch mark was here,
+ * and the argument does not depend on it — twenty-four times is as much of a
+ * spread as a shared number could serve.
  */
 export const FX_LIFETIME_SECONDS: Record<FxKind, number> = {
   /**
@@ -87,18 +90,6 @@ export const FX_LIFETIME_SECONDS: Record<FxKind, number> = {
    * any longer.
    */
   death: 1.2,
-  /**
-   * The scorch mark left behind.
-   *
-   * A DIFFERENT ORDER OF MAGNITUDE, AND THAT IS THE WHOLE ARGUMENT FOR A SECOND
-   * POOL. A scar is meant to still be there when the player pans back, so it
-   * outlives the burst that made it by more than a hundred times. RAISE IT and
-   * the mark is effectively permanent for a mission, bounded only by the decal
-   * pool's capacity; LOWER IT towards the burst's lifetime and the ground goes
-   * clean behind the fight, which is the state that made the mechanic invisible
-   * in the first place.
-   */
-  decal: 45,
 }
 
 /**
@@ -185,9 +176,12 @@ export interface FxBuffer {
  * second the game can produce, which is what makes eviction a safety net rather
  * than part of the look.
  *
- * A DECAL POOL WANTS ITS OWN NUMBER and should be built with an explicit
- * `capacity`: scars live for 45 s, so the pool size is the number of marks a map
- * can carry rather than the number of things that can be happening at once.
+ * `capacity` IS STILL AN ARGUMENT, and it is worth keeping one even though every
+ * caller now takes the default. It was added for the decal pool ticket 047
+ * deleted — scars lived 45 s, so their pool was sized in "marks a map can carry"
+ * rather than "things happening at once" — and the next long-lived effect will
+ * want the same escape hatch. It costs a parameter with a default; a ring that
+ * could only ever be 64 would have to grow one back.
  */
 export const DEFAULT_FX_CAPACITY = 64
 
@@ -216,11 +210,13 @@ interface Entry {
  * When it does overflow, the OLDEST goes: the grenade that just went off matters
  * more to a player than one from four volleys ago.
  *
- * TWO POOLS ARE TWO INSTANCES OF THIS, NOT TWO MODULES. A scar outlives the
- * burst that made it by more than a hundred times, so sharing one ring would let
- * a single busy second evict every mark on the map — but that argument is about
- * CAPACITY, not about code, and a duplicate implementation would be a second
- * thing to keep correct.
+ * A SECOND POOL WOULD BE A SECOND INSTANCE OF THIS, NOT A SECOND MODULE, and
+ * there was one until ticket 047: the 45-second scorch mark could not share a
+ * ring with a 0.4-second burst, because one busy second would evict every mark on
+ * the map. That argument was always about CAPACITY rather than about code, which
+ * is why `capacity` is an argument and why a duplicate implementation would have
+ * been a second thing to keep correct. Every effect is short-lived now and one
+ * ring holds them all.
  */
 export function createFxBuffer(options: FxBufferOptions = {}): FxBuffer {
   // Floored, and floored to at least one slot: a zero-capacity ring has nowhere
