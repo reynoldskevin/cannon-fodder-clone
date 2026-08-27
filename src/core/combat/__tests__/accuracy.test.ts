@@ -1,7 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import { World } from '../../world/world'
 import { makeLevel } from '../../world/__tests__/fixture'
-import { WEAPONS, RIFLE, INFANTRY_HEALTH, hitChanceAt, createCombatSystem } from '../index'
+import {
+  WEAPONS,
+  RIFLE,
+  INFANTRY_HEALTH,
+  hitChanceAt,
+  createCombatSystem,
+  weaponFor,
+} from '../index'
 import { bakeNavGrid } from '../../pathing/navgrid'
 import type { WeaponSpec } from '../index'
 import type { SimEvent } from '../../world/events'
@@ -45,6 +52,25 @@ function arena(seed = 1): { world: World; grid: ReturnType<typeof bakeNavGrid> }
 const rifle = (): WeaponSpec => {
   const spec = WEAPONS[RIFLE]
   if (spec === undefined) throw new Error('no rifle')
+  return spec
+}
+
+/**
+ * The weapon `duel()`'s shooter ACTUALLY HOLDS.
+ *
+ * That fixture spawns him on the ENEMY team, and since ticket 036 the two teams
+ * carry different rows — so `rifle()`, which is the squad's, stopped describing
+ * this suite's own shooter. Every gap below is derived from his real reach.
+ *
+ * NOT A COSMETIC RENAME. A gap taken from the player's eight-tile row puts the
+ * sandbag 1.5 tiles beyond the enemy's 6.4, and `inRange` then refuses every
+ * round: the sample comes back EMPTY and every rate below divides by zero. The
+ * failure looks like "the roll broke", which is why the shooter's own weapon is
+ * named rather than assumed.
+ */
+const duellist = (): WeaponSpec => {
+  const spec = weaponFor('rifleman', 'enemy')
+  if (spec === null) throw new Error('no enemy rifle')
   return spec
 }
 
@@ -219,7 +245,7 @@ describe('the roll is policy, and certainty is the default', () => {
   it('`weapon` rolls, so some rounds miss', () => {
     // At point-blank the rifle is deliberately reliable, so the sample is taken
     // at distance where the curve actually bites.
-    const { shots } = duel({ hitPolicy: 'weapon', gap: rifle().rangeTiles - 0.1, ticks: 3000 })
+    const { shots } = duel({ hitPolicy: 'weapon', gap: duellist().rangeTiles - 0.1, ticks: 3000 })
     expect(shots.length).toBeGreaterThan(20)
     expect(hits(shots)).toBeLessThan(shots.length)
     expect(hits(shots)).toBeGreaterThan(0)
@@ -236,9 +262,16 @@ describe('the roll is policy, and certainty is the default', () => {
      * the rifle by a hundredth. It is still far tighter than the gap between the
      * near and far ends of the curve, which is what it needs to distinguish.
      */
-    const gap = rifle().rangeTiles - 0.1
-    const { shots } = duel({ hitPolicy: 'weapon', gap, ticks: 12_000 })
-    const expected = hitChanceAt(rifle(), gap)
+    const gap = duellist().rangeTiles - 0.1
+    /**
+     * TWENTY THOUSAND TICKS, NOT TWELVE. The floor of 300 rounds below is what
+     * makes the 0.1 tolerance meaningful — it is a sample size, not a duration —
+     * and ticket 036 slowed this shooter from a 32-tick cooldown to 52, which
+     * turned the same window into 231 rounds. Lowering the floor instead would
+     * have loosened the very bound this test exists to hold.
+     */
+    const { shots } = duel({ hitPolicy: 'weapon', gap, ticks: 20_000 })
+    const expected = hitChanceAt(duellist(), gap)
     const observed = hits(shots) / shots.length
     expect(shots.length).toBeGreaterThan(300)
     expect(Math.abs(observed - expected)).toBeLessThan(0.1)
@@ -247,7 +280,7 @@ describe('the roll is policy, and certainty is the default', () => {
   it('and the near end of the curve really is more reliable than the far end', () => {
     // Measured rather than asserted from the table: this is the claim a player
     // would make, and it goes through the roll rather than around it.
-    const far = rifle().rangeTiles - 0.1
+    const far = duellist().rangeTiles - 0.1
     const near = duel({ hitPolicy: 'weapon', gap: 0.5, ticks: 6000 })
     const away = duel({ hitPolicy: 'weapon', gap: far, ticks: 6000 })
     const rate = (r: { shots: readonly SimEvent[] }): number => hits(r.shots) / r.shots.length
@@ -263,7 +296,7 @@ describe('a miss is an event, not a nothing', () => {
      * be a soldier silently not shooting, and the level would stop reacting to
      * a firefight the moment the rounds started going wide.
      */
-    const { shots } = duel({ hitPolicy: 'weapon', gap: rifle().rangeTiles - 0.1, ticks: 3000 })
+    const { shots } = duel({ hitPolicy: 'weapon', gap: duellist().rangeTiles - 0.1, ticks: 3000 })
     const missed = shots.filter((s) => s.type === 'ShotFired' && !s.hit)
     expect(missed.length).toBeGreaterThan(0)
     for (const shot of missed) {
@@ -287,7 +320,7 @@ describe('a miss is an event, not a nothing', () => {
     // The whole point, stated at the bottom of the stack. Two runs at seeds
     // chosen to differ, compared by the health actually removed.
     const shooter = (policy: 'certain' | 'weapon'): number => {
-      const run = duel({ hitPolicy: policy, gap: rifle().rangeTiles - 0.1, ticks: 3000 })
+      const run = duel({ hitPolicy: policy, gap: duellist().rangeTiles - 0.1, ticks: 3000 })
       const target = run.world.entities.find((e) => e.team === 'player')
       return 10_000 - (target?.health ?? 0)
     }

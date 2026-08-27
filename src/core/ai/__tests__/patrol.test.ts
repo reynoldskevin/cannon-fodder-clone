@@ -250,7 +250,10 @@ describe('the leash bounds a chase, it does not forbid one', () => {
     const enemy = r.spawn(2, 2, 'enemy')
     if (route !== null) r.ai.assignPatrol(enemy.id, route)
     if (stepFirst) r.run(20)
-    const man = r.spawn(9, 2, 'player', 10_000)
+    // Six tiles. Seven was inside the rifle until ticket 036 shortened the
+    // enemy's to 6.4; at seven the fixture never reaches `engage` and throws
+    // below before it can measure anything about the leash.
+    const man = r.spawn(8, 2, 'player', 10_000)
     r.run(10)
     if (r.ai.stateOf(enemy.id) !== 'engage') throw new Error('fixture never engaged')
     r.place(man.id, 38, 38) // out of sight, and still alive

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { rig, OPEN } from './rig'
 import { ARCHETYPES, archetypeFor, DEFAULT_ARCHETYPE_NAME } from '../archetypes'
-import { weaponForKind } from '../../combat'
+import { weaponForKind, weaponFor, ENEMY_RIFLE } from '../../combat'
 import { DEFAULT_SIGHT_RANGE_TILES } from '../tuning'
 import type { ArchetypeSpec } from '../archetypes'
 
@@ -83,6 +83,31 @@ describe('the table is a table', () => {
     }
   })
 
+  it('and every one of them is armed ON THE ENEMY TEAM TOO (ticket 036)', () => {
+    /**
+     * THE SECOND WAY TO FORGET, opened by arming per team.
+     *
+     * `weapons.ts` states this invariant in capitals — "EVERY ARMED KIND MUST
+     * APPEAR IN THE ENEMY ROW" — and until this loop existed, nothing enforced
+     * it. Adversarial review proved that by adding a third archetype and its
+     * `WEAPON_BY_KIND` row while leaving `WEAPON_BY_TEAM.enemy` alone: all 2043
+     * tests stayed green, and every enemy of the new kind would have walked onto
+     * the map holding the PLAYER'S rifle — eight tiles and a 32-tick cooldown,
+     * outranging and outshooting the riflemen beside him, with nothing to say so.
+     *
+     * ASSERTED AS "IS THE ENEMY WEAPON", NOT AS "IS ARMED". `weaponFor` falls
+     * back to `WEAPON_BY_KIND`, so a missing override still returns a perfectly
+     * good spec — a non-null check passes on exactly the bug this is for.
+     *
+     * The day an enemy kind is MEANT to carry something else, this is the test
+     * that has to be widened, and widening it is where that decision gets
+     * written down rather than discovered in a firefight.
+     */
+    for (const key of Object.keys(ARCHETYPES)) {
+      expect({ key, weapon: weaponFor(key, 'enemy')?.name }).toEqual({ key, weapon: ENEMY_RIFLE })
+    }
+  })
+
   it('includes the archetype every level spawns today', () => {
     expect(Object.keys(ARCHETYPES)).toContain(DEFAULT_ARCHETYPE_NAME)
   })
@@ -135,7 +160,12 @@ describe('the stats actually drive the machine', () => {
      */
     const r = rig(OPEN, { archetypes: { squinter: spec({ name: 'squinter', sightRangeTiles: 3 }) } })
     const enemy = r.spawnKind(2, 5, 'enemy', 'squinter')
-    r.spawn(9, 5, 'player', 1000) // 7 tiles: inside the default 12, outside 3
+    // SIX tiles, matching the control below exactly — "same geometry, different
+    // rows" is the whole claim, and it stopped being true when ticket 036 moved
+    // the control in to stay inside the enemy's shortened rifle. Six is inside
+    // the default sight of 12 and outside this row's 3, which is all this case
+    // needs; it is the SIGHT that is on trial here, not the weapon.
+    r.spawn(8, 5, 'player', 1000)
     r.run(10)
     expect(r.ai.stateOf(enemy.id)).toBe('idle')
   })
@@ -145,7 +175,11 @@ describe('the stats actually drive the machine', () => {
     // the case above.
     const r = rig(OPEN)
     const enemy = r.spawn(2, 5, 'enemy')
-    r.spawn(9, 5, 'player', 1000)
+    // SIX tiles, not the seven the case above uses. Ticket 036 shortened the
+    // enemy's rifle to 6.4, so seven is now outside it and this control would
+    // report `pursue` — which would look like the archetype failing to notice
+    // him rather than like a man walking into range.
+    r.spawn(8, 5, 'player', 1000)
     r.run(10)
     expect(r.ai.stateOf(enemy.id)).toBe('engage')
   })

@@ -35,7 +35,7 @@ import {
   markFired,
   readyToFire,
 } from './resolution'
-import { AIM_CORRIDOR_TILES, weaponForKind } from './weapons'
+import { AIM_CORRIDOR_TILES, weaponFor } from './weapons'
 import { canFireFromTerrain } from '../level/terrain'
 import { INFANTRY } from '../pathing/navgrid'
 import { TILE_WORLD_SIZE, tileToWorld } from '../view/projection'
@@ -537,7 +537,11 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
     // than derived from `world.entityCount` — see the housekeeping note below.
     let armedCount = 0
     world.forEachEntity((shooter) => {
-      const spec = weaponForKind(shooter.kind)
+      // BY KIND *AND* TEAM (ticket 036). Both sides spawn as `rifleman`, so
+      // passing the kind alone would hand every enemy on the map the player's
+      // rifle — same range, same rate — while the weapon table sat there
+      // correctly split and unread.
+      const spec = weaponFor(shooter.kind, shooter.team)
       // Unarmed kinds — vehicles, wreckage, anything not in `WEAPON_BY_KIND` —
       // can be shot at and killed but never shoot. Checked before the cooldown
       // so an unarmed entity never enters the cooldown table at all.
