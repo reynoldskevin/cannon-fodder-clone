@@ -266,7 +266,19 @@ describe('renderEntities — the dead', () => {
     expect(drawn!.animation).toBe('die')
   })
 
-  it('stops drawing it once the death clip has run', () => {
+  it('and KEEPS drawing it once the death clip has run', () => {
+    /**
+     * THIS CASE USED TO ASSERT THE OPPOSITE, and it was right about the code: a
+     * corpse was pruned `DEATH_TICKS` after it fell, so 120 frames later the id
+     * was gone from the list. Ticket 049 removed the pruning — the clip's last
+     * frame is the fallen pose, so a body that vanished when the clip ended
+     * disappeared exactly when it became worth looking at.
+     *
+     * Inverted here rather than deleted, because the id surviving the clip is
+     * still the fact this suite is the right place to state. Everything about
+     * WHICH FRAME he holds, and about what a field of bodies costs, is in
+     * `corpses-remain.test.ts`.
+     */
     const level = makeLevel({ avatars: [{ x: 8, y: 7 }], enemies: [{ x: 10, y: 7 }] })
     const s = createSession(level)
     let deadId = -1
@@ -278,7 +290,7 @@ describe('renderEntities — the dead', () => {
     expect(deadId).toBeGreaterThanOrEqual(0)
     // Well past half a second.
     for (let f = 0; f < 120; f++) s.advance(1 / 60)
-    expect(s.renderEntities(FLAT).map((r) => r.id)).not.toContain(deadId)
+    expect(s.renderEntities(FLAT).map((r) => r.id)).toContain(deadId)
   })
 
   it('does not let corpses accumulate without limit', () => {
