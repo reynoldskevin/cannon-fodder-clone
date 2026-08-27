@@ -54,7 +54,7 @@ export type { BootHillModel, Grave, Promotion, Trooper } from './boothill'
 // shows the campaign's totals has no tests, so the arithmetic lives here.
 export { campaignSummary } from './boothill'
 export type { CampaignSummary } from './boothill'
-export { RANKS, rankFor } from './ranks'
+export { RANKS, rankFor, rankIndexFor, insigniaIndexOf } from './ranks'
 export type { Rank } from './ranks'
 export { NAME_POOL } from './names'
 export {

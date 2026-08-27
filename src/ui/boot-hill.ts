@@ -35,6 +35,7 @@
 
 import { createChrome } from './screen-chrome'
 import { DISPLAY_FONT, loadDisplayFont } from './display-font'
+import { INSIGNIA_STYLE, insigniaPosition } from './rank-insignia'
 import hillUrl from '../../assets/source/hill-path-background.webp?url'
 import crossUrl from '../../assets/source/sprites/cross.png?url'
 import type { BootHillModel, Grave, Promotion, Trooper } from '../core/campaign'
@@ -501,15 +502,55 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
   }
 
   /** A name on the left, his tally on the right — the original's two columns. */
-  function setRow(row: HTMLElement, left: string, right: string): void {
-    let name = row.firstElementChild as HTMLElement | null
-    let tally = row.lastElementChild as HTMLElement | null
-    if (name === null || tally === null || name === tally) {
+  function setRow(
+    row: HTMLElement,
+    badge: number | null,
+    left: string,
+    right: string,
+  ): void {
+    let insignia = row.children[0] as HTMLElement | undefined
+    let name = row.children[1] as HTMLElement | undefined
+    let tally = row.children[2] as HTMLElement | undefined
+    if (insignia === undefined || name === undefined || tally === undefined) {
       row.replaceChildren()
+      insignia = document.createElement('span')
+      insignia.style.cssText = INSIGNIA_STYLE
+      /**
+       * DECORATIVE, AND SAID SO. The badge repeats a rank the row already
+       * carries in its `title` — a screen reader announcing an empty `span`
+       * between the name and the tally would be noise, and one announcing the
+       * rank twice would be worse.
+       */
+      insignia.setAttribute('aria-hidden', 'true')
       name = document.createElement('span')
+      /**
+       * `flex:1` IS NEW AND IS NOT COSMETIC (ticket 062). The row is
+       * `justify-content:space-between`, which with TWO children put the name
+       * left and the tally right — and with three would have spread them, so the
+       * name floated to the middle of the bar with the badge and the number at
+       * the edges. Letting the name take the free space puts it back against the
+       * badge and keeps the tally hard right.
+       */
+      name.style.cssText = 'flex:1'
       tally = document.createElement('span')
       tally.style.cssText = 'flex:none;opacity:0.85'
-      row.append(name, tally)
+      row.append(insignia, name, tally)
+    }
+    /**
+     * NO BADGE IS A REAL ANSWER, not a missing one. A grave carved under a
+     * ladder that no longer has that rank reports `null` — see
+     * `Grave.rankIndex` — and the row draws nothing rather than the wrong badge.
+     * `display:none` and not an empty background, so the gap goes with it.
+     */
+    const shown = badge === null ? 'none' : 'block'
+    if (insignia.style.display !== shown) insignia.style.display = shown
+    if (badge !== null) {
+      // Written only when it changes, like every other property on this screen:
+      // `update` runs on every mount and the rows are reused.
+      const position = insigniaPosition(badge)
+      if (insignia.style.backgroundPosition !== position) {
+        insignia.style.backgroundPosition = position
+      }
     }
     setText(name, left)
     setText(tally, right)
@@ -549,7 +590,7 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
       const row = rowAt(graveRows, graves, i)
       if (row.style.display !== 'flex') row.style.display = 'flex'
       const fresh = i >= freshFrom
-      setRow(row, grave.name.toUpperCase(), String(grave.kills))
+      setRow(row, grave.rankIndex, grave.name.toUpperCase(), String(grave.kills))
       // HIS RANK AND WHERE HE FELL STILL REACH THE READER, off the face of the
       // bar. The mockup's plaque has room for a name and a number and nothing
       // else, but the rest of the record is not worth losing — it is the same
@@ -593,7 +634,7 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
       const row = rowAt(squadRows, squad, i)
       if (row.style.display !== 'flex') row.style.display = 'flex'
       if (row.style.color !== TEXT) row.style.color = TEXT
-      setRow(row, man.name.toUpperCase(), String(man.kills))
+      setRow(row, man.rankIndex, man.name.toUpperCase(), String(man.kills))
       row.title = `${man.rank} ${man.name}`
     }
     trim(squadRows, standing)
@@ -621,7 +662,14 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
       const row = rowAt(promotionRows, promotions, i)
       if (row.style.display !== 'flex') row.style.display = 'flex'
       if (row.style.color !== PROMOTED) row.style.color = PROMOTED
-      setRow(row, promotion.name, `${promotion.from} → ${promotion.to}`)
+      /**
+       * NO BADGE ON A PROMOTION ROW, deliberately. This row's right-hand side is
+       * already `from → to` — two rank NAMES — so a single badge beside it would
+       * have to pick one of the two and would read as whichever the eye landed
+       * on. The man's current badge is on his SQUAD row a few lines down, which
+       * is where "what is he now" is answered.
+       */
+      setRow(row, null, promotion.name, `${promotion.from} → ${promotion.to}`)
       row.title = promotionLine(promotion)
     }
     trim(promotionRows, promoted)
