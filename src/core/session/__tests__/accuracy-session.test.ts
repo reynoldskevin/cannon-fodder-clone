@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { createSession } from '../index'
 import { makeLevel } from './fixture'
-import { WEAPONS, RIFLE, hitChanceAt } from '../../combat'
+import { hitChanceAt, weaponFor } from '../../combat'
+import { ARCHETYPES, DEFAULT_ARCHETYPE_NAME } from '../../ai/archetypes'
 import type { SimEvent } from '../../world/events'
 
 /**
@@ -29,11 +30,25 @@ const duelLevel = (apart: number) =>
     enemies: [{ x: 4 + apart, y: 7 }],
   })
 
-const rifle = () => {
-  const spec = WEAPONS[RIFLE]
-  if (spec === undefined) throw new Error('no rifle')
+/**
+ * The weapon the SHOOTER holds. Every shot sampled below is fired by an enemy,
+ * and since ticket 036 that is the shorter, slower `ENEMY_RIFLE` rather than the
+ * squad's row — see `combat/__tests__/accuracy.test.ts`, which names its own
+ * shooter for the same reason.
+ */
+const enemyRifle = () => {
+  const spec = weaponFor(DEFAULT_ARCHETYPE_NAME, 'enemy')
+  if (spec === null) throw new Error('no enemy rifle')
   return spec
 }
+
+/**
+ * How far away the fight actually settles: he walks to `closeToFraction` of his
+ * own range and halts there (ticket 037), so that — not his maximum range — is
+ * the distance the curve should be read at.
+ */
+const engagementDistance = () =>
+  enemyRifle().rangeTiles * (ARCHETYPES[DEFAULT_ARCHETYPE_NAME]?.closeToFraction ?? 1)
 
 /**
  * Run a mission and report every shot fired at the player's man, in order.
@@ -89,17 +104,23 @@ describe('the session runs the game with the roll switched on', () => {
     /**
      * Not merely "some missed" — the observed rate must be in the neighbourhood
      * the weapon table promises at the range the fight is actually happening at.
-     * The enemy closes to the rifle's maximum range and stops, so that is the
-     * distance being sampled.
+     * The enemy closes to `closeToFraction` of his own range and stops, so that
+     * is the distance being sampled (ticket 037).
      *
      * A generous band, because this is a small sample taken through a whole
      * simulation rather than a direct measurement of the roll — `accuracy.test.ts`
      * does the tight one. What it has to catch is the mutant that lands every
      * round, or none.
+     *
+     * READ AT THE CLOSING DISTANCE, NOT AT MAXIMUM RANGE. The comment above used
+     * to say "the enemy closes to the rifle's maximum range and stops", and that
+     * premise is exactly what ticket 037 removed — he now halts at 0.6 of it,
+     * where the curve is far kinder to him. Leaving the old distance here would
+     * have made this test fail for the ticket working correctly.
      */
     const all = SEEDS.flatMap((seed) => shotsAtTheSquad(seed))
     const observed = all.filter((s) => s.type === 'ShotFired' && s.hit).length / all.length
-    const expected = hitChanceAt(rifle(), rifle().rangeTiles)
+    const expected = hitChanceAt(enemyRifle(), engagementDistance())
     expect(observed).toBeLessThan(expected + 0.35)
     expect(observed).toBeGreaterThan(0)
   })

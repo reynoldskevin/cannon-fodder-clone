@@ -166,12 +166,29 @@ describe('the two boundaries are different, or he vibrates', () => {
     r.run(60)
     expect(r.ai.stateOf(enemy.id)).toBe('engage')
     expect(r.ai.isReacting(enemy.id)).toBe(false)
+    /**
+     * DRIVEN PAST THE FULL RANGE, NOT MERELY PAST THE CLOSING DISTANCE.
+     *
+     * An earlier draft of this case moved the target to five tiles and back —
+     * and adversarial review showed it could not fail, because the hysteresis
+     * next door keeps him ENGAGED throughout, so no re-arm decision is ever
+     * reached. A test that cannot fail is worse than no test: it reports
+     * coverage of the thing it does not check.
+     *
+     * Eight tiles is outside the 6.4-tile rifle, so he genuinely drops to
+     * `pursue`; two tiles is back inside the closing distance, so he genuinely
+     * re-enters `engage`. It is the SAME MAN throughout, so the beat must not
+     * be paid again — a soldier who re-armed on every boundary crossing would
+     * stand there raising his rifle forever against a target that steps in and
+     * out of cover.
+     */
     for (let i = 0; i < 6; i += 1) {
-      r.place(player.id, 5, 5) // outside the closing distance
+      r.place(player.id, 2, 5) // eight tiles: outside the rifle entirely
       r.run(3)
-      r.place(player.id, 8, 5) // back inside it
+      r.place(player.id, 8, 5) // two tiles: back inside the closing distance
       r.run(3)
     }
+    expect(r.ai.stateOf(enemy.id)).toBe('engage')
     expect(r.ai.isReacting(enemy.id)).toBe(false)
   })
 })
@@ -251,5 +268,90 @@ describe('the shipped table says what each kind is for', () => {
     // The rule `archetypes.ts` states: a row must survive a JSON round-trip, so
     // a level document can carry a garrison's profile with no code change.
     expect(JSON.parse(JSON.stringify(ARCHETYPES))).toEqual(ARCHETYPES)
+  })
+})
+
+describe('a target he has not closed on is a fresh approach', () => {
+  it('switching to a further man drops him back to `pursue`', () => {
+    /**
+     * THE DEFECT ADVERSARIAL REVIEW FOUND, AND IT SHIPPED IN THE FIRST DRAFT.
+     *
+     * The hysteresis was keyed on `previous === ENGAGE` — a STATE check with no
+     * reference to WHICH man he was engaging. So a soldier whose target went
+     * down, or ducked behind cover while a second man was visible, carried the
+     * full-range threshold over to somebody he had never closed on: he engaged
+     * the new man at up to 6.4 tiles and halted there, at the worst point of his
+     * accuracy curve. That is verbatim the behaviour this ticket exists to
+     * delete, reappearing on the most ordinary event in the game — level 1 puts
+     * three riflemen against a four-man squad, so "the man he was shooting at
+     * fell and he snapped to the next one" is not an edge case.
+     *
+     * `system.ts` already had the answer twelve lines below, where the reaction
+     * beat is keyed on `armedTargetId` rather than on the state, for
+     * structurally the same reason.
+     */
+    const r = rig(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
+    const enemy = r.spawn(10, 5, 'enemy')
+    const near = r.spawn(7, 5, 'player', 10_000) // 3 tiles: inside 3.2
+    const far = r.spawn(4, 5, 'player', 10_000) // 6 tiles: outside it, inside 6.4
+    r.run(6)
+    expect(r.ai.stateOf(enemy.id)).toBe('engage')
+    r.world.despawn(near.id)
+    r.run(4)
+    expect(r.ai.stateOf(enemy.id)).toBe('pursue')
+    // And he actually walks at the new man, rather than merely being relabelled.
+    const before = gap(r, enemy.id, far.id)
+    r.run(40)
+    expect(gap(r, enemy.id, far.id)).toBeLessThan(before - 0.5)
+  })
+
+  it('but holding the SAME man across the boundary still costs nothing', () => {
+    // The guard on the fix: "re-derive on a new target" must not become
+    // "re-derive every tick", which would delete the hysteresis and bring back
+    // the flicker it exists to prevent.
+    const r = rig(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
+    const enemy = r.spawn(10, 5, 'enemy')
+    const player = r.spawn(8, 5, 'player', 10_000)
+    r.run(20)
+    expect(r.ai.stateOf(enemy.id)).toBe('engage')
+    r.place(player.id, 5, 5) // outside the closing distance, inside the rifle
+    r.run(8)
+    expect(r.ai.stateOf(enemy.id)).toBe('engage')
+  })
+})
+
+describe('the marksman does not advance, which is the point of him', () => {
+  it('engages from where he stands and stays there', () => {
+    /**
+     * ACCEPTANCE CRITERION 6, WHOSE SECOND HALF NOTHING EXERCISED. The shipped
+     * sniper's `closeToFraction: 1` was pinned only by a literal table
+     * assertion, so a machine that read the row and then ignored it — using the
+     * default for everybody — passed. No test spawned a sniper at all.
+     *
+     * Five tiles is inside his 6.4-tile rifle and well outside the rifleman's
+     * 3.84-tile closing distance, so this separates the two rows behaviourally.
+     */
+    const r = rig(OPEN)
+    const enemy = r.spawnKind(10, 5, 'enemy', 'sniper')
+    const player = r.spawn(5, 5, 'player', 10_000)
+    r.run(6)
+    expect(r.ai.stateOf(enemy.id)).toBe('engage')
+    const before = gap(r, enemy.id, player.id)
+    r.run(200)
+    expect(Math.abs(gap(r, enemy.id, player.id) - before)).toBeLessThan(0.5)
+  })
+
+  it('where the line infantryman in the same spot walks in', () => {
+    // The other half of the pair. Same geometry, different rows, different
+    // outcomes — without this, "the sniper holds" is satisfied by a machine in
+    // which nobody ever advances.
+    const r = rig(OPEN)
+    const enemy = r.spawn(10, 5, 'enemy')
+    const player = r.spawn(5, 5, 'player', 10_000)
+    r.run(6)
+    expect(r.ai.stateOf(enemy.id)).toBe('pursue')
+    const before = gap(r, enemy.id, player.id)
+    r.run(60)
+    expect(gap(r, enemy.id, player.id)).toBeLessThan(before - 0.5)
   })
 })

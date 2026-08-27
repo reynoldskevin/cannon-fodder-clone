@@ -32,6 +32,11 @@ const spec = (over: Partial<ArchetypeSpec>): ArchetypeSpec => ({
   // default could not tell "the machine read the row" apart from "the machine
   // fell back". No case in this file asserts on it.
   reactionTicks: 12,
+  // Ticket 037 added another required row-field, for the same reason and with
+  // the same consequence. 0.9 is deliberately NOT a shipped value either: a
+  // fixture equal to the default cannot tell "the machine read the row" from
+  // "the machine fell back". No case in this file asserts on it.
+  closeToFraction: 0.9,
   ...over,
 })
 
@@ -158,14 +163,20 @@ describe('the stats actually drive the machine', () => {
      * outcomes. A system that resolved the archetype and then used the system
      * default anyway would pass every table test above.
      */
-    const r = rig(OPEN, { archetypes: { squinter: spec({ name: 'squinter', sightRangeTiles: 3 }) } })
+    const r = rig(OPEN, { archetypes: { squinter: spec({ name: 'squinter', sightRangeTiles: 2 }) } })
     const enemy = r.spawnKind(2, 5, 'enemy', 'squinter')
-    // SIX tiles, matching the control below exactly — "same geometry, different
-    // rows" is the whole claim, and it stopped being true when ticket 036 moved
-    // the control in to stay inside the enemy's shortened rifle. Six is inside
-    // the default sight of 12 and outside this row's 3, which is all this case
-    // needs; it is the SIGHT that is on trial here, not the weapon.
-    r.spawn(8, 5, 'player', 1000)
+    /**
+     * THREE tiles, and the squinter's eyes narrowed to two to match.
+     *
+     * "Same geometry, different rows" is the whole claim of this pair, so the
+     * two cases must stand the men in the same place. Ticket 037 halts the
+     * default rifleman at 3.84 tiles rather than at the edge of his rifle, so
+     * the control below only engages inside that — and a distance that is both
+     * inside 3.84 and outside a 3-tile squint has no whole tile in it. Moving
+     * the SIGHT rather than the distance keeps the pair honest: it is the sight
+     * that is on trial here, not the weapon.
+     */
+    r.spawn(5, 5, 'player', 1000)
     r.run(10)
     expect(r.ai.stateOf(enemy.id)).toBe('idle')
   })
@@ -175,11 +186,11 @@ describe('the stats actually drive the machine', () => {
     // the case above.
     const r = rig(OPEN)
     const enemy = r.spawn(2, 5, 'enemy')
-    // SIX tiles, not the seven the case above uses. Ticket 036 shortened the
-    // enemy's rifle to 6.4, so seven is now outside it and this control would
-    // report `pursue` — which would look like the archetype failing to notice
+    // THREE tiles, matching the case above exactly. Ticket 036 shortened the
+    // enemy's rifle to 6.4 and 037 halts him at 0.6 of it, so anything further
+    // reports `pursue` — which would look like the archetype failing to notice
     // him rather than like a man walking into range.
-    r.spawn(8, 5, 'player', 1000)
+    r.spawn(5, 5, 'player', 1000)
     r.run(10)
     expect(r.ai.stateOf(enemy.id)).toBe('engage')
   })

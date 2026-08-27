@@ -3,6 +3,7 @@ import { rig, OPEN, WALLED, shotsBy } from './rig'
 import { AI_STATES } from '../index'
 import { DEFAULT_ALERT_RADIUS_TILES, DEFAULT_PURSUE_TIMEOUT_TICKS } from '../tuning'
 import { weaponFor } from '../../combat'
+import { ARCHETYPES, DEFAULT_ARCHETYPE_NAME } from '../archetypes'
 
 /**
  * Ticket 012 — the enemy state machine, one test per EDGE.
@@ -30,6 +31,14 @@ import { weaponFor } from '../../combat'
  * matching what the men do.
  */
 const RANGE = weaponFor('rifleman', 'enemy')!.rangeTiles
+
+/**
+ * The fraction of that range he actually walks to before halting (ticket 037).
+ * Read from the shipped row for the same reason `RANGE` is read from the weapon
+ * table: a fixture that restated either number could not tell "the machine used
+ * the table" apart from "the machine and the fixture happen to agree".
+ */
+const CLOSE_TO = ARCHETYPES[DEFAULT_ARCHETYPE_NAME]!.closeToFraction
 
 describe('the states are a closed, enumerable set', () => {
   it('is exactly idle, alert, engage and pursue', () => {
@@ -65,7 +74,11 @@ describe('idle → engage: a target in sight and in range', () => {
   it('enters engage', () => {
     const r = rig()
     const enemy = r.spawn(10, 5, 'enemy')
-    r.spawn(6, 5, 'player', 1000) // 4 tiles: inside the rifle's 8
+    // THREE tiles, not the four this used to be. Ticket 037 stopped the enemy
+    // at `closeToFraction` of his range rather than at the edge of it, and at
+    // the shipped 0.6 of a 6.4-tile rifle that is 3.84 — so four tiles is now a
+    // `pursue` and this case would be asserting the approach, not the label.
+    r.spawn(7, 5, 'player', 1000)
     r.run(2)
     expect(r.ai.stateOf(enemy.id)).toBe('engage')
   })
@@ -73,7 +86,7 @@ describe('idle → engage: a target in sight and in range', () => {
   it('fires on cooldown while it lasts', () => {
     const r = rig()
     const enemy = r.spawn(10, 5, 'enemy')
-    r.spawn(6, 5, 'player', 1000)
+    r.spawn(7, 5, 'player', 1000) // inside the closing distance — see above
     const events = r.run(220)
     /**
      * Asserted as a floor rather than a number, because the exact count depends
@@ -93,7 +106,7 @@ describe('idle → engage: a target in sight and in range', () => {
   it('halts where it stands rather than closing further', () => {
     const r = rig()
     const enemy = r.spawn(10, 5, 'enemy')
-    r.spawn(6, 5, 'player', 1000)
+    r.spawn(7, 5, 'player', 1000) // inside the closing distance — see above
     const startX = r.world.get(enemy.id)!.x
     r.run(120)
     // A man who walks into his own weapon's range and keeps walking ends the
@@ -308,7 +321,7 @@ describe('idle → alert: gunfire within earshot', () => {
     // across the map must not pull him off a target he can see.
     const r = rig()
     const enemy = r.spawn(10, 5, 'enemy')
-    r.spawn(6, 5, 'player', 1000)
+    r.spawn(7, 5, 'player', 1000) // inside the closing distance — see above
     r.run(4)
     expect(r.ai.stateOf(enemy.id)).toBe('engage')
     r.ai.hear([r.shotAt(14, 5)])
@@ -321,7 +334,7 @@ describe('what the machine never does', () => {
   it('holds no state for a unit that is dead', () => {
     const r = rig()
     const enemy = r.spawn(10, 5, 'enemy')
-    r.spawn(6, 5, 'player', 1000)
+    r.spawn(7, 5, 'player', 1000) // inside the closing distance — see above
     r.run(4)
     expect(r.ai.stateOf(enemy.id)).toBe('engage')
     r.world.despawn(enemy.id)
@@ -375,7 +388,10 @@ describe('range is the rifle`s, not a number of its own', () => {
     // a retune in `weapons.ts` would silently stop matching what the men do.
     const near = rig()
     const nearEnemy = near.spawn(10, 5, 'enemy')
-    near.spawn(Math.round(10 - (RANGE - 1)), 5, 'player', 1000)
+    // ENTRY IS THE CLOSING DISTANCE SINCE TICKET 037, not the full range — but
+    // both numbers still come out of the weapon table rather than out of this
+    // machine, which is what this case is actually about.
+    near.spawn(Math.round(10 - (RANGE * CLOSE_TO - 1)), 5, 'player', 1000)
     near.run(4)
 
     const far = rig()

@@ -65,6 +65,7 @@ import {
   DEFAULT_ALERT_RADIUS_TILES,
   DEFAULT_ALERT_TIMEOUT_TICKS,
   DEFAULT_ARRIVAL_TILES,
+  DEFAULT_CLOSE_TO_FRACTION,
   DEFAULT_PURSUE_TIMEOUT_TICKS,
   DEFAULT_REACTION_TICKS,
   DEFAULT_SIGHT_RANGE_TILES,
@@ -157,6 +158,15 @@ export interface AiOptions {
    * `DEFAULT_REACTION_TICKS`.
    */
   readonly reactionTicks?: number
+  /**
+   * How close a unit walks before he halts and opens fire, as a fraction of his
+   * own weapon range (ticket 037). Same three-deep precedence as the rest: this
+   * option, then the archetype row, then `DEFAULT_CLOSE_TO_FRACTION`.
+   *
+   * The ENTRY threshold only — `engage` is left on the full weapon range, and
+   * the reason the two must differ is at the decision itself in `step`.
+   */
+  readonly closeToFraction?: number
   readonly arrivalTiles?: number
   /**
    * The traversal class sightlines are tested against. Infantry by default,
@@ -277,6 +287,19 @@ interface Memory {
   alertTimeoutTicks: number
   /** This unit's beat before it opens fire, in ticks. See `reactionTicks`. */
   reactionTicks: number
+  /**
+   * The fraction of its own weapon range this unit closes to before halting and
+   * firing (ticket 037). See `ArchetypeSpec.closeToFraction`.
+   *
+   * A FRACTION HELD RAW, not a world distance resolved once like the two ranges
+   * above it, and that is the one field here that cannot be precomputed: it is a
+   * fraction OF THE WEAPON, and the weapon is asked of `weaponFor` at the
+   * decision so a retune in `weapons.ts` moves the halt distance with it. A
+   * distance baked in here would be the enemy carrying his own private copy of a
+   * range the weapon table had since changed — exactly the disagreement ticket
+   * 036 produced when the range was looked up by kind alone.
+   */
+  closeToFraction: number
   /**
    * Ticks of that beat still to run, counted down while this unit is in
    * `engage` and reloaded from `reactionTicks` when the beat is ARMED — see
@@ -578,6 +601,8 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
       alertTimeoutTicks:
         options.alertTimeoutTicks ?? spec?.alertTimeoutTicks ?? DEFAULT_ALERT_TIMEOUT_TICKS,
       reactionTicks: options.reactionTicks ?? spec?.reactionTicks ?? DEFAULT_REACTION_TICKS,
+      closeToFraction:
+        options.closeToFraction ?? spec?.closeToFraction ?? DEFAULT_CLOSE_TO_FRACTION,
       // Zero because no beat has been armed yet, which is the honest starting
       // value — NOT because it is what keeps a cue off an idle man. That is
       // `isReacting`'s state gate and nothing else: a mutation putting the full
@@ -941,7 +966,56 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
       // envelope — closing to a distance at which he cannot hit anything.
       const spec = weaponFor(unit.kind, unit.team)
       const rangeWorld = spec === null ? 0 : spec.rangeTiles * TILE_WORLD_SIZE
-      if (spec !== null && inRange(unit.x, unit.z, target.x, target.z, rangeWorld)) {
+      /**
+       * TWO THRESHOLDS, NOT ONE (ticket 037), and the gap between them is the
+       * behaviour rather than a tolerance around it.
+       *
+       * He ENTERS `engage` only once the target is inside `closeToFraction` of
+       * his range — the distance he actually wants to fight at, because the
+       * accuracy curve is at its worst at the far edge of the envelope and the
+       * old single threshold halted him at precisely that edge, for the rest of
+       * the firefight, since nothing moves a man once `engage` is entered. He
+       * LEAVES it only when the target passes beyond the FULL range, which is
+       * the distance past which the rifle simply does not reach.
+       *
+       * A SINGLE THRESHOLD WOULD MAKE HIM VIBRATE. A man halted at his closing
+       * distance stands a hair inside it; a target drifting a foot either way
+       * would drop him to `pursue` and put him back into `engage` sixty times a
+       * second. That is a soldier shaking on the spot, and it would also churn
+       * `Memory.armedTargetId` — the reaction beat is armed per acquisition
+       * precisely to survive boundary flicker (see the note below it), and a
+       * second boundary that flickered faster is what that rule was written
+       * against.
+       *
+       * THE WIDER THRESHOLD IS HELD PER TARGET, NOT PER STATE, and that
+       * distinction is the whole correctness of this block.
+       *
+       * `previous === ENGAGE` alone is a question about the STATE MACHINE, not
+       * about which man he was shooting at — so a soldier whose target went down,
+       * or ducked behind cover while a second was visible, carried the full-range
+       * threshold over to somebody he had never closed on. He engaged the new man
+       * at the far edge of his envelope and halted there for the rest of the
+       * firefight: verbatim the behaviour this ticket exists to delete,
+       * reappearing on the most ordinary event in the game. Level 1 puts three
+       * riflemen against a four-man squad, so "his target fell and he snapped to
+       * the next one" is not an edge case, and it shipped in this ticket's first
+       * draft with every test green.
+       *
+       * `armedTargetId` still holds LAST tick's target here — it is rewritten
+       * further down — which is exactly the comparison wanted: did he arrive at
+       * this tick already engaging THIS man? The same field, for the same reason,
+       * as the reaction beat below.
+       *
+       * NO DIVISION AND NO NaN. An unarmed kind has `rangeWorld = 0`, a
+       * fraction of zero is zero, and the `spec !== null` guard means neither
+       * comparison is even reached — he closes forever and never engages,
+       * exactly as before.
+       */
+      const closeWorld = rangeWorld * memory.closeToFraction
+      const heldOnThisTarget =
+        previous === ENGAGE && memory.hasArmedTarget && memory.armedTargetId === target.id
+      const holdWorld = heldOnThisTarget ? rangeWorld : closeWorld
+      if (spec !== null && inRange(unit.x, unit.z, target.x, target.z, holdWorld)) {
         next = ENGAGE
       } else {
         next = PURSUE

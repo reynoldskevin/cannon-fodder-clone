@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { rig, OPEN } from './rig'
+import type { AiOptions } from '../index'
 
 /**
  * Ticket 018 — patrol routes.
@@ -244,9 +245,25 @@ describe('the leash bounds a chase, it does not forbid one', () => {
    */
   const BIG = '\n' + Array.from({ length: 60 }, () => '  ' + '.'.repeat(60)).join('\n') + '\n'
 
+  /**
+   * THE CLOSING DISTANCE IS HELD AT 1 ACROSS THIS BLOCK (ticket 037), which
+   * reproduces the pre-037 halt-at-maximum-range behaviour exactly.
+   *
+   * An experimental control, not a workaround. Every case here is about the
+   * LEASH — how far from his post a man will be drawn before he gives up — and
+   * each one begins by getting him into `engage` and then taking his target
+   * away. At the shipped 0.6 the rifleman halts at 3.84 tiles, so `chase()`'s
+   * six-tile contact is a `pursue`, the fixture's own `throw new Error('fixture
+   * never engaged')` fires, and the suite stops measuring the leash at all.
+   *
+   * Where a man STOPS is `closing-distance.test.ts`'s subject. Holding it fixed
+   * here is what keeps these two suites from testing each other's variable.
+   */
+  const HOLD: Partial<AiOptions> = { closeToFraction: 1 }
+
   /** Engage a man, then move him out of sight, and report the state that follows. */
   function chase(route: readonly { x: number; y: number }[] | null, stepFirst: boolean): string {
-    const r = rig(BIG)
+    const r = rig(BIG, HOLD)
     const enemy = r.spawn(2, 2, 'enemy')
     if (route !== null) r.ai.assignPatrol(enemy.id, route)
     if (stepFirst) r.run(20)
@@ -287,7 +304,7 @@ describe('the leash bounds a chase, it does not forbid one', () => {
    * back and walk home because he is off his beat.
    */
   function lureThenVanish(steps: number): { away: number; state: string } {
-    const r = rig(BIG)
+    const r = rig(BIG, HOLD)
     const enemy = r.spawn(2, 2, 'enemy')
     r.ai.assignPatrol(enemy.id, [{ x: 2, y: 2 }, { x: 20, y: 2 }])
     const bait = r.spawn(9, 2, 'player', 10_000)
@@ -340,7 +357,7 @@ describe('the leash bounds a chase, it does not forbid one', () => {
      */
     const legs = [6, 18, 24, 40]
     const outcomes = legs.map((legLen) => {
-      const r = rig(BIG)
+      const r = rig(BIG, HOLD)
       const start = 2
       const end = start + legLen
       const mid = Math.round((start + end) / 2)
@@ -370,7 +387,7 @@ describe('the leash bounds a chase, it does not forbid one', () => {
      * The system's own comment argues for this release; nothing pinned it, and a
      * mutant that never released survived the whole suite.
      */
-    const r = rig(BIG)
+    const r = rig(BIG, HOLD)
     const enemy = r.spawn(4, 5, 'enemy')
     r.ai.assignPatrol(enemy.id, [
       { x: 4, y: 5 },
