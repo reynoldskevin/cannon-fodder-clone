@@ -20,28 +20,52 @@ import { VISION_HALF_ANGLE_COS, DEFAULT_AWARENESS_RADIUS_TILES, DEFAULT_ENEMY_FA
  * `-z is north` convention.
  */
 
-/** Where a man `distance` tiles away at `degrees` off the facing stands, in tiles. */
+/**
+ * A 20 x 20 arena, so its centre is tile (9.5, 9.5) and a man placed NORTH of
+ * that has real map on both sides of him.
+ *
+ * The shipped `OPEN` is 20 x 10, which was fine while the default was a fixed
+ * south: since ticket 039 an enemy's default facing points at the middle of the
+ * level, so a man in the southern half faces NORTH and "behind him" runs off the
+ * top of a ten-row grid. The suite needs room on both sides of its subject.
+ */
+const TALL = '\n' + Array.from({ length: 20 }, () => '  ' + '.'.repeat(20)).join('\n') + '\n'
+
+/** The tile a man `distance` away at `degrees` off `facing` stands on. */
 const offAxis = (
   originX: number,
   originY: number,
+  facing: { dx: number; dz: number },
   degrees: number,
   distance: number,
 ): { x: number; y: number } => {
-  const radians = (degrees * Math.PI) / 180
-  return {
-    // The default facing is +z, so the axis is the y axis and the swing is in x.
-    x: originX + Math.sin(radians) * distance,
-    y: originY + Math.cos(radians) * distance,
-  }
+  const r = (degrees * Math.PI) / 180
+  // Rotate the ACTUAL facing rather than assuming +z. Since ticket 039 the
+  // default is a direction computed from where the man stands, so it is only
+  // approximately south — a fixture that assumed due south would be a few
+  // degrees out, which is exactly the margin the boundary cases below turn on.
+  const dx = facing.dx * Math.cos(r) - facing.dz * Math.sin(r)
+  const dz = facing.dx * Math.sin(r) + facing.dz * Math.cos(r)
+  return { x: originX + dx * distance, y: originY + dz * distance }
+}
+
+/** Spawn an enemy in the northern half, settle his default facing, and report it. */
+const sentry = (r: ReturnType<typeof rig>, tileX: number, tileY: number) => {
+  const enemy = r.spawn(tileX, tileY, 'enemy')
+  r.run(1)
+  const facing = r.ai.facingOf(enemy.id)
+  if (facing === undefined) throw new Error('no facing')
+  return { enemy, facing }
 }
 
 describe('the arc is a front arc', () => {
   it('a man three tiles in FRONT is noticed, exactly as before', () => {
     // The control. Without it, an enemy that had simply gone blind would satisfy
     // every "does not see him" case below.
-    const r = rig(OPEN)
-    const enemy = r.spawn(10, 3, 'enemy')
-    r.spawn(10, 6, 'player', 10_000) // three tiles SOUTH — the way he is looking
+    const r = rig(TALL)
+    // North of centre, so his inward default points SOUTH.
+    const { enemy } = sentry(r, 10, 4)
+    r.spawn(10, 7, 'player', 10_000) // three tiles south — the way he is looking
     r.run(4)
     expect(r.ai.stateOf(enemy.id)).not.toBe('idle')
   })
@@ -51,18 +75,18 @@ describe('the arc is a front arc', () => {
      * THE TICKET, IN ONE ASSERTION. Identical distance, identical clear
      * sightline, identical everything but the side of him it is on.
      */
-    const r = rig(OPEN)
-    const enemy = r.spawn(10, 6, 'enemy')
-    r.spawn(10, 3, 'player', 10_000) // three tiles NORTH — behind him
+    const r = rig(TALL)
+    const { enemy } = sentry(r, 10, 4)
+    r.spawn(10, 1, 'player', 10_000) // three tiles NORTH — behind him
     r.run(10)
     expect(r.ai.stateOf(enemy.id)).toBe('idle')
   })
 
   it('nor is one far behind but well inside his sight range', () => {
     // Guards against a cone that is really a shortened sight range.
-    const r = rig(OPEN)
-    const enemy = r.spawn(10, 8, 'enemy')
-    r.spawn(10, 2, 'player', 10_000) // six tiles north, inside the twelve he sees
+    const r = rig(TALL)
+    const { enemy } = sentry(r, 10, 7)
+    r.spawn(10, 1, 'player', 10_000) // six tiles north, inside the twelve he sees
     r.run(10)
     expect(r.ai.stateOf(enemy.id)).toBe('idle')
   })
@@ -86,10 +110,10 @@ describe('the edges of the arc', () => {
 
   it('a man 50 degrees off the axis is seen', () => {
     expect(Math.cos((50 * Math.PI) / 180)).toBeGreaterThan(VISION_HALF_ANGLE_COS)
-    const r = rig(OPEN)
-    const enemy = r.spawn(6, 2, 'enemy')
-    const player = r.spawn(6, 4, 'player', 10_000)
-    const at = offAxis(6, 2, 50, DISTANCE)
+    const r = rig(TALL)
+    const { enemy, facing } = sentry(r, 10, 4)
+    const player = r.spawn(10, 6, 'player', 10_000)
+    const at = offAxis(10, 4, facing, 50, DISTANCE)
     r.place(player.id, at.x, at.y)
     r.run(4)
     expect(r.ai.stateOf(enemy.id)).not.toBe('idle')
@@ -97,10 +121,10 @@ describe('the edges of the arc', () => {
 
   it('and a man 70 degrees off it is not', () => {
     expect(Math.cos((70 * Math.PI) / 180)).toBeLessThan(VISION_HALF_ANGLE_COS)
-    const r = rig(OPEN)
-    const enemy = r.spawn(6, 2, 'enemy')
-    const player = r.spawn(6, 4, 'player', 10_000)
-    const at = offAxis(6, 2, 70, DISTANCE)
+    const r = rig(TALL)
+    const { enemy, facing } = sentry(r, 10, 4)
+    const player = r.spawn(10, 6, 'player', 10_000)
+    const at = offAxis(10, 4, facing, 70, DISTANCE)
     r.place(player.id, at.x, at.y)
     r.run(10)
     expect(r.ai.stateOf(enemy.id)).toBe('idle')
@@ -110,10 +134,10 @@ describe('the edges of the arc', () => {
     // A cone implemented with a signed comparison rather than an absolute one
     // would see half the arc and be blind on the other side, which reads as an
     // enemy who can only be flanked from one direction.
-    const r = rig(OPEN)
-    const enemy = r.spawn(12, 2, 'enemy')
-    const player = r.spawn(12, 4, 'player', 10_000)
-    const at = offAxis(12, 2, -50, DISTANCE)
+    const r = rig(TALL)
+    const { enemy, facing } = sentry(r, 10, 4)
+    const player = r.spawn(10, 6, 'player', 10_000)
+    const at = offAxis(10, 4, facing, -50, DISTANCE)
     r.place(player.id, at.x, at.y)
     r.run(4)
     expect(r.ai.stateOf(enemy.id)).not.toBe('idle')
@@ -129,12 +153,12 @@ describe('but nobody is invisible at arm`s length', () => {
      * at arm's length behind him.
      */
     expect(DEFAULT_AWARENESS_RADIUS_TILES).toBeGreaterThan(0)
-    const r = rig(OPEN)
-    const enemy = r.spawn(10, 6, 'enemy')
-    const player = r.spawn(10, 6, 'player', 10_000)
+    const r = rig(TALL)
+    const { enemy } = sentry(r, 10, 4)
+    const player = r.spawn(10, 4, 'player', 10_000)
     // Half the awareness radius directly BEHIND him — comfortably inside it, and
     // derived so a retune of the radius cannot leave this fixture outside.
-    r.place(player.id, 10, 6 - DEFAULT_AWARENESS_RADIUS_TILES * 0.5)
+    r.place(player.id, 10, 4 - DEFAULT_AWARENESS_RADIUS_TILES * 0.5)
     r.run(4)
     expect(r.ai.stateOf(enemy.id)).not.toBe('idle')
   })
@@ -142,10 +166,10 @@ describe('but nobody is invisible at arm`s length', () => {
   it('and the exception really is a short one', () => {
     // The guard on the other side: an awareness radius as long as his sight
     // would delete the cone entirely while leaving every case above passing.
-    const r = rig(OPEN)
-    const enemy = r.spawn(10, 6, 'enemy')
-    const player = r.spawn(10, 6, 'player', 10_000)
-    r.place(player.id, 10, 6 - DEFAULT_AWARENESS_RADIUS_TILES * 2)
+    const r = rig(TALL)
+    const { enemy } = sentry(r, 10, 4)
+    const player = r.spawn(10, 4, 'player', 10_000)
+    r.place(player.id, 10, 4 - DEFAULT_AWARENESS_RADIUS_TILES * 2)
     r.run(10)
     expect(r.ai.stateOf(enemy.id)).toBe('idle')
   })
@@ -153,15 +177,15 @@ describe('but nobody is invisible at arm`s length', () => {
 
 describe('the arc does not replace anything the scan already did', () => {
   it('a man in front but beyond sight range is still not seen', () => {
-    const r = rig(OPEN)
-    const enemy = r.spawn(4, 0, 'enemy')
-    r.spawn(4, 9, 'player', 10_000) // nine tiles is inside twelve...
+    const r = rig(TALL)
+    const { enemy } = sentry(r, 10, 2)
+    r.spawn(10, 11, 'player', 10_000) // nine tiles is inside twelve...
     r.run(4)
     expect(r.ai.stateOf(enemy.id)).not.toBe('idle')
 
-    const far = rig(OPEN, { sightRangeTiles: 3 })
-    const farEnemy = far.spawn(4, 0, 'enemy')
-    far.spawn(4, 9, 'player', 10_000) // ...but not inside three
+    const far = rig(TALL, { sightRangeTiles: 3 })
+    const { enemy: farEnemy } = sentry(far, 10, 2)
+    far.spawn(10, 11, 'player', 10_000) // ...but not inside three
     far.run(10)
     expect(far.ai.stateOf(farEnemy.id)).toBe('idle')
   })
@@ -169,44 +193,45 @@ describe('the arc does not replace anything the scan already did', () => {
   it('and a man in front behind a wall is still not seen', () => {
     // The sightline raycast is untouched. A cone that replaced it rather than
     // joining it would let enemies see through cover in the direction they face.
-    const WALL = `
-      ....................
-      ....................
-      ####################
-      ....................
-      ....................
-      ....................
-      ....................
-      ....................
-      ....................
-      ....................
-    `
-    const r = rig(WALL)
-    const enemy = r.spawn(10, 1, 'enemy')
-    r.spawn(10, 5, 'player', 10_000)
+    // A full-width wall at y = 6, with the sentry north of it and his man south.
+    const rows = Array.from({ length: 20 }, (_, y) => '  ' + (y === 6 ? '#' : '.').repeat(20))
+    const r = rig('\n' + rows.join('\n') + '\n')
+    const { enemy } = sentry(r, 10, 4)
+    r.spawn(10, 9, 'player', 10_000)
     r.run(10)
     expect(r.ai.stateOf(enemy.id)).toBe('idle')
   })
 
   it('and a player unit is still never given a state of its own', () => {
-    const r = rig(OPEN)
-    const mine = r.spawn(10, 3, 'player', 10_000)
-    r.spawn(10, 6, 'enemy')
+    const r = rig(TALL)
+    const mine = r.spawn(10, 7, 'player', 10_000)
+    r.spawn(10, 4, 'enemy')
     r.run(4)
     expect(r.ai.stateOf(mine.id)).toBeUndefined()
   })
 })
 
-describe('the default facing', () => {
-  it('is south, which is the way most of the shipped garrison is approached', () => {
-    expect(DEFAULT_ENEMY_FACING.dz).toBeGreaterThan(0)
-    expect(DEFAULT_ENEMY_FACING.dx).toBe(0)
-  })
-
-  it('and it is a unit vector, because the cone test is a dot product', () => {
-    // A non-normalised default would scale the dot product and silently widen or
-    // narrow the arc for every enemy that had not moved yet.
+describe('the fallback facing is a degenerate-input guard, not a policy', () => {
+  it('is still a unit vector, because the cone test is a dot product', () => {
+    // A non-normalised value would scale the dot product and silently widen or
+    // narrow the arc for whoever fell back to it.
     const { dx, dz } = DEFAULT_ENEMY_FACING
     expect(Math.hypot(dx, dz)).toBeCloseTo(1, 10)
+  })
+
+  it('and is only reached by a man with no direction to compute', () => {
+    /**
+     * SINCE TICKET 039 THIS IS NOT THE DEFAULT. An enemy who has never moved
+     * faces the middle of the level, computed from where he stands — so this
+     * constant is what is left when that computation has no answer, which is
+     * exactly one case: a man standing ON the centre, whose offset is a zero
+     * vector with no direction to normalise.
+     *
+     * It matters that it stays finite rather than what it points at. A NaN
+     * facing loses every comparison it enters, so that one man would be blind in
+     * every direction, and nothing on screen would explain it.
+     */
+    expect(Number.isFinite(DEFAULT_ENEMY_FACING.dx)).toBe(true)
+    expect(Number.isFinite(DEFAULT_ENEMY_FACING.dz)).toBe(true)
   })
 })

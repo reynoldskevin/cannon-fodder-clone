@@ -28,14 +28,101 @@ const angleTo = (
   return (Math.acos(Math.max(-1, Math.min(1, dot))) * 180) / Math.PI
 }
 
-describe('a man who has never moved or seen anything', () => {
-  it('faces the default', () => {
-    const r = rig(OPEN)
-    const enemy = r.spawn(10, 5, 'enemy')
-    r.run(4)
-    const facing = r.ai.facingOf(enemy.id)
-    expect(facing).toBeDefined()
-    expect(angleTo(facing!, DEFAULT_ENEMY_FACING.dx, DEFAULT_ENEMY_FACING.dz)).toBeLessThan(1)
+/**
+ * A deliberately NON-SQUARE arena, 24 wide by 12 tall, so its centre is tile
+ * (11.5, 5.5).
+ *
+ * Non-square on purpose: a square grid cannot tell "toward the centre" apart
+ * from an implementation that used one axis's midpoint for both, which is the
+ * obvious slip and would put every enemy on a rectangular map — which is every
+ * shipped map — looking somewhere nobody chose.
+ */
+const WIDE = '\n' + Array.from({ length: 12 }, () => '  ' + '.'.repeat(24)).join('\n') + '\n'
+
+/** Where the level's middle is, in the same tile coordinates the fixtures use. */
+const MIDDLE = { x: (24 - 1) / 2, y: (12 - 1) / 2 }
+
+/** The default facing a man spawned at this tile settles on. */
+const defaultFacingAt = (tileX: number, tileY: number): { dx: number; dz: number } => {
+  const r = rig(WIDE)
+  const enemy = r.spawn(tileX, tileY, 'enemy')
+  r.run(1)
+  const facing = r.ai.facingOf(enemy.id)
+  if (facing === undefined) throw new Error('no facing')
+  return facing
+}
+
+describe('a man who has never moved or seen anything faces the middle of the level', () => {
+  it('from the north edge he looks south', () => {
+    expect(angleTo(defaultFacingAt(11, 0), 0, 1)).toBeLessThan(20)
+  })
+
+  it('from the south edge he looks north', () => {
+    /**
+     * THE WHOLE TICKET IN ONE PAIR. A fixed compass default cannot satisfy both
+     * of these, and ticket 038's fixed south failed exactly here: five of level
+     * 2's fifteen enemies stand south of the squad and spent the mission staring
+     * off the bottom of the map.
+     */
+    expect(angleTo(defaultFacingAt(11, 11), 0, -1)).toBeLessThan(20)
+  })
+
+  it('from the west edge he looks east, and from the east edge west', () => {
+    // The other axis, which a first draft that only handled north-south would
+    // fail — and every shipped map is wider than it is tall.
+    expect(angleTo(defaultFacingAt(0, 5), 1, 0)).toBeLessThan(20)
+    expect(angleTo(defaultFacingAt(23, 5), -1, 0)).toBeLessThan(20)
+  })
+
+  it('and the direction really is at the middle, not merely inward', () => {
+    // A corner. "Inward" is satisfied by any of a quarter-turn of directions
+    // here; only one of them points at the centre.
+    const facing = defaultFacingAt(0, 0)
+    expect(angleTo(facing, MIDDLE.x - 0, MIDDLE.y - 0)).toBeLessThan(5)
+  })
+
+  it('and it is computed from BOTH dimensions, not one midpoint used twice', () => {
+    /**
+     * The slip this guards. On a 24 x 12 grid the two midpoints are 11.5 and
+     * 5.5; using the x midpoint for both would put a man at (11, 11) looking at
+     * (11.5, 11.5) — very nearly due EAST instead of due north — and every case
+     * above except the west/east pair would still pass.
+     */
+    const facing = defaultFacingAt(11, 11)
+    expect(facing.dz).toBeLessThan(-0.9)
+  })
+
+  it('and it is a unit vector', () => {
+    for (const [x, y] of [[0, 0], [23, 11], [11, 0], [3, 8]]) {
+      const f = defaultFacingAt(x!, y!)
+      expect({ x, y, len: Math.hypot(f.dx, f.dz) }).toEqual({ x, y, len: expect.closeTo(1, 6) })
+    }
+  })
+
+  it('and a man standing ON the middle gets a finite fallback rather than NaN', () => {
+    /**
+     * The offset is a zero vector there. A NaN facing loses every comparison it
+     * enters, so that man would be blind in every direction — a far quieter and
+     * worse failure than looking the wrong way.
+     */
+    const f = defaultFacingAt(12, 6) // the nearest whole tile to (11.5, 5.5)
+    expect(Number.isFinite(f.dx) && Number.isFinite(f.dz)).toBe(true)
+    expect(Math.hypot(f.dx, f.dz)).toBeCloseTo(1, 6)
+  })
+
+  it('and it is settled ONCE, not re-aimed every time he stops', () => {
+    /**
+     * It is a spawn POSTURE, not a behaviour. A man who walked north and halted
+     * must keep looking north; recomputing on every idle tick would spin every
+     * enemy in the game back toward the middle the moment he stopped walking,
+     * which is neither what a soldier does nor what ticket 038's "an idle man
+     * keeps the facing he had" says.
+     */
+    const r = rig(WIDE)
+    const enemy = r.spawn(11, 10, 'enemy')
+    r.ai.face(enemy.id, 0, 1) // pointed SOUTH, away from the middle
+    r.run(60)
+    expect(angleTo(r.ai.facingOf(enemy.id)!, 0, 1)).toBeLessThan(1)
   })
 
   it('and faces an AUTHORED direction when the level gave him one', () => {
