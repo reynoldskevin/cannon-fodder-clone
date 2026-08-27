@@ -34,6 +34,7 @@
 
 import { createChrome } from './screen-chrome'
 import { DISPLAY_FONT, loadDisplayFont } from './display-font'
+import hillUrl from '../../assets/source/sprites/boot-hill.png?url'
 import type { BootHillModel, Grave, Promotion, Trooper } from '../core/campaign'
 
 export interface BootHillOptions {
@@ -70,24 +71,28 @@ const FRESH = '#ff8f6b'
 const HEADING = '#f2c14e'
 
 /**
- * The hill, until there is a picture of one.
+ * The hillside itself (ticket 057).
  *
- * A CSS SKY AND TWO MOUNDS, and it is a placeholder wearing its own label: the
- * mockup is a painted hillside and this repository has no such asset. When
- * `assets/source/boot-hill.png` lands, this constant becomes a `?url` import and
- * `background-image` on the same element — the crosses are positioned in
- * PERCENTAGES of it, so they land in the same places over the art as they do
- * over the gradient.
+ * THE PAINTED ONE AT LAST. Ticket 054 shipped a CSS sky and two radial mounds
+ * because no such asset existed; this is that placeholder retired.
+ *
+ * `cover` AND BOTTOM-ANCHORED, which is the whole reason it is not `center`: the
+ * art is a horizon in its top third and a foreground of grass and poppies along
+ * its bottom edge, and a window shorter than the image crops from wherever it is
+ * told to. Cropping off the top loses sky nobody was reading; cropping off the
+ * bottom loses the ground the crosses stand on, which is the picture.
  */
-const HILL_BACKDROP = [
-  'linear-gradient(#1d4f86 0%, #3f7fbe 27%, transparent 27%)',
-  'radial-gradient(120% 80% at 78% 100%, #37853c 0%, #37853c 62%, transparent 63%)',
-  'radial-gradient(150% 95% at 28% 100%, #47a44b 0%, #47a44b 64%, transparent 65%)',
-  // The base the mounds stand on. A DARK green rather than near-black: the two
-  // radials do not meet the sky line at every viewport width, and whatever shows
-  // between them has to read as more hillside instead of as a hole in it.
-  'linear-gradient(#2c6f31, #2c6f31)',
-].join(',')
+const HILL_IMAGE = `url(${hillUrl})`
+
+/**
+ * What the sky and the grass are, underneath the picture.
+ *
+ * TWO BANDS MATCHED TO THE ART, on the same 35% line its horizon sits on. They
+ * are what shows on the first frame before the image has decoded, and what shows
+ * for good if it never does — a hillside that is dark green under a slate sky
+ * rather than a black rectangle with white crosses floating on it.
+ */
+const HILL_FALLBACK = 'linear-gradient(#39414d 0%, #39414d 35%, #2c3a24 35%, #1d2a17 100%)'
 
 /**
  * The two stone markers: this mission's dead, and every mission before it.
@@ -154,8 +159,14 @@ export function plot(index: number): { left: number; top: number } {
     // Kept off both edges: a cross half off the side of the hill reads as a
     // clipping bug rather than as a distant grave.
     left: 6 + across * 84,
-    // The sky is the top ~28% of the panel; nobody is buried in it.
-    top: 34 + down * 56,
+    /**
+     * BELOW THE HORIZON, WITH ROOM TO SPARE. The art's skyline sits around 35%
+     * of the picture, and the picture is `cover`-cropped to the panel — on a
+     * wide, short window the crop lifts that line further up the element. The
+     * band starts well under it so a cross cannot end up hanging in the clouds,
+     * which is the one placement that reads as a bug rather than as a distance.
+     */
+    top: 46 + down * 46,
   }
 }
 
@@ -314,7 +325,12 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
     'position:relative',
     'flex:1',
     'min-width:0',
-    `background:${HILL_BACKDROP}`,
+    `background-image:${HILL_IMAGE},${HILL_FALLBACK}`,
+    // `auto` for the gradient, so the two bands stretch to the element rather
+    // than being scaled to the picture's aspect and tiling under it.
+    'background-size:cover,auto',
+    'background-position:center bottom,center',
+    'background-repeat:no-repeat,no-repeat',
     'overflow:hidden',
   ].join(';')
 
