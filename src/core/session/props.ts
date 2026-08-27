@@ -14,7 +14,7 @@
  */
 
 import type { LevelData, SpawnPoint } from '../level/types'
-import type { RenderEntity } from '../render-state/entity'
+import type { SubmergedRenderEntity } from '../render-state/entity'
 import { palmVariantFor } from '../render-state/scenery'
 import { tileToWorld } from '../view/projection'
 
@@ -79,8 +79,8 @@ export function propRenderEntities(
   level: LevelData,
   groundHeightAt: (tileX: number, tileY: number) => number,
   idBase: number,
-): RenderEntity[] {
-  const entities: RenderEntity[] = []
+): SubmergedRenderEntity[] {
+  const entities: SubmergedRenderEntity[] = []
   let nextId = idBase
   for (const spawn of level.spawns.props) {
     const sprite = propSprite(spawn)
@@ -98,6 +98,12 @@ export function propRenderEntities(
       dx: 0,
       dz: 0,
       animationStart: 0,
+      // A PROP IS NEVER SUBMERGED, whatever it is standing in (ticket 041).
+      // Submersion models a man wading, and a palm the level author placed is
+      // not wading — it is rooted where it was drawn. Sinking props by 70%
+      // because their tile happens to be flooded would bury the riverbank
+      // annotations, which is a visible regression bought for nothing.
+      submersion: 0,
       tint: undefined,
     })
     nextId += 1

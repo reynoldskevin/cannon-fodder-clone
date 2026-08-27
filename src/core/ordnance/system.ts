@@ -20,7 +20,14 @@
  * is read by keyed lookup only, exactly as combat's is.
  *
  * ONCE A ROUND IS IN THE AIR IT CANNOT BE RECALLED, which is the same rule
- * `combat/system.ts` enforces with its second pass. The launcher's TEAM is
+ * `combat/system.ts` enforces with its second pass. "In the air" begins at the
+ * first pass that MOVES it: a round launched during this step's command drain is
+ * still in the thrower's hand until then, and ticket 041 refuses it there if he
+ * turns out to be standing in the river — see `refuseUncommitted`, which is
+ * about a gate that could not be evaluated a tick earlier and not about taking a
+ * grenade back. Nothing that has ever flown is touched.
+ *
+ * The launcher's TEAM is
  * captured at launch rather than read at detonation: the thrower may be dead by
  * the time it lands, and a `damagesFriendlies: false` grenade whose owner's team
  * had become unknowable would suddenly kill his own squad.
@@ -28,6 +35,7 @@
 
 import { applyDamage, createCooldowns, markFired, readyToFire } from '../combat/resolution'
 import { clearFractionAlong } from '../combat/los'
+import { canFireFromTerrain } from '../level/terrain'
 import { INFANTRY } from '../pathing/navgrid'
 import { tileToWorld } from '../view/projection'
 import { planTrajectory, positionAt } from './ballistics'
@@ -69,6 +77,18 @@ export interface OrdnanceOptions {
    * same reason, as `CombatOptions.sightMask`.
    */
   readonly sightMask?: TraversalMask
+  /**
+   * Hand one round of `ordnance` back to whoever paid for it, because a launch
+   * this system accepted was refused a moment later. See `refuseUncommitted`.
+   *
+   * A CALLBACK, NOT AN ARMOURY. `core/ordnance` has never known that ammunition
+   * exists — `launch`'s own contract says so, and ticket 016 owns the pouch —
+   * and importing `core/armoury` to undo one edge case would buy that ignorance
+   * back for nothing. Absent, nothing is refunded and the caller keeps whatever
+   * accounting it already had, which is what every test that builds this system
+   * directly wants.
+   */
+  readonly refund?: (launcherId: number, ordnance: string) => void
 }
 
 /**
@@ -107,7 +127,14 @@ export interface OrdnanceSystem extends SimSystem {
    * formed" — the distinction `command/apply.ts` had to learn the hard way in
    * ticket 011a, where a fire command validated, returned true and fired
    * nothing. It is refused for an ordnance the table does not name, an id naming
-   * nothing living, a target off the map, and a launcher still on cooldown.
+   * nothing living, a target off the map, a launcher still on cooldown, and
+   * (ticket 041) a launcher standing in water, which is the only one of the five
+   * that says so on the bus — see the `FireRejected` there.
+   *
+   * A `true` IS NOT QUITE A PROMISE, and this is the one exception: a launch
+   * accepted here can still be refused within the same step, by the pass that
+   * would otherwise have flown it. `refuseUncommitted` explains why the two
+   * cannot be the same test, and hands back everything the refusal cost.
    *
    * AMMUNITION IS NOT CHECKED HERE. `OrdnanceSpec.ammoCost` is declared and
    * spent by ticket 016, which owns selection and finite ammo. The cooldown is
@@ -168,6 +195,7 @@ export function createOrdnanceSystem(
 ): OrdnanceSystem {
   const table = options.table ?? ORDNANCE
   const sightMask = options.sightMask ?? INFANTRY
+  const refund = options.refund ?? ((): void => {})
   const cooldowns = createCooldowns()
 
   /**
@@ -349,6 +377,89 @@ export function createOrdnanceSystem(
     return { x: originX + dx * t, z: originZ + dz * t }
   }
 
+  /**
+   * Is the man at this world position standing in the river?
+   *
+   * THE SAME FLOORED, CORNER-INDEXED CONVERSION `combat/system.ts` USES for the
+   * rifle's gate, deliberately spelled the same way. The other conversion in
+   * this codebase is centre-indexed and half a tile away, and the two agree at a
+   * tile CENTRE — so a mismatch would only ever show on a man MID-STRIDE, which
+   * is every man who is crossing, and it would put the grenade gate and the
+   * rifle gate on different tiles for exactly the frames that matter.
+   *
+   * An off-map position reads as `undefined` and is dry — the neutral answer,
+   * matching `canFireFromTerrain`'s own answer for a tile id this build cannot
+   * name, and matching what combat does with the same read.
+   */
+  function inWater(world: World, x: number, z: number): boolean {
+    const tile =
+      world.level.terrain[Math.floor(worldToTileAxis(z, grid.h))]?.[
+        Math.floor(worldToTileAxis(x, grid.w))
+      ]
+    return tile !== undefined && !canFireFromTerrain(tile)
+  }
+
+  /**
+   * A round that has not yet flown a single tick, thrown by a man who turns out
+   * to be in the river by the time this tick resolves. Refused, and reported as
+   * refused. Returns whether it was.
+   *
+   * WHY THIS EXISTS AT ALL, when `launch` already runs the same test. The two
+   * see DIFFERENT WORLDS, one tick apart, and the gap is structural rather than
+   * incidental:
+   *
+   *   - `launch` is called from `command/apply.ts` while `createSession` drains
+   *     the command queue, which happens at the TOP of a step, BEFORE
+   *     `world.tick()` runs a single system. The only position it can read is
+   *     where the man stood at the end of the PREVIOUS tick.
+   *   - The rifle's gate is evaluated inside `CombatSystem`'s pass, which the
+   *     session registers AFTER the squad system precisely so that "a unit fires
+   *     from where it now stands rather than from where it stood at the top of
+   *     the tick".
+   *
+   * So on the ONE tick a man steps off the bank, the rifle is already silent and
+   * the grenade is still legal — and a grenade thrown on that tick goes off a
+   * second later with its thrower chest-deep beside it. That is the exact
+   * contradiction this ticket exists to remove, and one tick of it is enough to
+   * see. NOT BECAUSE THE FLIGHT IS LONG — an earlier draft of this comment said the
+   * round is "in the air for over a second", which is false, and `table.ts` says
+   * so in the same repo: at `speedTilesPerTick: 0.2` a six-tile throw is half a
+   * second, and it takes a TWELVE-tile throw to reach a full one, further than
+   * the rifle can shoot. The reason one tick matters is TRAFFIC: a `fire`
+   * command is queued on every frame the button is held, so that single tick
+   * comes up on every crossing rather than in a rare race.
+   *
+   * THE ROUND IS STILL IN HIS HAND WHEN THIS RUNS, which is what makes refusing
+   * it here different from recalling one — the module header's rule that a round
+   * in the air cannot be recalled is untouched. This system is registered after
+   * the squad system, so the position read here is the same one combat read;
+   * `age` is still 0, meaning the pass that first moves the round has not run;
+   * and `inFlight()` is only ever read BETWEEN steps, so no renderer, no test and
+   * no player can have seen it exist.
+   *
+   * IT COSTS HIM NOTHING, which takes both a cooldown and a pouch. `forget`
+   * drops the `markFired` entry `launch` wrote — he could not have been on
+   * cooldown a moment ago or the launch would have been refused, so forgetting
+   * restores exactly the state he was in. The rounds are handed back through
+   * `refund`, because `command/apply.ts` has already charged the pouch on
+   * `launch`'s `true` and its own rule is that the pouch pays for a round that
+   * actually left. A callback rather than an import: this system has never known
+   * what an armoury is, and `core/ordnance` importing `core/armoury` to undo one
+   * edge case would be a worse trade than a one-line hook.
+   */
+  function refuseUncommitted(world: World, p: Projectile): boolean {
+    const launcher = world.get(p.launcherId)
+    // A thrower who died inside this tick keeps his throw: the round left a
+    // living man's hand, and the header's recall rule already covers what
+    // happens to it afterwards.
+    if (launcher === undefined) return false
+    if (!inWater(world, launcher.x, launcher.z)) return false
+    cooldowns.forget(p.launcherId)
+    refund(p.launcherId, p.ordnance)
+    world.emit({ type: 'FireRejected', ordnance: p.ordnance, reason: 'in the water' })
+    return true
+  }
+
   /** See `OrdnanceSystem.launch`. */
   function launch(launcherId: number, ordnance: string, target: TileCoord): boolean {
     // An open enum reaching a table with no row for it. Silently doing nothing
@@ -368,6 +479,45 @@ export function createOrdnanceSystem(
     }
     // NOT a passability check: a grenade aimed into the canopy is an ordinary
     // throw on this map, and `resolveBlast` is built to resolve one.
+
+    // NOTHING A MAN IN THE RIVER CARRIES FIRES (ticket 041), and this reverses
+    // ticket 007b's explicit decision to leave ordnance alone — see the note in
+    // `combat/system.ts`, which used to say a man could plausibly throw a
+    // grenade while wading. He is drawn `SUBMERSION_FRACTION` under now, chest
+    // deep in a current with both hands occupied staying upright, and a rifle
+    // that goes silent while a grenade sails out of the same tile reads as the
+    // fire gate being broken rather than as two rules.
+    //
+    // ONE PLACE, LIKE COMBAT'S. Every route to a throw arrives at `launch` —
+    // the player's standing order through `command/apply.ts`, and anything the
+    // AI later grows — so the rule is enforced once instead of in the callers,
+    // and it applies to both teams, which is the point: an enemy who wades in
+    // to flank cannot lob one at us while he does it either.
+    //
+    // BEFORE `markFired`, AND THAT IS LOAD-BEARING, exactly as the rifle's gate
+    // is placed before its cooldown check and for the same reason: this is a
+    // RESTRICTION, NOT A PUNISHMENT. A man who threw into the water for a
+    // four-second crossing would come out the far side empty-handed, charged
+    // for rounds that never left his hand. Returning before `markFired` means
+    // he is armed on the tick he lands.
+    //
+    // THE POUCH IS UNTOUCHED for the same reason and by the same mechanism as a
+    // cooldown refusal: `launchOrdnance` in `command/apply.ts` only calls
+    // `armoury.consume` when this returns true.
+    //
+    // A `FireRejected` RATHER THAN SILENCE. The player pressed throw and nothing
+    // happened; with no arc, no sound and no message he cannot tell "the river
+    // stopped me" from "the control is broken", and will keep pressing for the
+    // rest of the crossing. It costs the bus one event per frame the button is
+    // held in water — which `apply.ts` argues is too noisy for a COOLDOWN
+    // refusal, and that argument does not carry here: a cooldown clears in a
+    // fraction of a second and is the weapon working as designed, while this
+    // lasts the whole crossing and is the one thing the player needs told.
+    if (inWater(attached, launcher.x, launcher.z)) {
+      attached.emit({ type: 'FireRejected', ordnance, reason: 'in the water' })
+      return false
+    }
+
     const tick = attached.tickCount
     if (!readyToFire(cooldowns, launcherId, tick)) return false
 
@@ -461,6 +611,10 @@ export function createOrdnanceSystem(
     for (let i = 0; i < flying.length; i += 1) {
       const p = flying[i]
       if (p === undefined) continue
+      // Before the first integration, and only before it: see
+      // `refuseUncommitted`. Dropped rounds are simply not copied to `write`,
+      // which is the same compaction a detonation uses.
+      if (p.age === 0 && refuseUncommitted(world, p)) continue
       p.age += 1
       if (p.age >= p.detonateAt) {
         // Detonating inline rather than in a second pass is deliberate: rounds

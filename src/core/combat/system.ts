@@ -578,8 +578,22 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
       // of a river, that is this decision and not a bug — the alternative is a
       // fourth module with an opinion about water.
       //
-      // `core/ordnance` is untouched on purpose: a man can plausibly throw a
-      // grenade while wading, which is a different question with its own answer.
+      // `core/ordnance` NOW ENFORCES THE SAME RULE AT ITS OWN LAUNCH SEAM, and
+      // this comment used to say the opposite on purpose. Ticket 007b argued
+      // that a man could plausibly throw a grenade while wading, so the rifle
+      // went quiet and the grenade did not. Ticket 041 reversed that on the
+      // strength of how deep the man is now DRAWN — reasoned, not watched;
+      // nobody has run this build. He is drawn
+      // `view/submersion.ts`'s `SUBMERSION_FRACTION` — 70% — under the surface,
+      // which is chest-deep in a current, and a man in that position with a
+      // rifle he cannot fire is not lobbing anything either. It also read as a
+      // bug rather than as two rules: one tile, one man, one button held, and
+      // half of what he carries works.
+      //
+      // The gate is duplicated rather than shared because the two systems have
+      // no seam in common — combat is handed a world and a grid here, ordnance
+      // is handed a grid and attaches a world later — but both call the ONE
+      // predicate, `canFireFromTerrain`, so the rule itself exists once.
       const shooterTile =
         world.level.terrain[Math.floor(worldToTileAxis(shooter.z, grid.h))]?.[
           Math.floor(worldToTileAxis(shooter.x, grid.w))

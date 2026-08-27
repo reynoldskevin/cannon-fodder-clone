@@ -845,3 +845,166 @@ describe('determinism', () => {
     expect(r.world.rng.getState()).toBe(before)
   })
 })
+
+describe('a round refused for standing in the river (ticket 041)', () => {
+  /**
+   * The seam gate, and the accounting behind it. `command/apply.ts` charges the
+   * pouch on `launch`'s boolean, so a round refused AFTER that has already been
+   * paid for — hence `OrdnanceOptions.refund`. Adversarial review found the whole
+   * refund and cooldown path unpinned: making the refund fire for everybody, and
+   * dropping the `cooldowns.forget`, both left the suite green.
+   */
+  const WATER = `
+    ....................
+    ....................
+    ....~~~~~~~~........
+    ....................
+    ....................
+    ....................
+    ....................
+    ....................
+    ....................
+    ....................
+  `
+
+  /**
+   * WADE IN BETWEEN THE COMMAND AND THE PASS, which is the ONLY way the refund
+   * path is reachable and took a probe to establish.
+   *
+   * A man already standing in the river is refused by `launch` itself and never
+   * charged, so nothing needs refunding. `refuseUncommitted` exists for the
+   * one-tick race the design section describes: the session drains commands at
+   * the TOP of a step, so `launch` sees where he stood at the end of the previous
+   * tick, and the squad system moves him before the ordnance pass runs. On the
+   * tick he steps off the bank the throw is accepted and the thrower is wet by
+   * the time the round would fly.
+   */
+  const stepIntoTheWater = (
+    world: { get(id: number): { x: number; z: number } | undefined },
+    id: number,
+    size: { w: number; h: number },
+  ): void => {
+    const wet = tileToWorld(6, 2, size)
+    const man = world.get(id)
+    if (man === undefined) throw new Error('gone')
+    man.x = wet.x
+    man.z = wet.z
+  }
+
+  const wetRig = () => {
+    const refunds: { id: number; ordnance: string }[] = []
+    const level = asciiLevel(WATER)
+    const world = new World(level, { seed: 1 })
+    const grid = bakeNavGrid(level)
+    const ordnance = createOrdnanceSystem(grid, {
+      table: TABLE,
+      refund: (id, name) => refunds.push({ id, ordnance: name }),
+    })
+    world.addSystem(ordnance)
+    /**
+     * Spawns AND primes with one tick, the way `describe('launching')` above
+     * does. A man the system has not stepped once cannot launch, which is a
+     * fixture detail rather than anything this block is about — and one that
+     * makes every case here fail identically and misleadingly.
+     */
+    const place = (tileX: number, tileY: number, team: 'player' | 'enemy' = 'player') => {
+      const p = tileToWorld(tileX, tileY, level.size)
+      const entity = world.spawn({ kind: 'rifleman', team, x: p.x, z: p.z, health: 1000 })
+      world.tick()
+      return entity
+    }
+    return { world, ordnance, level, refunds, place }
+  }
+
+  it('and a man ALREADY in the river is refused at the command itself', () => {
+    // The cheaper of the two gates, and the one that keeps a held button from
+    // running a consume/refund round trip sixty times a second for a whole
+    // crossing. Nothing is charged, so nothing is refunded.
+    const wet = wetRig()
+    const mine = wet.place(6, 2)
+    expect(wet.ordnance.launch(mine.id, 'lob', { x: 9, y: 5 })).toBe(false)
+    wet.world.tick()
+    expect(wet.refunds).toHaveLength(0)
+  })
+
+  it('the fixture really does flood the tile it means to', () => {
+    // Without this, every case below passes on a map with no water in it.
+    const { level } = wetRig()
+    // `asciiLevel` writes `~` as terrain id 4, which is WATER. Asserted against
+    // the number the fixture actually produces rather than against an import,
+    // because it is the FIXTURE that is on trial in this case.
+    expect(level.terrain[2]?.[6]).toBe(4)
+    expect(level.terrain[5]?.[6]).not.toBe(4)
+  })
+
+  it('is refunded exactly once, and only to the player', () => {
+    /**
+     * ONCE, because `apply.ts` consumed exactly one; a second credit is a free
+     * grenade every time somebody walks into a river holding the button. ONLY
+     * the player, because nothing charges an enemy's pouch in the first place —
+     * an unconditional refund is granting rounds to a side that never spent any.
+     */
+    const wet = wetRig()
+    const mine = wet.place(6, 6, 'player')
+    expect(wet.ordnance.launch(mine.id, 'lob', { x: 9, y: 5 })).toBe(true)
+    stepIntoTheWater(wet.world, mine.id, wet.level.size)
+    wet.world.tick()
+    expect(wet.refunds).toHaveLength(1)
+    expect(wet.refunds[0]).toEqual({ id: mine.id, ordnance: 'lob' })
+
+    const theirs = wetRig()
+    const enemy = theirs.place(6, 6, 'enemy')
+    expect(theirs.ordnance.launch(enemy.id, 'lob', { x: 9, y: 5 })).toBe(true)
+    stepIntoTheWater(theirs.world, enemy.id, theirs.level.size)
+    theirs.world.tick()
+    // The hook still fires — deciding WHO to credit is the session's job, not
+    // this system's — but it must name the enemy, so the session can decline.
+    expect(theirs.refunds.every((r) => r.id === enemy.id)).toBe(true)
+  })
+
+  it('and never twice, however long the mission runs', () => {
+    // The round is dropped before its age is incremented, so it can never be
+    // seen at age 0 again. Asserted over many ticks rather than argued.
+    const wet = wetRig()
+    const mine = wet.place(6, 6)
+    wet.ordnance.launch(mine.id, 'lob', { x: 9, y: 5 })
+    stepIntoTheWater(wet.world, mine.id, wet.level.size)
+    for (let t = 0; t < 200; t += 1) wet.world.tick()
+    expect(wet.refunds).toHaveLength(1)
+  })
+
+  it('and costs him no cooldown, so he is armed the tick he lands', () => {
+    /**
+     * A RESTRICTION, NOT A PUNISHMENT — the argument `combat/system.ts` makes for
+     * putting the rifle's gate before its cooldown check. A man charged for a
+     * throw that never happened comes out of a four-second crossing empty-handed
+     * for no reason he can see. Dropping `cooldowns.forget` left the suite green.
+     */
+    const wet = wetRig()
+    const mine = wet.place(6, 6)
+    expect(wet.ordnance.launch(mine.id, 'lob', { x: 9, y: 5 })).toBe(true)
+    stepIntoTheWater(wet.world, mine.id, wet.level.size)
+    wet.world.tick()
+    // Same man, next tick, still holding the same weapon: the throw must be
+    // legal again. `lob`'s cooldown is far longer than one tick, so a surviving
+    // cooldown entry would refuse this.
+    // Onto dry ground, the way the AI rig repositions a unit: the entity's
+    // position is the only thing the gate reads.
+    const dryGround = tileToWorld(10, 5, wet.level.size)
+    const man = wet.world.get(mine.id)
+    if (man === undefined) throw new Error('gone')
+    man.x = dryGround.x
+    man.z = dryGround.z
+    expect(wet.ordnance.launch(mine.id, 'lob', { x: 9, y: 5 })).toBe(true)
+  })
+
+  it('but a throw from dry ground is untouched by any of it', () => {
+    // The control on the whole block: a gate that refused everybody would pass
+    // every assertion above.
+    const dry = wetRig()
+    const mine = dry.place(6, 6)
+    expect(dry.ordnance.launch(mine.id, 'lob', { x: 9, y: 5 })).toBe(true)
+    dry.world.tick()
+    expect(dry.refunds).toHaveLength(0)
+  })
+})

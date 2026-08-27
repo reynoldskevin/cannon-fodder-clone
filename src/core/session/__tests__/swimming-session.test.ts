@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { createSession } from '../index'
-import { makeLevel } from './fixture'
+import { makeLevel, FLAT } from './fixture'
 import { TERRAIN } from '../../level'
+import { SUBMERSION_FRACTION } from '../../view/submersion'
 import { RIFLE_ORDNANCE } from '../../armoury'
 import { tileToWorld } from '../../view/projection'
 // BORROWED FROM THE SQUAD FIXTURE rather than rewritten. Fractional world->tile
@@ -210,5 +211,167 @@ describe('a crossing still replays exactly', () => {
       return String(session.world.stateHash())
     }
     expect(run()).toBe(run())
+  })
+})
+
+describe('and nothing else he carries works either (ticket 041)', () => {
+  /**
+   * TICKET 007b DECIDED THE OPPOSITE, ON PURPOSE, and said so in
+   * `combat/system.ts`: *"`core/ordnance` is untouched on purpose: a man can
+   * plausibly throw a grenade while wading."* So the rifle went silent and the
+   * grenade did not — which is what a player crossing the river actually saw,
+   * and reported as "they can still fire".
+   *
+   * At 70% submerged he is chest-deep in a current. The decision is reversed:
+   * the rule is now that NOTHING he carries fires until he is out.
+   */
+  it('a grenade thrown from the water never leaves his hand', () => {
+    const { session, me } = crossing(RIVER())
+    let launchedWhileWet = 0
+    let launchedAtAll = 0
+    for (let f = 0; f < 600; f += 1) {
+      session.queue.push({
+        type: 'fire',
+        unitIds: [me.id],
+        ordnance: 'grenade',
+        target: { x: 17, y: 7 },
+      })
+      session.advance(1 / 60)
+      const wet = inWater(session, me.id)
+      for (const e of session.events()) {
+        if (e.type !== 'Explosion' || e.sourceId !== me.id) continue
+        launchedAtAll += 1
+        if (wet) launchedWhileWet += 1
+      }
+      if (!session.world.isAlive(me.id)) break
+    }
+    expect(launchedWhileWet).toBe(0)
+    // THE CONTROL. "Never while wet" is satisfied by a man who never threw
+    // anything at all — which is exactly what a bug in the ordnance path would
+    // look like, and it would pass the assertion above forever.
+    expect(launchedAtAll).toBeGreaterThan(0)
+  })
+
+  it('and the refusal is reported, because silence reads as a broken button', () => {
+    /**
+     * `FireRejectedEvent` already exists and carries `ordnance` and `reason`. A
+     * player pressing throw and getting nothing — no arc, no sound, no message —
+     * cannot tell "the river stopped me" from "the control is broken", and will
+     * try again for the rest of the crossing.
+     */
+    const { session, me } = crossing(RIVER())
+    let rejectedWhileWet = 0
+    for (let f = 0; f < 600; f += 1) {
+      session.queue.push({
+        type: 'fire',
+        unitIds: [me.id],
+        ordnance: 'grenade',
+        target: { x: 17, y: 7 },
+      })
+      const wet = inWater(session, me.id)
+      session.advance(1 / 60)
+      for (const e of session.events()) {
+        if (e.type === 'FireRejected' && wet) rejectedWhileWet += 1
+      }
+      if (!session.world.isAlive(me.id)) break
+    }
+    expect(rejectedWhileWet).toBeGreaterThan(0)
+  })
+
+  it('and being refused costs him nothing, so he is armed the tick he lands', () => {
+    /**
+     * THE RULE IS A RESTRICTION, NOT A PUNISHMENT — the same argument
+     * `combat/system.ts` makes for placing the rifle's gate BEFORE the cooldown
+     * check. A man who spent his throw into the water would come out of a
+     * four-second crossing empty-handed, having been charged for something that
+     * never happened.
+     */
+    const { session, me } = crossing(RIVER())
+    // Spam the throw for the whole crossing, then wait for dry land.
+    let landedAt = -1
+    for (let f = 0; f < 900 && landedAt < 0; f += 1) {
+      session.queue.push({
+        type: 'fire',
+        unitIds: [me.id],
+        ordnance: 'grenade',
+        target: { x: 17, y: 7 },
+      })
+      session.advance(1 / 60)
+      session.events()
+      if (f > 30 && !inWater(session, me.id)) landedAt = f
+    }
+    expect(landedAt).toBeGreaterThan(0)
+    // On dry ground now: one more throw must actually go.
+    let launched = 0
+    for (let f = 0; f < 240; f += 1) {
+      session.queue.push({
+        type: 'fire',
+        unitIds: [me.id],
+        ordnance: 'grenade',
+        target: { x: 17, y: 7 },
+      })
+      session.advance(1 / 60)
+      for (const e of session.events()) if (e.type === 'Explosion') launched += 1
+    }
+    expect(launched).toBeGreaterThan(0)
+  })
+})
+
+describe('and the player can SEE that he is in it (ticket 041)', () => {
+  /**
+   * THE HALF THAT WAS MISSING ENTIRELY, and the reason the fire gate read as
+   * broken even though it worked. `terrain-style.ts` puts the water surface at
+   * `-0.12` and `renderEntities` places every unit at the ground height, so a
+   * man crossing stood with his feet ON the river and was otherwise dry. A rule
+   * the player cannot see is a rule the player experiences as a bug — he watched
+   * a soldier walk across water and stop shooting for no visible reason.
+   */
+  const drawnFor = (session: ReturnType<typeof createSession>, id: number) => {
+    const found = session.renderEntities(FLAT).find((e) => e.id === id)
+    if (found === undefined) throw new Error('not drawn')
+    return found
+  }
+
+  it('a man on the bank is not submerged at all', () => {
+    // The control, and it runs FIRST: a submersion that was always on would
+    // satisfy the case below while sinking the whole army into dry ground.
+    const { session, me } = crossing(RIVER())
+    session.advance(1 / 60)
+    expect(inWater(session, me.id)).toBe(false)
+    expect(drawnFor(session, me.id).submersion).toBe(0)
+  })
+
+  it('and a man in the river is, by the fraction core decided', () => {
+    const { session, me } = crossing(RIVER())
+    let sawWet = false
+    for (let f = 0; f < 900 && !sawWet; f += 1) {
+      session.advance(1 / 60)
+      session.events()
+      if (inWater(session, me.id)) {
+        sawWet = true
+        expect(drawnFor(session, me.id).submersion).toBe(SUBMERSION_FRACTION)
+      }
+    }
+    // He really did get in, or the assertion above never ran.
+    expect(sawWet).toBe(true)
+  })
+
+  it('and it tracks the tile he is on, tick by tick, not the trip he is making', () => {
+    /**
+     * Asserted as an AGREEMENT with `inWater` on every frame of a whole
+     * crossing, rather than as two snapshots. A rule that latched on entering
+     * the water and never cleared would leave the squad waist-deep in the jungle
+     * for the rest of the mission, and two samples taken at the right moments
+     * would not notice.
+     */
+    const { session, me } = crossing(RIVER())
+    for (let f = 0; f < 900; f += 1) {
+      session.advance(1 / 60)
+      session.events()
+      if (!session.world.isAlive(me.id)) break
+      const wet = inWater(session, me.id)
+      const drawn = drawnFor(session, me.id).submersion
+      expect({ f, agree: (drawn > 0) === wet }).toEqual({ f, agree: true })
+    }
   })
 })

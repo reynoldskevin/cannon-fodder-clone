@@ -152,3 +152,87 @@ describe('the sprite quad', () => {
     }
   })
 })
+
+describe('a man in the river is drawn down in it (ticket 041)', () => {
+  /**
+   * THE HALF OF TICKET 041 THAT SHIPPED UNTESTED, and the acceptance criterion
+   * it is: "the renderer lowers a submerged sprite by that fraction of its
+   * height". Adversarial review deleted the sink term outright, and then deleted
+   * the vertical stretch from it, and BOTH left the whole suite green — the
+   * existing quad case above builds an entity with no `submersion` at all, so it
+   * is blind to either.
+   *
+   * The `y` of the instance matrix is a plain number in a `Float32Array`; Node
+   * reads it perfectly well. That is the same lesson ticket 034 paid for and
+   * ticket 025 paid for again one file along.
+   */
+  const centreY = (submersion: number, elevation: number): number => {
+    const visual = stubVisual(CLIPS)
+    const renderer = new EntityRenderer(visual, elevation)
+    renderer.setEntities([entity(1, 'walk', { submersion })])
+    renderer.update(0, 1)
+    const mesh = renderer.group.children[0] as THREE.InstancedMesh
+    const matrix = new THREE.Matrix4()
+    mesh.getMatrixAt(0, matrix)
+    const position = new THREE.Vector3()
+    matrix.decompose(position, new THREE.Quaternion(), new THREE.Vector3())
+    renderer.dispose()
+    return position.y
+  }
+
+  const ELEVATIONS = [25, 40, 55, 70].map((d) => (d * Math.PI) / 180)
+
+  it('a dry sprite is exactly where it always was', () => {
+    /**
+     * THE CONTROL, AND IT RUNS FIRST. Every soldier in the game is dry almost
+     * all of the time; a sink term that leaked into the default would move the
+     * entire army a fraction of a body down into the ground, on every map, and
+     * the case below would still pass.
+     */
+    for (const e of ELEVATIONS) {
+      expect({ e, same: centreY(0, e) === centreY(0, e) }).toEqual({ e, same: true })
+    }
+    // And absent is the same as zero — the field is optional on the wire.
+    const visual = stubVisual(CLIPS)
+    const renderer = new EntityRenderer(visual, ELEVATIONS[0]!)
+    renderer.setEntities([entity(1, 'walk')])
+    renderer.update(0, 1)
+    const mesh = renderer.group.children[0] as THREE.InstancedMesh
+    const matrix = new THREE.Matrix4()
+    mesh.getMatrixAt(0, matrix)
+    const bare = new THREE.Vector3()
+    matrix.decompose(bare, new THREE.Quaternion(), new THREE.Vector3())
+    renderer.dispose()
+    expect(bare.y).toBeCloseTo(centreY(0, ELEVATIONS[0]!), 6)
+  })
+
+  it('and a submerged one drops by the fraction of its STRETCHED height', () => {
+    /**
+     * THE STRETCH IS THE SUBTLE HALF. The quad is pre-stretched by `1/cos(e)` so
+     * it projects at its authored on-screen size, so the height that is actually
+     * standing in the world is `sprite.height * verticalStretch`. Sinking by the
+     * unstretched height hides far less than the fraction asks for, and the
+     * error GROWS with elevation — a bug that would look like a tuning problem
+     * at one camera angle and like nothing at all at another.
+     */
+    for (const e of ELEVATIONS) {
+      const stretched = 1.5 / Math.cos(e)
+      for (const fraction of [0.25, 0.7, 1]) {
+        expect({
+          e,
+          fraction,
+          drop: centreY(0, e) - centreY(fraction, e),
+        }).toEqual({ e, fraction, drop: expect.closeTo(fraction * stretched, 5) })
+      }
+    }
+  })
+
+  it('and the drop is proportional, not a flat nudge', () => {
+    // A renderer that sank a fixed amount whenever `submersion > 0` passes any
+    // single-value check. Two fractions at one elevation separate them.
+    const e = ELEVATIONS[1]!
+    const quarter = centreY(0, e) - centreY(0.25, e)
+    const half = centreY(0, e) - centreY(0.5, e)
+    expect(half).toBeCloseTo(quarter * 2, 5)
+  })
+})
