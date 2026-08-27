@@ -127,6 +127,33 @@ const ALPHA_TEST = 0.25
  */
 const GROUND_LIFT = 0.02
 
+/**
+ * The clip whose batches are ordered behind everything else alive (ticket 050).
+ *
+ * Spelled here rather than imported from `sprite-atlas.ts`'s `ONE_SHOT_ANIMATIONS`,
+ * which is a set about PLAYBACK — whether a clip holds its last frame — and
+ * happens to contain the same single name today. Ordering the dead behind the
+ * living and refusing to loop a death are two different claims, and a future
+ * one-shot that is not a corpse would silently acquire this one.
+ */
+const DIE_CLIP = 'die'
+
+/**
+ * Where sprites sit among the transparent draws, and where corpses sit among
+ * sprites.
+ *
+ * The GAP is the point, not the values: lower draws first, so a corpse's
+ * fragments land before any living man's and lose every exact tie to him. Both
+ * stay above the FX layer's default 0, so a burst still composites over a body.
+ */
+const SPRITE_RENDER_ORDER = 1
+const CORPSE_RENDER_ORDER = 0.5
+
+/** The animation half of a batch key, which is `unit|animation|direction|frame`. */
+function animationOf(key: string): string {
+  return key.split('|')[1] ?? ''
+}
+
 /** Instance capacity a fresh batch mesh starts at; it grows by doubling. */
 const INITIAL_CAPACITY = 16
 
@@ -572,8 +599,23 @@ export class EntityRenderer {
     mesh.castShadow = false
     mesh.receiveShadow = false
     // Alpha-blended, so drawn after the opaque terrain regardless; this keeps
-    // sprites ahead of any later transparent decal work.
-    mesh.renderOrder = 1
+    // sprites ahead of any later transparent effects, which sit at the default 0.
+    //
+    // AND THE DEAD ARE ORDERED BELOW THE LIVING (ticket 050). A man walking
+    // across a body was drawn UNDER it, and the cause was a TIE rather than a
+    // depth bug: his feet and the corpse share a tile at the same ground height,
+    // so their fragments carry the same depth, and `LessEqualDepth` lets whatever
+    // is drawn LAST overwrite. Every batch is a separate mesh sharing one
+    // material at one render order, all sitting at the origin — the geometry is a
+    // unit quad and real positions ride in the instance matrices — so Three's
+    // transparent sort had no distance to compare, fell through to object id, and
+    // ended up deciding by MESH CREATION ORDER. Nobody dies before somebody
+    // walks, so the corpse mesh was always the younger object and always drew
+    // last.
+    //
+    // Stating the order fixes only the tie. A living man genuinely BEHIND a body
+    // still fails the depth test and is still hidden by it, exactly as before.
+    mesh.renderOrder = animationOf(key) === DIE_CLIP ? CORPSE_RENDER_ORDER : SPRITE_RENDER_ORDER
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
 
     // Allocate the colour buffer up front so `setColorAt` never has to, and so
