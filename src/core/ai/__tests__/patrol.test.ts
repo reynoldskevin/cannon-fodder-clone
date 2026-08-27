@@ -1,6 +1,18 @@
 import { describe, it, expect } from 'vitest'
-import { rig, OPEN } from './rig'
+import { rig, OPEN, EAST } from './rig'
 import type { AiOptions } from '../index'
+
+/**
+ * Every enemy this suite spawns is faced at its own fixture (ticket 038).
+ *
+ * These cases were written when sight was a disc, so they park their player due
+ * east or west of the enemy — 90 degrees off the shipped southward default, at
+ * which nothing is acquired and every assertion here becomes a test of the
+ * vision cone instead of a test of its own subject. The arc has its own suite in
+ * `vision-cone.test.ts`, which runs on the shipped default.
+ */
+const arena = (art = OPEN, options: Partial<AiOptions> = {}) => rig(art, options, EAST)
+
 
 /**
  * Ticket 018 — patrol routes.
@@ -18,7 +30,7 @@ import type { AiOptions } from '../index'
 
 describe('a routeless enemy holds position', () => {
   it('does not wander', () => {
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawn(4, 5, 'enemy')
     const before = r.tileOf(enemy.id)
     r.run(300)
@@ -28,7 +40,7 @@ describe('a routeless enemy holds position', () => {
   it('is given no orders at all', () => {
     // Stronger than "did not move": an enemy ordered to the tile he is standing
     // on would also not move, while flooding the squad system every tick.
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     r.spawn(4, 5, 'enemy')
     r.run(300)
     expect(r.spy.orders).toEqual([])
@@ -37,7 +49,7 @@ describe('a routeless enemy holds position', () => {
 
 describe('a routed enemy walks his beat', () => {
   it('sets off toward the first waypoint', () => {
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawn(2, 5, 'enemy')
     r.ai.assignPatrol(enemy.id, [
       { x: 14, y: 5 },
@@ -48,7 +60,7 @@ describe('a routed enemy walks his beat', () => {
   })
 
   it('arrives, then turns round for the next one', () => {
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawn(2, 5, 'enemy')
     r.ai.assignPatrol(enemy.id, [
       { x: 8, y: 5 },
@@ -66,7 +78,7 @@ describe('a routed enemy walks his beat', () => {
   it('loops rather than stopping at the end', () => {
     // A route is a beat, not a one-way trip. Stopping at the last waypoint would
     // make every patrol in the game a slow march to a new post.
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawn(2, 5, 'enemy')
     r.ai.assignPatrol(enemy.id, [
       { x: 8, y: 5 },
@@ -84,7 +96,7 @@ describe('a routed enemy walks his beat', () => {
   })
 
   it('a single waypoint is a post to stand at, not a crash', () => {
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawn(2, 5, 'enemy')
     expect(() => r.ai.assignPatrol(enemy.id, [{ x: 9, y: 5 }])).not.toThrow()
     r.run(300)
@@ -92,7 +104,7 @@ describe('a routed enemy walks his beat', () => {
   })
 
   it('an empty route is no route', () => {
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawn(4, 5, 'enemy')
     r.ai.assignPatrol(enemy.id, [])
     const before = r.tileOf(enemy.id)
@@ -107,7 +119,7 @@ describe('a routed enemy walks his beat', () => {
      * ticket 012 wrote its own "does not re-order every tick" case for. A patrol
      * must not reintroduce it through a different door.
      */
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawn(2, 5, 'enemy')
     r.ai.assignPatrol(enemy.id, [
       { x: 14, y: 5 },
@@ -118,14 +130,14 @@ describe('a routed enemy walks his beat', () => {
   })
 
   it('ignores a route for an id that names nothing', () => {
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     expect(() => r.ai.assignPatrol(99_999, [{ x: 4, y: 4 }])).not.toThrow()
   })
 
   it('never patrols a player unit', () => {
     // The AI drives one team. A route assigned to an avatar must not take the
     // squad out of the player's hands.
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const man = r.spawn(2, 5, 'player')
     r.ai.assignPatrol(man.id, [{ x: 14, y: 5 }])
     const before = r.tileOf(man.id)
@@ -136,7 +148,7 @@ describe('a routed enemy walks his beat', () => {
 
 describe('contact interrupts the beat', () => {
   it('a patrolling man who sees the enemy stops patrolling', () => {
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawn(2, 5, 'enemy')
     r.ai.assignPatrol(enemy.id, [
       { x: 14, y: 5 },
@@ -150,7 +162,7 @@ describe('contact interrupts the beat', () => {
 
   it('and plants his feet rather than walking his route into the firefight', () => {
     // The visible failure: a man strolling past the squad while shooting at it.
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawn(2, 5, 'enemy')
     r.ai.assignPatrol(enemy.id, [
       { x: 14, y: 5 },
@@ -165,7 +177,7 @@ describe('contact interrupts the beat', () => {
   })
 
   it('resumes once the shooting stops', () => {
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawn(2, 5, 'enemy')
     r.ai.assignPatrol(enemy.id, [
       { x: 14, y: 5 },
@@ -193,6 +205,11 @@ describe('contact interrupts the beat', () => {
      * He is placed near the SECOND waypoint and interrupted there; resuming
      * correctly means continuing east, not marching west to the first.
      */
+    // NO facing override here, unlike the rest of this suite: this case puts its
+    // man due SOUTH of the guard, which the shipped default already looks at.
+    // Faced east with the others he would never see him and never be interrupted,
+    // and "resumes toward the nearest waypoint" would be measuring a beat that
+    // was never broken.
     const r = rig(OPEN)
     const enemy = r.spawn(2, 5, 'enemy')
     r.ai.assignPatrol(enemy.id, [
@@ -263,7 +280,7 @@ describe('the leash bounds a chase, it does not forbid one', () => {
 
   /** Engage a man, then move him out of sight, and report the state that follows. */
   function chase(route: readonly { x: number; y: number }[] | null, stepFirst: boolean): string {
-    const r = rig(BIG, HOLD)
+    const r = arena(BIG, HOLD)
     const enemy = r.spawn(2, 2, 'enemy')
     if (route !== null) r.ai.assignPatrol(enemy.id, route)
     if (stepFirst) r.run(20)
@@ -304,7 +321,7 @@ describe('the leash bounds a chase, it does not forbid one', () => {
    * back and walk home because he is off his beat.
    */
   function lureThenVanish(steps: number): { away: number; state: string } {
-    const r = rig(BIG, HOLD)
+    const r = arena(BIG, HOLD)
     const enemy = r.spawn(2, 2, 'enemy')
     r.ai.assignPatrol(enemy.id, [{ x: 2, y: 2 }, { x: 20, y: 2 }])
     const bait = r.spawn(9, 2, 'player', 10_000)
@@ -357,7 +374,7 @@ describe('the leash bounds a chase, it does not forbid one', () => {
      */
     const legs = [6, 18, 24, 40]
     const outcomes = legs.map((legLen) => {
-      const r = rig(BIG, HOLD)
+      const r = arena(BIG, HOLD)
       const start = 2
       const end = start + legLen
       const mid = Math.round((start + end) / 2)
@@ -387,7 +404,7 @@ describe('the leash bounds a chase, it does not forbid one', () => {
      * The system's own comment argues for this release; nothing pinned it, and a
      * mutant that never released survived the whole suite.
      */
-    const r = rig(BIG, HOLD)
+    const r = arena(BIG, HOLD)
     const enemy = r.spawn(4, 5, 'enemy')
     r.ai.assignPatrol(enemy.id, [
       { x: 4, y: 5 },
@@ -433,7 +450,7 @@ describe('the leash bounds a chase, it does not forbid one', () => {
 describe('determinism', () => {
   it('two identical patrols walk identically', () => {
     const walk = () => {
-      const r = rig(OPEN)
+      const r = arena(OPEN)
       const a = r.spawn(2, 5, 'enemy')
       const b = r.spawn(2, 8, 'enemy')
       r.ai.assignPatrol(a.id, [
@@ -455,7 +472,7 @@ describe('determinism', () => {
   })
 
   it('draws nothing from the world`s PRNG', () => {
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawn(2, 5, 'enemy')
     r.ai.assignPatrol(enemy.id, [
       { x: 14, y: 5 },

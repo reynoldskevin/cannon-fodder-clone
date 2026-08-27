@@ -5,6 +5,20 @@ import { ARCHETYPES, DEFAULT_ARCHETYPE_NAME } from '../../ai/archetypes'
 import type { SimEvent } from '../../world/events'
 
 /**
+ * THE ENEMIES ARE AUTHORED FACING WEST (ticket 038).
+ *
+ * Every fixture here stands its avatar WEST of its enemy on the same row — a
+ * readability choice from when sight was a disc. Against the shipped southward
+ * default that is 90 degrees off the 120-degree arc, so nothing is ever
+ * acquired and each case below silently becomes a test of the vision cone
+ * instead of a test of its own subject. `ai/__tests__/vision-cone.test.ts` is
+ * where the arc belongs, and it runs on the shipped default.
+ *
+ * Declared through `SpawnPoint.facing` rather than a test hook, so these suites
+ * take the same path a real level would.
+ */
+
+/**
  * Ticket 012a — the beat, measured where the player feels it.
  *
  * `reaction.test.ts` pins the timer against an injected table, which is how a
@@ -22,7 +36,7 @@ import type { SimEvent } from '../../world/events'
 const duelLevel = (apart: number) =>
   makeLevel({
     avatars: [{ x: 4, y: 7 }],
-    enemies: [{ x: 4 + apart, y: 7 }],
+    enemies: [{ x: 4 + apart, y: 7, facing: 'W' }],
   })
 
 /**

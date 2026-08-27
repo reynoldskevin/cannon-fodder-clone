@@ -1,9 +1,22 @@
 import { describe, it, expect } from 'vitest'
-import { rig, OPEN } from './rig'
+import { rig, OPEN, EAST } from './rig'
+import type { AiOptions } from '../index'
 import { ARCHETYPES, archetypeFor, DEFAULT_ARCHETYPE_NAME } from '../archetypes'
 import { weaponForKind, weaponFor, ENEMY_RIFLE } from '../../combat'
 import { DEFAULT_SIGHT_RANGE_TILES } from '../tuning'
 import type { ArchetypeSpec } from '../archetypes'
+
+/**
+ * Every enemy this suite spawns is faced at its own fixture (ticket 038).
+ *
+ * These cases were written when sight was a disc, so they park their player due
+ * east or west of the enemy — 90 degrees off the shipped southward default, at
+ * which nothing is acquired and every assertion here becomes a test of the
+ * vision cone instead of a test of its own subject. The arc has its own suite in
+ * `vision-cone.test.ts`, which runs on the shipped default.
+ */
+const arena = (art = OPEN, options: Partial<AiOptions> = {}) => rig(art, options, EAST)
+
 
 /**
  * Ticket 018 — enemy variety, as a table.
@@ -163,7 +176,7 @@ describe('the stats actually drive the machine', () => {
      * outcomes. A system that resolved the archetype and then used the system
      * default anyway would pass every table test above.
      */
-    const r = rig(OPEN, { archetypes: { squinter: spec({ name: 'squinter', sightRangeTiles: 2 }) } })
+    const r = arena(OPEN, { archetypes: { squinter: spec({ name: 'squinter', sightRangeTiles: 2 }) } })
     const enemy = r.spawnKind(2, 5, 'enemy', 'squinter')
     /**
      * THREE tiles, and the squinter's eyes narrowed to two to match.
@@ -184,7 +197,7 @@ describe('the stats actually drive the machine', () => {
   it('and the default-sighted one does engage him', () => {
     // The control. Without it, an AI that never engaged anybody would satisfy
     // the case above.
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawn(2, 5, 'enemy')
     // THREE tiles, matching the case above exactly. Ticket 036 shortened the
     // enemy's rifle to 6.4 and 037 halts him at 0.6 of it, so anything further
@@ -205,7 +218,7 @@ describe('the stats actually drive the machine', () => {
      * an archetype that could would be a second "how far can he shoot" — exactly
      * the drift `tuning.ts` exists to prevent.
      */
-    const r = rig(OPEN, { archetypes: { hawk: spec({ name: 'hawk', sightRangeTiles: 18 }) } })
+    const r = arena(OPEN, { archetypes: { hawk: spec({ name: 'hawk', sightRangeTiles: 18 }) } })
     const enemy = r.spawnKind(1, 5, 'enemy', 'hawk')
     r.spawn(15, 5, 'player', 1000) // 14 tiles: outside the default 12
     r.run(10)
@@ -215,7 +228,7 @@ describe('the stats actually drive the machine', () => {
   it('and the default-sighted one does not notice him at all', () => {
     // The control for the case above, and the half that proves the row was read:
     // same geometry, no archetype, and he stands there.
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawn(1, 5, 'enemy')
     r.spawn(15, 5, 'player', 1000)
     r.run(10)
@@ -226,7 +239,7 @@ describe('the stats actually drive the machine', () => {
     // Enemy variety is the criterion, and variety means SIMULTANEOUS
     // difference. One-archetype-per-test could be satisfied by a global that
     // happened to be set correctly each time.
-    const r = rig(OPEN, {
+    const r = arena(OPEN, {
       archetypes: {
         squinter: spec({ name: 'squinter', sightRangeTiles: 3 }),
         hawk: spec({ name: 'hawk', sightRangeTiles: 18 }),
@@ -246,7 +259,7 @@ describe('the stats actually drive the machine', () => {
     // Which is what keeps every level authored before this ticket working. Sight
     // again, not engagement: an unarmed kind has no weapon range at all, so it
     // can notice a man and never shoot him — see the note above.
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawnKind(2, 5, 'enemy', 'wandering-minstrel')
     r.spawn(9, 5, 'player', 1000) // 7 tiles: inside the default 12
     r.run(10)
@@ -254,7 +267,7 @@ describe('the stats actually drive the machine', () => {
   })
 
   it('and an unknown kind still cannot see past that default', () => {
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawnKind(1, 5, 'enemy', 'wandering-minstrel')
     r.spawn(15, 5, 'player', 1000) // 14 tiles: outside it
     r.run(10)
@@ -283,7 +296,7 @@ describe('an explicit option outranks the archetype row', () => {
   it('for sight range', () => {
     // The row says he sees 18 tiles; the session says 3. At 7 tiles he must not
     // see the man, or the row won.
-    const r = rig(OPEN, {
+    const r = arena(OPEN, {
       sightRangeTiles: 3,
       archetypes: { hawk: spec({ name: 'hawk', sightRangeTiles: 18 }) },
     })
@@ -296,7 +309,7 @@ describe('an explicit option outranks the archetype row', () => {
   it('for alert radius', () => {
     // A shout carries the session's distance, not the row's. The enemy is 10
     // tiles from the shot: inside the row's 18, outside the session's 4.
-    const r = rig(OPEN, {
+    const r = arena(OPEN, {
       alertRadiusTiles: 4,
       archetypes: { hawk: spec({ name: 'hawk', alertRadiusTiles: 18, sightRangeTiles: 2 }) },
     })
@@ -309,7 +322,7 @@ describe('an explicit option outranks the archetype row', () => {
   it('and the row still decides when the session says nothing', () => {
     // The other half. Without it, "the option wins" is satisfied by an
     // implementation that ignores the row entirely.
-    const r = rig(OPEN, { archetypes: { hawk: spec({ name: 'hawk', sightRangeTiles: 2 }) } })
+    const r = arena(OPEN, { archetypes: { hawk: spec({ name: 'hawk', sightRangeTiles: 2 }) } })
     const enemy = r.spawnKind(2, 5, 'enemy', 'hawk')
     r.spawn(9, 5, 'player', 1000)
     r.run(10)
@@ -326,7 +339,7 @@ describe('adding an archetype is a table row', () => {
      * would still pass. What must be shown is that a row a caller invents, who
      * cannot touch a line of `src/core/ai`, is honoured.
      */
-    const r = rig(OPEN, {
+    const r = arena(OPEN, {
       archetypes: { 'jungle-scout': spec({ name: 'jungle-scout', sightRangeTiles: 2 }) },
     })
     const scout = r.spawnKind(2, 5, 'enemy', 'jungle-scout')
@@ -360,7 +373,7 @@ describe('adding an archetype is a table row', () => {
       (a) => a.sightRangeTiles > DEFAULT_SIGHT_RANGE_TILES,
     )
     expect(varied).toBeDefined()
-    const r = rig(OPEN, {
+    const r = arena(OPEN, {
       archetypes: { 'jungle-scout': spec({ name: 'jungle-scout', sightRangeTiles: 2 }) },
     })
     const enemy = r.spawnKind(1, 5, 'enemy', varied?.name ?? '')

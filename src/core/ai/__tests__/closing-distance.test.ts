@@ -1,8 +1,21 @@
 import { describe, it, expect } from 'vitest'
-import { rig, OPEN } from './rig'
+import { rig, OPEN, WEST } from './rig'
+import type { AiOptions } from '../index'
 import { ARCHETYPES, DEFAULT_ARCHETYPE_NAME } from '../archetypes'
 import { weaponFor } from '../../combat'
 import type { ArchetypeSpec } from '../archetypes'
+
+/**
+ * Every enemy this suite spawns is faced at its own fixture (ticket 038).
+ *
+ * These cases were written when sight was a disc, so they park their player due
+ * east or west of the enemy — 90 degrees off the shipped southward default, at
+ * which nothing is acquired and every assertion here becomes a test of the
+ * vision cone instead of a test of its own subject. The arc has its own suite in
+ * `vision-cone.test.ts`, which runs on the shipped default.
+ */
+const arena = (art = OPEN, options: Partial<AiOptions> = {}) => rig(art, options, WEST)
+
 
 /**
  * Ticket 037 — a pursuing enemy closes to a distance he can actually shoot from.
@@ -58,7 +71,7 @@ describe('he keeps walking while the target is inside his range but far in it', 
      * rifle — so the OLD machine engaged here and stopped — and outside the
      * 3.2-tile closing distance this row asks for.
      */
-    const r = rig(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
+    const r = arena(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
     const enemy = r.spawn(14, 5, 'enemy')
     const player = r.spawn(8, 5, 'player', 10_000)
     expect(gap(r, enemy.id, player.id)).toBeGreaterThan(RANGE * 0.5)
@@ -70,7 +83,7 @@ describe('he keeps walking while the target is inside his range but far in it', 
   it('and the gap actually shrinks, rather than him merely being labelled `pursue`', () => {
     // A state name is not a behaviour. This is the assertion that fails if the
     // machine reports `pursue` and issues no order.
-    const r = rig(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
+    const r = arena(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
     const enemy = r.spawn(14, 5, 'enemy')
     const player = r.spawn(8, 5, 'player', 10_000)
     r.run(4)
@@ -80,7 +93,7 @@ describe('he keeps walking while the target is inside his range but far in it', 
   })
 
   it('then halts once he is inside the closing distance, and stops there', () => {
-    const r = rig(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
+    const r = arena(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
     const enemy = r.spawn(14, 5, 'enemy')
     const player = r.spawn(8, 5, 'player', 10_000)
     r.run(300)
@@ -104,7 +117,7 @@ describe('the two boundaries are different, or he vibrates', () => {
      * second. Five tiles is well outside the closing distance and well inside
      * the rifle, so it is only reachable by a machine with two thresholds.
      */
-    const r = rig(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
+    const r = arena(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
     const enemy = r.spawn(10, 5, 'enemy')
     const player = r.spawn(8, 5, 'player', 10_000)
     r.run(20)
@@ -117,7 +130,7 @@ describe('the two boundaries are different, or he vibrates', () => {
   it('and only drops back to `pursue` once it passes the FULL range', () => {
     // The other side of the same claim. Without it, "stays engaged" is satisfied
     // by a machine that never leaves `engage` at all.
-    const r = rig(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
+    const r = arena(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
     const enemy = r.spawn(10, 5, 'enemy')
     const player = r.spawn(8, 5, 'player', 10_000)
     r.run(20)
@@ -137,7 +150,7 @@ describe('the two boundaries are different, or he vibrates', () => {
      * Bounded generously — this is not asserting an exact transition count, it
      * is asserting the difference between "a few" and "constantly".
      */
-    const r = rig(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
+    const r = arena(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
     const enemy = r.spawn(14, 5, 'enemy')
     r.spawn(8, 5, 'player', 10_000)
     let previous = String(r.ai.stateOf(enemy.id))
@@ -160,7 +173,7 @@ describe('the two boundaries are different, or he vibrates', () => {
      * there raising his rifle forever while the player walked in and out of 3.2
      * tiles.
      */
-    const r = rig(OPEN, { archetypes: armed({ closeToFraction: 0.5, reactionTicks: 30 }) })
+    const r = arena(OPEN, { archetypes: armed({ closeToFraction: 0.5, reactionTicks: 30 }) })
     const enemy = r.spawn(10, 5, 'enemy')
     const player = r.spawn(8, 5, 'player', 10_000)
     r.run(60)
@@ -201,7 +214,7 @@ describe('a fraction of one reproduces the old behaviour exactly', () => {
      * at arm's length must be the same code. Six tiles is inside 6.4 and would
      * be `pursue` at any fraction below ~0.94.
      */
-    const r = rig(OPEN, { archetypes: armed({ closeToFraction: 1 }) })
+    const r = arena(OPEN, { archetypes: armed({ closeToFraction: 1 }) })
     const enemy = r.spawn(14, 5, 'enemy')
     r.spawn(8, 5, 'player', 10_000)
     r.run(4)
@@ -209,7 +222,7 @@ describe('a fraction of one reproduces the old behaviour exactly', () => {
   })
 
   it('and he does not advance afterwards', () => {
-    const r = rig(OPEN, { archetypes: armed({ closeToFraction: 1 }) })
+    const r = arena(OPEN, { archetypes: armed({ closeToFraction: 1 }) })
     const enemy = r.spawn(14, 5, 'enemy')
     const player = r.spawn(8, 5, 'player', 10_000)
     r.run(4)
@@ -229,7 +242,7 @@ describe('an unarmed kind is untouched by any of it', () => {
      * the man would engage from anywhere or from nowhere depending on which way
      * the test was written.
      */
-    const r = rig(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
+    const r = arena(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
     const enemy = r.spawnKind(14, 5, 'enemy', 'sandbag')
     const player = r.spawn(8, 5, 'player', 10_000)
     r.run(4)
@@ -290,7 +303,7 @@ describe('a target he has not closed on is a fresh approach', () => {
      * beat is keyed on `armedTargetId` rather than on the state, for
      * structurally the same reason.
      */
-    const r = rig(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
+    const r = arena(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
     const enemy = r.spawn(10, 5, 'enemy')
     const near = r.spawn(7, 5, 'player', 10_000) // 3 tiles: inside 3.2
     const far = r.spawn(4, 5, 'player', 10_000) // 6 tiles: outside it, inside 6.4
@@ -309,7 +322,7 @@ describe('a target he has not closed on is a fresh approach', () => {
     // The guard on the fix: "re-derive on a new target" must not become
     // "re-derive every tick", which would delete the hysteresis and bring back
     // the flicker it exists to prevent.
-    const r = rig(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
+    const r = arena(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
     const enemy = r.spawn(10, 5, 'enemy')
     const player = r.spawn(8, 5, 'player', 10_000)
     r.run(20)
@@ -331,7 +344,7 @@ describe('the marksman does not advance, which is the point of him', () => {
      * Five tiles is inside his 6.4-tile rifle and well outside the rifleman's
      * 3.84-tile closing distance, so this separates the two rows behaviourally.
      */
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawnKind(10, 5, 'enemy', 'sniper')
     const player = r.spawn(5, 5, 'player', 10_000)
     r.run(6)
@@ -345,7 +358,7 @@ describe('the marksman does not advance, which is the point of him', () => {
     // The other half of the pair. Same geometry, different rows, different
     // outcomes — without this, "the sniper holds" is satisfied by a machine in
     // which nobody ever advances.
-    const r = rig(OPEN)
+    const r = arena(OPEN)
     const enemy = r.spawn(10, 5, 'enemy')
     const player = r.spawn(5, 5, 'player', 10_000)
     r.run(6)

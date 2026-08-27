@@ -376,6 +376,28 @@ const FACING_VECTORS: Readonly<Record<string, Direction>> = {
   SW: { dx: -1, dz: 1 },
   W: { dx: -1, dz: 0 },
   NW: { dx: -1, dz: -1 },
+  /**
+   * THE LONG NAMES ARE NOT A CONVENIENCE (ticket 038).
+   *
+   * `core/level` validates `facing` as a non-empty STRING and nothing more, and
+   * `level/__tests__/schema.test.ts` pins `'south'` as a value a level may
+   * legitimately carry — while this table knew only the abbreviations, so
+   * `facingVector` returned `undefined` for it and the spawn fell through to the
+   * default with nothing said.
+   *
+   * That cost a sprite its starting pose until ticket 038. It now decides what a
+   * guard can SEE, so the two vocabularies have to be one vocabulary: an author
+   * who writes `south` and gets a man looking north has no way to tell that from
+   * the field being ignored.
+   */
+  NORTH: { dx: 0, dz: -1 },
+  NORTHEAST: { dx: 1, dz: -1 },
+  EAST: { dx: 1, dz: 0 },
+  SOUTHEAST: { dx: 1, dz: 1 },
+  SOUTH: { dx: 0, dz: 1 },
+  SOUTHWEST: { dx: -1, dz: 1 },
+  WEST: { dx: -1, dz: 0 },
+  NORTHWEST: { dx: -1, dz: -1 },
 }
 
 /**
@@ -720,7 +742,19 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
       const point = points[i]
       if (entity === undefined || point === undefined) continue
       const direction = facingVector(point.facing)
-      if (direction !== undefined) spawnFacings.set(entity.id, direction)
+      if (direction === undefined) continue
+      spawnFacings.set(entity.id, direction)
+      // AND THE SIMULATION IS TOLD TOO, for an enemy (ticket 038). The authored
+      // facing has only ever been a starting POSE for a sprite; it is now also
+      // the direction the man is actually watching, and the arc he can see
+      // inside is measured from it. Seeded here rather than read by the AI
+      // because the machine is handed a grid and not a level — the same reason
+      // `assignPatrolRoutes` exists — and gated on the team because the AI holds
+      // no state for a player unit and must not start.
+      //
+      // `FACING_VECTORS`'s diagonals are `(1, 1)`-shaped rather than unit
+      // vectors; `face` normalises, which is why they can be passed straight in.
+      if (entity.team === 'enemy') ai.face(entity.id, direction.dx, direction.dz)
     }
   }
 
@@ -1001,6 +1035,35 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
       if (aim !== undefined && !aimedAtOwnTile(aim, tile)) {
         dx = aim.x - entity.x
         dz = aim.z - entity.z
+      }
+      /**
+       * AND THE SIMULATION OUTRANKS BOTH, for a unit the AI commands (ticket
+       * 038).
+       *
+       * THIS IS THE LINE THAT MAKES THE VISION CONE A MECHANIC RATHER THAN AN
+       * INVISIBLE RULE. An enemy now has a facing in the SIMULATION that decides
+       * what he can see, and everything above derives one from MOVEMENT and AIM
+       * — so the two can disagree, and a man drawn looking east while watching
+       * south is a blind arc the player cannot see. That does not read as
+       * stealth; it reads as being killed by nothing.
+       *
+       * ASKED OF THE SYSTEM THAT OWNS THE FACT, never recomputed here: two rules
+       * for where a man is looking would disagree eventually, and the
+       * disagreement is exactly the one above.
+       *
+       * GATED ON THE ANSWER, NOT ON THE TEAM. `facingOf` is `undefined` for
+       * every unit the machine does not command, which is the whole player
+       * squad — so the squad keeps taking its facing from movement and aim, and
+       * ticket 025a's contract is untouched, without this file restating who the
+       * AI commands.
+       *
+       * It is always a unit vector, so the authored fallback below cannot fire
+       * for a unit that has one.
+       */
+      const commanded = ai.facingOf(entity.id)
+      if (commanded !== undefined) {
+        dx = commanded.dx
+        dz = commanded.dz
       }
       // The authored facing is only ever a starting pose, and the entry is gone
       // the moment he moves anyway; this covers the frames before the first step,

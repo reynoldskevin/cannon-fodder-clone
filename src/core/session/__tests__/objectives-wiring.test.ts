@@ -7,6 +7,20 @@ import type { LevelObjective } from '../../level/types'
 import type { SimEvent } from '../../world/events'
 
 /**
+ * THE ENEMIES ARE AUTHORED FACING WEST (ticket 038).
+ *
+ * Every fixture here stands its avatar WEST of its enemy on the same row — a
+ * readability choice from when sight was a disc. Against the shipped southward
+ * default that is 90 degrees off the 120-degree arc, so nothing is ever
+ * acquired and each case below silently becomes a test of the vision cone
+ * instead of a test of its own subject. `ai/__tests__/vision-cone.test.ts` is
+ * where the arc belongs, and it runs on the shipped default.
+ *
+ * Declared through `SpawnPoint.facing` rather than a test hook, so these suites
+ * take the same path a real level would.
+ */
+
+/**
  * Ticket 013 — the objective system, wired into a real session.
  *
  * ASSERTED THROUGH `advance`, like every other wiring test in this directory.
@@ -26,7 +40,7 @@ import type { SimEvent } from '../../world/events'
 const duel = (objectives?: readonly LevelObjective[]) =>
   makeLevel({
     avatars: [{ x: 8, y: 7 }],
-    enemies: [{ x: 11, y: 7 }],
+    enemies: [{ x: 11, y: 7, facing: 'W' }],
     ...(objectives === undefined ? {} : { objectives }),
   })
 
@@ -142,7 +156,7 @@ describe('a mission played to a loss', () => {
           { x: 14, y: 2 }, // two tiles from the enemy: dead within the second
           { x: 1, y: 13 }, // 18.6 tiles away: outside the AI's 12 of sight
         ],
-        enemies: [{ x: 16, y: 2 }],
+        enemies: [{ x: 16, y: 2, facing: 'W' }],
       }),
     )
     /**
@@ -169,7 +183,7 @@ describe('the mission timer', () => {
    * apart, well outside the AI's twelve of sight, so nothing happens to either
    * of them and the clock is the only thing moving.
    */
-  const quiet = () => makeLevel({ avatars: [{ x: 2, y: 2 }], enemies: [{ x: 18, y: 13 }] })
+  const quiet = () => makeLevel({ avatars: [{ x: 2, y: 2 }], enemies: [{ x: 18, y: 13, facing: 'W' }] })
 
   it('is the simulation`s own clock, in ticks', () => {
     const s = createSession(quiet())

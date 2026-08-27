@@ -1,9 +1,22 @@
 import { describe, it, expect } from 'vitest'
-import { rig, OPEN, WALLED } from './rig'
+import { rig, OPEN, WALLED, WEST } from './rig'
+import type { AiOptions } from '../index'
 import { ARCHETYPES, DEFAULT_ARCHETYPE_NAME } from '../archetypes'
 import { DEFAULT_REACTION_TICKS } from '../tuning'
 import type { ArchetypeSpec } from '../archetypes'
 import type { Rig } from './rig'
+
+/**
+ * Every enemy this suite spawns is faced at its own fixture (ticket 038).
+ *
+ * These cases were written when sight was a disc, so they park their player due
+ * east or west of the enemy — 90 degrees off the shipped southward default, at
+ * which nothing is acquired and every assertion here becomes a test of the
+ * vision cone instead of a test of its own subject. The arc has its own suite in
+ * `vision-cone.test.ts`, which runs on the shipped default.
+ */
+const arena = (art = OPEN, options: Partial<AiOptions> = {}) => rig(art, options, WEST)
+
 
 /**
  * Ticket 012a — a moment between being seen and being shot.
@@ -65,7 +78,7 @@ const table = (reactionTicks: number, over: Partial<ArchetypeSpec> = {}): Record
  * also had to walk him there would be measuring the approach.
  */
 function contact(reactionTicks: number, kind = DEFAULT_ARCHETYPE_NAME): Rig {
-  const r = rig(OPEN, { archetypes: table(reactionTicks) })
+  const r = arena(OPEN, { archetypes: table(reactionTicks) })
   if (kind === DEFAULT_ARCHETYPE_NAME) r.spawn(10, 5, 'enemy')
   else r.spawnKind(10, 5, 'enemy', kind)
   // Tough, so the firefight does not end with the first round that lands and
@@ -207,7 +220,7 @@ describe('`isReacting` is how anything else can see the beat', () => {
      *
      * A mutation dropping the state check survived all 1803 tests before this.
      */
-    const r = rig(WALLED, { archetypes: table(45) })
+    const r = arena(WALLED, { archetypes: table(45) })
     const enemy = r.spawn(10, 5, 'enemy')
     const player = r.spawn(12, 5, 'player', 10_000)
     r.run(5)
@@ -228,7 +241,7 @@ describe('`isReacting` is how anything else can see the beat', () => {
   it('is false for a man who is not engaging at all', () => {
     // An idle man is not "about to shoot"; a cue hung off a flag that were true
     // for everybody would light up the whole map.
-    const r = rig(OPEN, { archetypes: table(45) })
+    const r = arena(OPEN, { archetypes: table(45) })
     const lonely = r.spawn(10, 5, 'enemy')
     r.run(5)
     expect(r.ai.isReacting(lonely.id)).toBe(false)
@@ -276,7 +289,7 @@ describe('where the count comes from', () => {
    */
 
   it('a caller`s option outranks the archetype row', () => {
-    const r = rig(OPEN, { archetypes: table(10), reactionTicks: 80 })
+    const r = arena(OPEN, { archetypes: table(10), reactionTicks: 80 })
     r.spawn(10, 5, 'enemy')
     r.spawn(5, 5, 'player', 10_000)
     const at = ticksToFirstOrder(r, 200)
@@ -289,7 +302,7 @@ describe('where the count comes from', () => {
     // The control for the case above: without it, an implementation that always
     // used the option and ignored the row would need the option to be absent to
     // be caught, and nothing here would ever make it absent.
-    const r = rig(OPEN, { archetypes: table(10) })
+    const r = arena(OPEN, { archetypes: table(10) })
     r.spawn(10, 5, 'enemy')
     r.spawn(5, 5, 'player', 10_000)
     const at = ticksToFirstOrder(r, 200)
@@ -318,7 +331,7 @@ describe('where the count comes from', () => {
      * walk. The reaction default is still the one falling all the way through,
      * which is what this case exists to pin.
      */
-    const r = rig(OPEN, { archetypes: {}, closeToFraction: 1 })
+    const r = arena(OPEN, { archetypes: {}, closeToFraction: 1 })
     r.spawn(10, 5, 'enemy')
     r.spawn(5, 5, 'player', 10_000)
     const at = ticksToFirstOrder(r, 300)
@@ -382,7 +395,7 @@ describe('leaving engage costs him the beat again', () => {
      * would have reported success on a test that proved nothing. `WALLED` has a
      * full-height wall at x=8 and is the only way to actually break the line.
      */
-    const r = rig(WALLED, { archetypes: table(30) })
+    const r = arena(WALLED, { archetypes: table(30) })
     const enemy = r.spawn(10, 5, 'enemy')
     const player = r.spawn(12, 5, 'player', 10_000)
     r.run(60)
@@ -502,7 +515,7 @@ describe('a target on the weapon-range boundary', () => {
    */
 
   it('is still fired at, even while it crosses in and out of range', () => {
-    const r = rig(OPEN, { archetypes: table(30) })
+    const r = arena(OPEN, { archetypes: table(30) })
     const enemy = r.spawn(10, 5, 'enemy')
     const player = r.spawn(2, 5, 'player', 10_000)
     /**
@@ -528,7 +541,7 @@ describe('a target on the weapon-range boundary', () => {
   it('and the beat does not simply never end', () => {
     // The other half: an `isReacting` pinned true for the whole engagement would
     // leave ticket 025's alerted cue burning over a man in a firefight.
-    const r = rig(OPEN, { archetypes: table(30) })
+    const r = arena(OPEN, { archetypes: table(30) })
     const enemy = r.spawn(10, 5, 'enemy')
     const player = r.spawn(2, 5, 'player', 10_000)
     let everFinished = false
@@ -545,7 +558,7 @@ describe('a target on the weapon-range boundary', () => {
     // The guard on the fix: "do not re-arm on re-entry" must not become "never
     // re-arm", which would delete the ticket. This is the wall case again,
     // stated here so the two rules are read together.
-    const r = rig(WALLED, { archetypes: table(30) })
+    const r = arena(WALLED, { archetypes: table(30) })
     const enemy = r.spawn(10, 5, 'enemy')
     const player = r.spawn(12, 5, 'player', 10_000)
     r.run(60)
