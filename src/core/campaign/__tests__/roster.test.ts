@@ -8,7 +8,7 @@ import {
   recruit,
   recruitsAvailable,
   RANKS,
-  NAME_POOL,
+  MAX_ROSTER,
 } from '../index'
 import type { CampaignState } from '../index'
 import type { SimEvent } from '../../world/events'
@@ -130,16 +130,27 @@ describe('a fresh campaign', () => {
 })
 
 describe('names are never reissued', () => {
-  it('survives exhausting the pool', () => {
+  it('fills a full roster without repeating anybody', () => {
     /**
-     * THE CASE THAT WILL HAPPEN IN PLAY. The pool is finite and a campaign
-     * outlives it — five levels of casualties will run through thirty names. A
-     * generator that wrapped around would put two identical gravestones on Boot
-     * Hill, which is the one screen this whole ticket exists to feed.
+     * THE CASE THAT WILL HAPPEN IN PLAY. A generator that wrapped around would
+     * put two identical gravestones on Boot Hill, which is the one screen this
+     * ticket exists to feed.
+     *
+     * THIS CASE USED TO ASK FOR `NAME_POOL.length + 12` MEN AND CALL THAT
+     * EXHAUSTION, which worked only while the pool was 30 names — shorter than
+     * `MAX_ROSTER`. Ticket 045 replaced it with the 347 names of the supplied
+     * sheet, and `recruit` caps the living roster at 64, so exhaustion is no
+     * longer reachable from here AT ALL: asking for 359 men now yields 64, and
+     * the old assertion failed on the cap rather than on any name.
+     *
+     * So this asks for the most men a roster can hold, which is what it could
+     * always actually check. Exhaustion moved to `names.test.ts`, which drives
+     * `issueNames` past twice the pool with no roster in the way and holds the
+     * generation suffix to the same distinctness rule.
      */
-    const s = createCampaign({ seed: 3, recruits: NAME_POOL.length + 12 })
+    const s = createCampaign({ seed: 3, recruits: MAX_ROSTER })
     const names = recruitsAvailable(s).map((r) => r.name)
-    expect(names).toHaveLength(NAME_POOL.length + 12)
+    expect(names).toHaveLength(MAX_ROSTER)
     expect(new Set(names).size).toBe(names.length)
   })
 
