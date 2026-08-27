@@ -24,8 +24,7 @@
  * FLAT ON THE GROUND PLANE, LIFTED PER KIND. A billboard would need the camera,
  * which would make this a thing that cannot be built without one and therefore a
  * thing no test can hold. The camera looks down at a fixed elevation, so a quad
- * in the XZ plane is foreshortened but never edge-on — and a scorch mark, which
- * is the one effect that genuinely lies on the ground, comes out exactly right.
+ * in the XZ plane is foreshortened but never edge-on.
  *
  * ONE MESH, SIZED FROM ITS CAPACITY, WITH NO GROWTH PATH, because the buffer
  * upstream is a fixed-capacity ring and so the largest frame this can ever be
@@ -76,15 +75,6 @@ export interface FxRendererOptions {
    * `main.ts` always passes one.
    */
   readonly ground?: FxGround
-  /**
-   * How the effects are composited.
-   *
-   * `'additive'` is light — a flash brightens the jungle it crosses instead of
-   * stamping an opaque patch over it, and two bursts in the same place read as
-   * two bursts. `'normal'` is PAINT, and the decal pool must be built with it: a
-   * scorch mark is a dark stain, and additively blended dark is invisible.
-   */
-  readonly blending?: 'additive' | 'normal'
 }
 
 export interface FxRenderer {
@@ -121,8 +111,10 @@ interface FxStyle {
   /**
    * How far above the ground it floats, in world units.
    *
-   * Not zero for anything but the scar: a quad exactly on the terrain fights the
-   * ground for the depth test and z-fights across the whole of its surface.
+   * NEVER ZERO. A quad exactly on the terrain fights the ground for the depth
+   * test and z-fights across the whole of its surface. The scorch mark ticket 047
+   * removed was the one kind that wanted to be flat on it, and it sat at 0.02
+   * rather than 0 for this reason.
    */
   readonly lift: number
   /** Alpha at the instant it is born. The fade takes it to nothing from here. */
@@ -140,11 +132,6 @@ const FX_STYLES: Record<FxKind, FxStyle> = {
    * detonation that may have caused it.
    */
   death: { r: 0.72, g: 0.12, b: 0.1, halfSize: 0.45, lift: 0.55, peakAlpha: 0.75 },
-  /**
-   * Scorched earth, barely off the ground. Dark, so it only reads at all under
-   * `'normal'` blending — see `FxRendererOptions.blending`.
-   */
-  decal: { r: 0.06, g: 0.05, b: 0.04, halfSize: 0.9, lift: 0.02, peakAlpha: 0.7 },
 }
 
 /** Vertices one effect costs: two triangles, unindexed. */
@@ -178,8 +165,13 @@ export function createFxRenderer(options: FxRendererOptions = {}): FxRenderer {
   const material = new THREE.MeshBasicMaterial({
     vertexColors: true,
     transparent: true,
-    blending:
-      options.blending === 'normal' ? THREE.NormalBlending : THREE.AdditiveBlending,
+    // ADDITIVE, AND NO LONGER A CHOICE (ticket 047). Light: a flash brightens
+    // the jungle it crosses instead of stamping an opaque patch over it, and two
+    // bursts in the same place read as two bursts. There was a `'normal'`
+    // setting for exactly one caller — the decal pool, because a scorch mark is
+    // a dark stain and additively blended dark is invisible — and it went with
+    // the decals.
+    blending: THREE.AdditiveBlending,
     // Tested against the world but writing no depth: a burst is occluded by the
     // hill in front of it, but it must never occlude the sprites and tracers
     // drawn after it — and two effects overlapping must not punch a hole in each
@@ -282,16 +274,15 @@ export function createFxRenderer(options: FxRendererOptions = {}): FxRenderer {
       // fancier is invisible inside four tenths of a second.
       const alpha = style.peakAlpha * (1 - effect.fade)
       /**
-       * A SCAR IS ON THE TERRAIN BY DEFINITION, so it ignores the effect's
-       * height; everything else honours it.
+       * EVERY KIND HONOURS THE EFFECT'S HEIGHT, with no exception since ticket
+       * 047 deleted the one there was.
        *
        * `Explosion` carries a `y` because a fuse can expire before impact and
        * detonate the round in mid-air — the event's own comment says an airburst
-       * reported on the ground would hide the whole mechanic. A decal that
-       * inherited that altitude would be a scorch mark hanging in the sky over
-       * ground nothing burned.
+       * reported on the ground would hide the whole mechanic. The scar used to be
+       * pinned to 0 here, being on the terrain by definition; nothing left is.
        */
-      const airborne = effect.kind === 'decal' ? 0 : (effect.y ?? 0)
+      const airborne = effect.y ?? 0
       const y = groundAt(effect.x, effect.z) + style.lift + airborne
       const minX = effect.x - half
       const maxX = effect.x + half
