@@ -41,8 +41,15 @@ const facingSouth = (r: ReturnType<typeof rig>, tileX: number, tileY: number) =>
 describe('a shot from behind', () => {
   it('is heard, even though the shooter cannot be seen', () => {
     const r = rig(OPEN)
-    const enemy = facingSouth(r, 10, 6)
-    r.spawn(10, 2, 'player', 10_000) // four tiles NORTH: behind him
+    /**
+     * SIX TILES BEHIND, RAISED FROM FOUR BY TICKET 046. The premise asserted two
+     * lines below — that sight alone leaves him idle — is the whole setup for
+     * this case, and at four tiles it stopped being true: the awareness radius
+     * now notices a man that close from any direction, so he would have left
+     * `idle` before hearing a thing and the shot would have proved nothing.
+     */
+    const enemy = facingSouth(r, 10, 8)
+    r.spawn(10, 2, 'player', 10_000) // six tiles NORTH: behind him
     r.run(6)
     // The premise: sight alone leaves him idle.
     expect(r.ai.stateOf(enemy.id)).toBe('idle')

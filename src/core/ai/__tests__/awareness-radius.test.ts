@@ -101,9 +101,18 @@ describe('and nothing else about detection moved', () => {
      * a man standing behind somebody.
      */
     expect({
+      radius: DEFAULT_AWARENESS_RADIUS_TILES,
       sight: DEFAULT_SIGHT_RANGE_TILES,
       hearing: DEFAULT_ALERT_RADIUS_TILES,
       arc: VISION_HALF_ANGLE_COS,
-    }).toEqual({ sight: 12, hearing: 14, arc: 0.5 })
+    }).toEqual({ radius: 4, sight: 12, hearing: 14, arc: 0.5 })
+    /**
+     * THE RADIUS IS PINNED EXACTLY HERE AND NOWHERE ELSE, on purpose. The
+     * scenarios above deliberately leave a band — they pass at three as well as
+     * at four, because what they assert is that a man three tiles back is seen
+     * and one eight tiles back is not, which is the behaviour the ticket asked
+     * for rather than the digit. Mutation-checked: 2, 8 and 12 all fail those
+     * scenarios; 3 does not, and this line is what catches it.
+     */
   })
 })

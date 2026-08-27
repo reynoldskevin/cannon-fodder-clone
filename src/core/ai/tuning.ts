@@ -173,7 +173,22 @@ export const VISION_HALF_ANGLE_COS = 0.5
  * WITHOUT IT THE MECHANIC READS AS A BUG. A soldier could stand pressed against
  * an enemy's back indefinitely and never be noticed, and no player seeing that
  * reads it as stealth — they read it as the AI being broken. A man notices
- * someone at arm's length behind him.
+ * someone close behind him.
+ *
+ * FOUR, RAISED FROM TWO (ticket 046). Two tiles made the exception almost
+ * literal — it covered a man touching an enemy's back and very little else, so a
+ * soldier three tiles off that back, in the open with a clear line, was still
+ * invisible. Four is a man in the room rather than a man against the wall, and
+ * is still a third of sight: the arc remains the thing that decides at any
+ * distance a player would call a distance.
+ *
+ * THE RETUNE MOVED THREE FIXTURES, which is worth knowing before moving it
+ * again. `vision-cone.test.ts` and `heard-from-behind.test.ts` each stood their
+ * subject three or four tiles behind a sentry — outside the old radius, inside
+ * the new one — so they had been asserting the ARC while standing in the
+ * EXCEPTION, and they went green for the wrong reason the moment this number
+ * passed them. They now stand beyond the radius. A fourth, in `facing.test.ts`,
+ * needed the player removed outright.
  *
  * RAISE IT and the blind spot shrinks from the inside out; at the sight range
  * the cone is deleted outright and every case this ticket added quietly goes
@@ -187,7 +202,7 @@ export const VISION_HALF_ANGLE_COS = 0.5
  * weapon range and says nothing about how far anybody shoots; see the second
  * rule at the top of this file.
  */
-export const DEFAULT_AWARENESS_RADIUS_TILES = 2
+export const DEFAULT_AWARENESS_RADIUS_TILES = 4
 
 /**
  * The answer when there is NO DIRECTION TO COMPUTE, as a unit vector (ticket

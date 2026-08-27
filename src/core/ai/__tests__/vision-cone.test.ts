@@ -59,25 +59,43 @@ const sentry = (r: ReturnType<typeof rig>, tileX: number, tileY: number) => {
 }
 
 describe('the arc is a front arc', () => {
-  it('a man three tiles in FRONT is noticed, exactly as before', () => {
+  /**
+   * SIX TILES, RAISED FROM THREE BY TICKET 046, and the reason is the pair's own
+   * argument turned on itself.
+   *
+   * These two cases differ only in which side of the sentry the man stands, and
+   * that is the whole assertion. At three tiles the man BEHIND is now inside
+   * `DEFAULT_AWARENESS_RADIUS_TILES`, which notices him in any direction — so the
+   * "behind" case was no longer about the arc at all, and the pair would have
+   * gone from testing the cone to testing the exception without either name
+   * changing. Six is outside the radius and inside the twelve he sees, so the arc
+   * is again the only thing between them.
+   *
+   * A LITERAL RATHER THAN `RADIUS + 2`. A derived distance survives the next
+   * retune, and that is exactly what hid this: nothing would fail, and the pair
+   * would quietly go on measuring whatever the constant had become.
+   */
+  const GAP = 6
+
+  it('a man six tiles in FRONT is noticed, exactly as before', () => {
     // The control. Without it, an enemy that had simply gone blind would satisfy
     // every "does not see him" case below.
     const r = rig(TALL)
     // North of centre, so his inward default points SOUTH.
-    const { enemy } = sentry(r, 10, 4)
-    r.spawn(10, 7, 'player', 10_000) // three tiles south — the way he is looking
+    const { enemy } = sentry(r, 10, 8)
+    r.spawn(10, 8 + GAP, 'player', 10_000) // south — the way he is looking
     r.run(4)
     expect(r.ai.stateOf(enemy.id)).not.toBe('idle')
   })
 
-  it('and the same man three tiles BEHIND is not', () => {
+  it('and the same man six tiles BEHIND is not', () => {
     /**
      * THE TICKET, IN ONE ASSERTION. Identical distance, identical clear
      * sightline, identical everything but the side of him it is on.
      */
     const r = rig(TALL)
-    const { enemy } = sentry(r, 10, 4)
-    r.spawn(10, 1, 'player', 10_000) // three tiles NORTH — behind him
+    const { enemy } = sentry(r, 10, 8)
+    r.spawn(10, 8 - GAP, 'player', 10_000) // north — behind him
     r.run(10)
     expect(r.ai.stateOf(enemy.id)).toBe('idle')
   })

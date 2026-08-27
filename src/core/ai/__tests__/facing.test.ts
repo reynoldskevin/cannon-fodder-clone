@@ -245,12 +245,22 @@ describe('facing is deterministic, like everything else the machine decides', ()
      * looking, because the hash is about the WORLD and facing is the AI's
      * private bookkeeping.
      */
+    /**
+     * NO PLAYER IN EITHER ARENA, which ticket 046 forced and which the case is
+     * better for.
+     *
+     * There used to be one three tiles south of each enemy. He was incidental —
+     * the two facings differ because B is turned east by hand, not because of
+     * anything the player does — but at a four-tile awareness radius he stopped
+     * being inert: B noticed him THROUGH the arc, turned to face him, and the two
+     * facings converged, so the case failed on its own premise rather than on the
+     * hash. Two empty arenas assert the same thing with nothing in them that can
+     * move, which is what a hash comparison wants anyway.
+     */
     const a = rig(OPEN)
     const enemyA = a.spawn(10, 5, 'enemy')
-    a.spawn(10, 8, 'player', 10_000)
     const b = rig(OPEN)
     const enemyB = b.spawn(10, 5, 'enemy')
-    b.spawn(10, 8, 'player', 10_000)
     b.ai.face(enemyB.id, 1, 0)
     a.run(1)
     b.run(1)
@@ -269,7 +279,7 @@ describe('a man walking his beat looks where he is going', () => {
    * skips it entirely. Measured on the first draft: a guard routed due north
    * walked five and a half tiles with a player standing in plain sight three to
    * eight tiles directly ahead, never acquired him, and would have noticed only
-   * at the two-tile awareness exception.
+   * at the awareness exception, which was two tiles then and is four now.
    *
    * And because the renderer now takes an enemy's sprite direction from the
    * simulation, he was DRAWN facing south the whole way — walking backwards up
@@ -329,7 +339,7 @@ describe('a man walking his beat looks where he is going', () => {
      * facing south while marching north, he strolls straight past the man and
      * only then has him in his arc — he notices by overshooting. "Does he notice
      * before passing him?" passes too, because `DEFAULT_AWARENESS_RADIUS_TILES`
-     * catches anyone within two tiles regardless of the arc, so he trips over him
+     * catches anyone within four tiles regardless of the arc, so he trips over him
      * at arm's length.
      *
      * Neither is sight. He is walking at a man in the open with a clear line, and
