@@ -322,6 +322,54 @@ describe('the living are drawn over the dead', () => {
     renderer.dispose()
   })
 
+  it('and a corpse writes no depth, so it can never hide anything drawn later', () => {
+    /**
+     * TICKET 056, AND IT IS THE HALF TICKET 050 GOT WRONG.
+     *
+     * 050 measured one arrangement — a soldier standing ON a body — where the two
+     * quads are geometrically IDENTICAL (same centre, same height, same depth,
+     * verified) and an exact depth tie was being settled by mesh creation order.
+     * Lowering the corpse's `renderOrder` fixed exactly that case and nothing
+     * else, because most of the time the two are not on the same tile.
+     *
+     * WHAT THE MEASUREMENT SHOWED. From the shipped manifest, the held `die`
+     * frame is 162x96 inside a 180-tall cell at offset y=42, so a corpse's quad
+     * stands roughly 0.7 to 2.3 world units off the ground — a full-height
+     * billboard, the same as a man. A body one tile SOUTH of a soldier is
+     * genuinely nearer the camera and wins the depth test honestly. That is
+     * correct 3D and the wrong answer for a body lying flat, which occludes
+     * nothing above ankle height.
+     *
+     * `depthWrite: false` is what makes the rule unconditional. `depthTest` stays
+     * on, so a hill in front of a body still hides it; what a body can no longer
+     * do is hide something drawn after it — and the living are drawn after it.
+     */
+    const { renderer, byAnimation } = afterAWalkerAndACorpse()
+    const dead = byAnimation('die')!.material as THREE.Material
+    const living = byAnimation('walk')!.material as THREE.Material
+    expect({ write: dead.depthWrite, test: dead.depthTest }).toEqual({ write: false, test: true })
+    expect({ write: living.depthWrite, test: living.depthTest }).toEqual({
+      write: true,
+      test: true,
+    })
+    renderer.dispose()
+  })
+
+  it('and it is a SECOND material, not the shared one quietly retuned', () => {
+    /**
+     * THE GUARD THAT MATTERS MOST HERE. There is exactly one material in this
+     * renderer by design — the header explains that a material per animation
+     * frame per direction would be ~96 shader-program lookups for the soldier
+     * alone — and the cheapest way to make this ticket's case pass is to set
+     * `depthWrite: false` on that one. Which would stop EVERY sprite in the game
+     * writing depth: soldiers would draw through each other and through the
+     * hillsides they stand behind, and every case in this file would still pass.
+     */
+    const { renderer, byAnimation } = afterAWalkerAndACorpse()
+    expect(byAnimation('die')!.material).not.toBe(byAnimation('walk')!.material)
+    renderer.dispose()
+  })
+
   it('and the living keep the order that puts them ahead of transparent effects', () => {
     /**
      * THE GUARD ON THE OTHER SIDE. `renderOrder = 1` on sprites is what keeps
