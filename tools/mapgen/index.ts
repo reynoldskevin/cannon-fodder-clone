@@ -37,6 +37,7 @@ import {
   buildWalkable,
   declaredTerrainMask,
   MAX_INK_FRACTION,
+  shorelineAdjustedAverages,
   tileAverages,
   walkableFromMask,
 } from './terrain'
@@ -648,8 +649,30 @@ export function importLevel(options: ImportOptions): ImportResult {
   // which is why they are handed in here and never to `detectMarkers`: a marker
   // colour is annotation and is masked OUT of the averages, while a terrain
   // colour is the terrain the averages measure.
-  const classified = buildTerrain(
+  //
+  // The declared mask is taken from the PLAIN averages and handed to the
+  // shoreline rule, so a declared tile is skipped by it rather than re-judged —
+  // level 2's deck crosses the river, so every deck tile touches water and would
+  // otherwise be re-measured from the sliver of land beside it. Ticket 033 has to
+  // outrank ticket 035, and this is where that ordering lives.
+  const declaredMask = declaredTerrainMask(
     averages,
+    legend.terrainColours,
+    legend.colourTolerance,
+  )
+  // Ticket 035: a tile at the waterline is what its LAND is. Everything with no
+  // water neighbour keeps the plain mean untouched, so a level with no water —
+  // level 1 — is unaffected by construction.
+  const terrainAverages = shorelineAdjustedAverages(
+    image,
+    tileSize,
+    averages,
+    legend.walkableMinLuminance,
+    detection.inkMask,
+    declaredMask,
+  )
+  const classified = buildTerrain(
+    terrainAverages,
     legend.walkableMinLuminance,
     legend.terrainColours,
     legend.colourTolerance,
@@ -669,8 +692,13 @@ export function importLevel(options: ImportOptions): ImportResult {
     walkable = walkableFromMask(mask, tileSize, w, h)
     walkableSource = 'mask'
   } else {
+    // The SAME adjusted colours the terrain came from: otherwise a shoreline
+    // tile could read as grass and still be blocked, and the bank would look
+    // right and play wrong — which is worse, because nothing on screen explains
+    // it. An authored `walkable.png` still outranks all of this; that branch
+    // above never calls this function.
     walkable = buildWalkable(
-      averages,
+      terrainAverages,
       legend.walkableMinLuminance,
       legend.terrainColours,
       legend.colourTolerance,
@@ -689,11 +717,7 @@ export function importLevel(options: ImportOptions): ImportResult {
   // sitting in a field. As canopy it lies flat and earns a tree instead. See
   // `blockedGrassToCanopy` for why the order is not negotiable — and why a
   // legend-declared tile is exempt from it, exactly as it is from the despeckle.
-  const terrain = blockedGrassToCanopy(
-    classified,
-    walkable,
-    declaredTerrainMask(averages, legend.terrainColours, legend.colourTolerance),
-  )
+  const terrain = blockedGrassToCanopy(classified, walkable, declaredMask)
 
   warnings.push(...sanityCheckWalkability(walkable, spawns, walkableSource, legend.objectives))
 
