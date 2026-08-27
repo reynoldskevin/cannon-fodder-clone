@@ -46,6 +46,14 @@ export type AnimationName = (typeof ANIMATIONS)[number]
  * because `core/render-state/scenery.ts` plants both on canopy tiles and one
  * silhouette repeated across a forest reads as wallpaper. Each costs one 768px
  * cell in the atlas.
+ *
+ * `grenade` AND `rocket` ARE NOT SCENERY, and they are here anyway (ticket 053).
+ * A prop is what this pipeline calls a source with ONE frame and no facings, and
+ * a round in the air is exactly that — it is only ever seen from one side and it
+ * does not animate. Giving them a fourth category would buy a word and cost a
+ * branch in every stage of the packer. What makes them draw is that
+ * `core/session` names the unit after the ORDNANCE (`OrdnanceSpec.name`), so
+ * these two filenames are load-bearing: rename one and its round goes invisible.
  */
 export const PROPS = [
   'tree1',
@@ -55,6 +63,8 @@ export const PROPS = [
   'palmtree2',
   'palmtree3',
   'bush',
+  'grenade',
+  'rocket',
 ] as const
 export type PropName = (typeof PROPS)[number]
 

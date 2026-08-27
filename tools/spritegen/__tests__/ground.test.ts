@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import { mkdtempSync, existsSync, readFileSync, cpSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { buildSprites, GROUND_TEXTURES, SpritegenError } from '../index'
+import { buildSprites, GROUND_TEXTURES, PROPS, SpritegenError } from '../index'
 
 /**
  * Ticket 034 — three tileable ground textures, not one.
@@ -117,15 +117,15 @@ describe('the ground textures', () => {
      * atlas would wrap the WHOLE SHEET on every repeat, so the river would be
      * paved with soldiers.
      */
-    expect(Object.keys(out.manifest.props).sort()).toEqual([
-      'bush',
-      'palmtree1',
-      'palmtree2',
-      'palmtree3',
-      'tree1',
-      'tree2',
-      'tree3',
-    ])
+    /**
+     * ASSERTED AGAINST `PROPS`, NOT AGAINST A COPY OF IT. This used to spell the
+     * seven prop names out, which made every addition to the art a failure here —
+     * ticket 053 added `grenade` and `rocket` and broke a case about GROUND
+     * TEXTURES, which is a false alarm in the most expensive place to get one.
+     * The claim is that the atlas holds the props and nothing but the props; the
+     * list of props is not this suite's business.
+     */
+    expect(Object.keys(out.manifest.props).sort()).toEqual([...PROPS].sort())
     for (const name of GROUND_TEXTURES) {
       expect({ name, packed: name in out.manifest.props }).toEqual({ name, packed: false })
     }

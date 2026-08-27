@@ -35,8 +35,14 @@ function frame(s: ReturnType<typeof createSession>) {
   return s.renderEntities(FLAT)
 }
 
-/** Every drawable that is a round in the air. */
-const rounds = (drawn: readonly { unit: string }[]) =>
+/**
+ * Every drawable that is a round in the air.
+ *
+ * Generic so the caller keeps the full `RenderEntity` — a narrowed helper would
+ * force a cast at every use, and a cast is exactly how a test stops checking the
+ * shape it claims to be about.
+ */
+const rounds = <T extends { unit: string }>(drawn: readonly T[]): T[] =>
   drawn.filter((d) => d.unit === 'grenade' || d.unit === 'rocket')
 
 describe('a grenade is on screen between the hand and the bang', () => {
@@ -63,6 +69,30 @@ describe('a grenade is on screen between the hand and the bang', () => {
       }
     }
     throw new Error('never saw the grenade')
+  })
+
+  it('and a ROCKET is drawn as a rocket, not as a grenade', () => {
+    /**
+     * THE CASE THAT MAKES THE UNIT NAME MEAN SOMETHING. Mutation-checked: with
+     * only the grenade above, hardcoding `unit: 'grenade'` in the session passed
+     * the whole suite — every assertion was about the one ordnance whose name
+     * happened to be the hardcoded one. Two ordnances is the smallest fixture
+     * that can tell "reads the round" from "says grenade".
+     *
+     * The squad carries two rockets by default (`armoury/loadout.ts`).
+     */
+    const s = createSession(THROWER())
+    const id = s.selection()[0]
+    if (id === undefined) throw new Error('no squad')
+    s.queue.push({ type: 'fire', unitIds: [id], ordnance: 'rocket', target: { x: 12, y: 7 } })
+    for (let f = 0; f < 240; f += 1) {
+      const round = rounds(frame(s))[0]
+      if (round !== undefined) {
+        expect(round.unit).toBe('rocket')
+        return
+      }
+    }
+    throw new Error('never saw the rocket')
   })
 
   it('and it is gone once it has gone off', () => {
@@ -95,7 +125,7 @@ describe('and it is drawn where it actually is', () => {
     const { s } = lob()
     const heights: number[] = []
     for (let f = 0; f < 400; f += 1) {
-      const round = rounds(frame(s))[0] as { y: number } | undefined
+      const round = rounds(frame(s))[0]
       if (round !== undefined) heights.push(round.y)
     }
     expect(heights.length).toBeGreaterThan(5)
@@ -109,7 +139,7 @@ describe('and it is drawn where it actually is', () => {
     const { s } = lob()
     const xs: number[] = []
     for (let f = 0; f < 400; f += 1) {
-      const round = rounds(frame(s))[0] as { x: number } | undefined
+      const round = rounds(frame(s))[0]
       if (round !== undefined) xs.push(round.x)
     }
     expect(xs.length).toBeGreaterThan(5)
@@ -135,7 +165,7 @@ describe('a round cannot be mistaken for anything else on the field', () => {
       const flying = rounds(drawn)
       if (flying.length === 0) continue
       const others = drawn.filter((d) => !rounds([d]).length).map((d) => d.id)
-      for (const round of flying as { id: number }[]) {
+      for (const round of flying) {
         expect(others).not.toContain(round.id)
         // Above every id space in the game: sim ids from 1, scenery from
         // 1,000,000, props from 2,000,000.
@@ -165,7 +195,7 @@ describe('a round cannot be mistaken for anything else on the field', () => {
           target: { x: 8 + (f % 3), y: 7 },
         })
       }
-      const flying = rounds(frame(s)) as { id: number }[]
+      const flying = rounds(frame(s))
       most = Math.max(most, flying.length)
       expect(new Set(flying.map((r) => r.id)).size).toBe(flying.length)
     }
