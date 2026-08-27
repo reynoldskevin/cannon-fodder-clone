@@ -44,6 +44,30 @@ export interface Grave {
   readonly diedOnLevel: number
   /** How many he took with him — the difference between a casualty and a man. */
   readonly kills: number
+  /**
+   * Did he fall THIS mission (ticket 065)?
+   *
+   * A FIELD, NOT A POSITION, AND THAT IS THE WHOLE REASON IT EXISTS. It used to
+   * be inferred twice — `fallenSince` slices past `previous.dead.length`, and
+   * `boot-hill.ts` re-derived the same tail as `count - fallenThisMission.length`
+   * — and both readings assume the fresh stones are the END of a CHRONOLOGICAL
+   * list. This list is now sorted by rank, so a freshly buried Private sits at
+   * the bottom while a Major who fell four missions ago sits at the top, and
+   * every positional reading of freshness is wrong. Decided before the sort,
+   * carried through it.
+   */
+  readonly fresh: boolean
+  /**
+   * Which cross on the hillside is his (ticket 065).
+   *
+   * HIS CHRONOLOGICAL POSITION — the order `state.dead` was appended in, which
+   * never changes. `ui/boot-hill.ts` turns it into a spot on the hill through
+   * `plot()`, and argues at length that a man must keep that spot for the life
+   * of the campaign: a memorial that rearranges its own dead between two
+   * viewings is worse than no memorial. Handing the screen the SORTED index
+   * would move every grave below a newly-buried officer.
+   */
+  readonly plot: number
 }
 
 /**
@@ -143,17 +167,26 @@ export function bootHillModel(
   state: CampaignState,
   previous?: CampaignState,
 ): BootHillModel {
-  // Oldest first, which is `state.dead`'s own order: ticket 019's dead list is
-  // append-only and never re-sorted, so insertion order IS chronological order.
-  // Sorting by `diedOnLevel` instead would look equivalent and would reorder
-  // the two men who fell on the same level, and shuffle a hill the moment a
-  // player replays an earlier level.
-  const graves = gravesOf(state)
+  /**
+   * CHRONOLOGICAL FIRST, ALWAYS, whatever order the column ends up in.
+   *
+   * `state.dead` is append-only and never re-sorted, so its insertion order IS
+   * death order — and it is the order both `fresh` and `plot` are decided on,
+   * inside `gravesOf`. `fallenSince` reads it too, and reads it BEFORE the sort
+   * below for the same reason: it identifies this mission's dead by position.
+   *
+   * Sorting by `diedOnLevel` was rejected long ago and still is: it looks
+   * equivalent, reorders the two men who fell on the same level, and shuffles
+   * the hill the moment a player replays an earlier one.
+   */
+  const graves = gravesOf(state, previous)
 
   const totals = campaignSummary(state)
 
   return {
-    graves,
+    // BY RANK FOR THE EYE, chronological underneath (ticket 065). Everything
+    // positional was read out of `graves` above, before this line.
+    graves: byRank(graves),
     /**
      * READ OFF THE STATE, NOT PASSED IN (ticket 056). It was an argument while
      * it meant "the men who went on the last mission", which is knowledge only
@@ -166,13 +199,24 @@ export function bootHillModel(
      * the roster records would leak `id`, `status` and whatever ticket 019 adds
      * next into a screen that has no business with any of it.
      */
-    squad: recruitsAvailable(state).map((man) => ({
-      name: man.name,
-      rank: man.rank,
-      // OFF THE RECORD, like the rank beside it — see `Trooper.rankIndex`.
-      rankIndex: rankIndexFor(man.missionsSurvived),
-      kills: man.kills,
-    })),
+    /**
+     * SORTED HERE AND NOT AT THE SOURCE (ticket 065), which is the one thing
+     * about this ticket that could have changed the GAME rather than the screen.
+     * `advanceFromBootHill` fills the next mission's squad with the first
+     * `maxSquadFor(level)` men of `recruitsAvailable(state)` — this very list.
+     * Sorting it there would have quietly made the game deploy its
+     * highest-ranked men every mission, which is a balance change arriving
+     * through a ticket about the order of some rows.
+     */
+    squad: byRank(
+      recruitsAvailable(state).map((man) => ({
+        name: man.name,
+        rank: man.rank,
+        // OFF THE RECORD, like the rank beside it — see `Trooper.rankIndex`.
+        rankIndex: rankIndexFor(man.missionsSurvived),
+        kills: man.kills,
+      })),
+    ),
     enemyKilled: totals.kills,
     casualties: totals.casualties,
     fallenThisMission: fallenSince(graves, previous),
@@ -196,16 +240,44 @@ export function bootHillModel(
  * and would reorder the two men who fell on the same level, and shuffle the hill
  * the moment a player replays an earlier one.
  */
-function gravesOf(state: CampaignState): Grave[] {
-  return state.dead.map((fallen) => ({
+function gravesOf(state: CampaignState, previous?: CampaignState): Grave[] {
+  // The men buried before this mission. `undefined` is a RELOAD — see
+  // `fallenSince`'s header — and marks nobody fresh, which is the right answer
+  // rather than a degraded one.
+  const before = previous?.dead.length ?? Number.POSITIVE_INFINITY
+  return state.dead.map((fallen, index) => ({
     name: fallen.name,
     rankAtDeath: fallen.rankAtDeath,
     // FROM THE INSCRIPTION, NOT FROM THE RECORD. See `Grave.rankIndex`.
     rankIndex: insigniaIndexOf(fallen.rankAtDeath),
     diedOnLevel: fallen.diedOnLevel,
     kills: fallen.kills,
+    // BOTH DECIDED ON THE CHRONOLOGICAL LIST, before anything is sorted.
+    fresh: index >= before,
+    plot: index,
   }))
 }
+
+/**
+ * Order a column by rank, highest first (ticket 065).
+ *
+ * A STABLE SORT AND IT IS LOAD-BEARING. Every man on a fresh campaign holds the
+ * same rank, so an unstable sort would shuffle the whole SQUAD column on a
+ * screen the player sees between every mission. `Array.prototype.sort` is
+ * specified stable, so equal ranks keep the order they arrived in — death order
+ * for the hill, roster order for the squad.
+ *
+ * AN UNKNOWN RANK SORTS LAST. `Grave.rankIndex` is `null` for a stone carved
+ * under an older ladder (ticket 062); treating that as a number would read it as
+ * 0 — Private, the bottom — which is a confident claim about a rank nobody can
+ * place. Last is the honest position, and it keeps the men around it undisturbed.
+ *
+ * ON A COPY. The caller's array is `state.dead`'s own mapping and sorting in
+ * place would be fine today, but a selector that reorders anything it was handed
+ * is a trap for the next caller.
+ */
+const byRank = <T extends { readonly rankIndex: number | null }>(rows: readonly T[]): T[] =>
+  [...rows].sort((a, b) => (b.rankIndex ?? -1) - (a.rankIndex ?? -1))
 
 /**
  * What the campaign added up to, for the Menu to show when it is over

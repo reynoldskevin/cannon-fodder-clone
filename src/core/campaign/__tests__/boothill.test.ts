@@ -101,12 +101,20 @@ describe('the hill', () => {
     expect(bootHillModel(after).graves[0]?.kills).toBeGreaterThan(0)
   })
 
-  it('GROWS across the campaign, oldest first', () => {
+  it('GROWS across the campaign, keeping every man who ever fell', () => {
     /**
      * THE WHOLE POINT OF THE SCREEN, and the reason 019's dead list is
      * append-only. A hill that showed only this mission's casualties would be a
      * casualty report — the player is meant to scroll past men he lost four
      * levels ago and recognise the names.
+     *
+     * IT USED TO ASSERT "oldest first" AND NO LONGER CAN (ticket 065): the
+     * column is ordered by RANK now, and in this fixture each man survives one
+     * more mission than the last before dying, so death order and rank order are
+     * exact opposites. What the case is really about — that the hill accumulates
+     * rather than resetting — is unchanged, and is what it now says. The
+     * ORDERING is covered by its own block below, and the underlying
+     * chronological order survives on `Grave.plot`.
      */
     let s = createCampaign({ seed: 5, recruits: 8 })
     const fallen: string[] = []
@@ -116,8 +124,10 @@ describe('the hill', () => {
       s = fight(s, level, [next.id])
     }
     const graves = bootHillModel(s).graves
-    expect(graves.map((g) => g.name)).toEqual(fallen)
-    expect(graves.map((g) => g.diedOnLevel)).toEqual([1, 2, 3, 4])
+    expect([...graves.map((g) => g.name)].sort()).toEqual([...fallen].sort())
+    expect([...graves.map((g) => g.diedOnLevel)].sort()).toEqual([1, 2, 3, 4])
+    // The chronological order is still in there, on the field the hillside uses.
+    expect([...graves].sort((a, b) => a.plot - b.plot).map((g) => g.name)).toEqual(fallen)
   })
 
   it('keeps two men who fell on the same level, both of them', () => {
@@ -211,14 +221,18 @@ describe('the hill', () => {
     const stone = bootHillModel(after).graves[0]
     expect(Object.keys(stone ?? {}).sort()).toEqual([
       'diedOnLevel',
+      // Ticket 065. Both replace a POSITION that used to be inferred from this
+      // list's order — see `Grave.fresh` and `Grave.plot`.
+      'fresh',
       'kills',
       'name',
+      'plot',
       'rankAtDeath',
       // Ticket 062. The badge, found from `rankAtDeath` and nullable — see
       // `Grave.rankIndex`. Listed here because this case is a CLOSED list on
       // purpose: what a screen is handed is what a screen ends up depending on.
       'rankIndex',
-    ])
+    ].sort())
   })
 })
 
@@ -815,5 +829,56 @@ describe('and the sort does not break what read the old order (ticket 065)', () 
     // The two crosses are distinct plots, which is what makes the check above
     // more than "they are both zero".
     expect(new Set(graves.map((g) => g.plot)).size).toBe(2)
+  })
+})
+
+describe('freshness is not the tail of the list in disguise (ticket 065)', () => {
+  /**
+   * MUTATION TESTING WROTE THIS BLOCK. The first freshness case had exactly ONE
+   * man fall this mission and he was also the LAST entry in `state.dead`, so
+   * `fresh: index >= state.dead.length - 1` — "only the very last man is fresh",
+   * which is the old positional rule at its crudest — passed it. The assertion
+   * was true and could not tell the two apart.
+   *
+   * Two cases separate them: a mission that buries TWO men, and a mission that
+   * buries NOBODY.
+   */
+
+  /** A campaign with `dead` built by hand, so the fixture says exactly what it means. */
+  const buried = (base: CampaignState, count: number): CampaignState => ({
+    ...base,
+    recruits: base.recruits.slice(count),
+    dead: base.recruits.slice(0, count).map((man, index) => ({
+      ...man,
+      status: 'dead' as const,
+      diedOnLevel: index + 1,
+      rank: 'Private',
+      rankAtDeath: 'Private',
+    })),
+  })
+
+  it('marks BOTH men when two fall in one mission', () => {
+    const base = createCampaign({ seed: 96, recruits: 6 })
+    const before = buried(base, 1)
+    const after = buried(base, 3)
+    const graves = bootHillModel(after, before).graves
+    expect(graves).toHaveLength(3)
+    // One old stone, two new — not one new, which is what "the last man" gives.
+    expect(graves.filter((g) => g.fresh)).toHaveLength(2)
+    expect(graves.find((g) => !g.fresh)?.name).toBe(before.dead[0]?.name)
+  })
+
+  it('and marks NOBODY when the mission buried no one', () => {
+    /**
+     * THE CASE THAT KILLS THE TAIL RULE OUTRIGHT. A mission everybody survives
+     * adds no stones, so every man on the hill is old — but "the last entry is
+     * fresh" would light up whoever happens to be at the end of the list, every
+     * time the screen was drawn.
+     */
+    const base = createCampaign({ seed: 97, recruits: 6 })
+    const state = buried(base, 3)
+    const graves = bootHillModel(state, state).graves
+    expect(graves).toHaveLength(3)
+    expect(graves.filter((g) => g.fresh)).toEqual([])
   })
 })

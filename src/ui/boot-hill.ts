@@ -584,18 +584,27 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
       heroesHeading.style.display = heroesHeadingShown
     }
 
-    // `fallenThisMission` is a subset of `graves` by position at the END of the
-    // list — the dead list is append-only — so the fresh stones are the last
-    // `fallenThisMission.length` of them. Matching by name instead would light
-    // up the wrong stone the day two men share one.
-    const freshFrom = count - model.fallenThisMission.length
-
+    /**
+     * FRESHNESS AND PLOT ARE READ OFF THE GRAVE NOW (ticket 065).
+     *
+     * Both used to be inferred from this loop's index. The fresh stones were the
+     * last `fallenThisMission.length` of the list, because the dead list was
+     * append-only and therefore chronological; the cross was placed by
+     * `plot(i)`, so a man's position on the hillside was his position in the
+     * column.
+     *
+     * THE COLUMN IS SORTED BY RANK NOW AND NEITHER HOLDS. A freshly buried
+     * Private sorts to the BOTTOM, so the tail rule would weather his cross and
+     * brighten some Major who fell four missions ago; and every grave below a
+     * newly buried officer would shuffle to a new spot on the hill, which the
+     * whole of `plot`'s header argues against.
+     */
     for (let i = 0; i < count; i += 1) {
       const grave = model.graves[i]
       if (grave === undefined) continue
       const row = rowAt(graveRows, graves, i)
       if (row.style.display !== 'flex') row.style.display = 'flex'
-      const fresh = i >= freshFrom
+      const fresh = grave.fresh
       setRow(row, grave.rankIndex, grave.name.toUpperCase(), String(grave.kills))
       // HIS RANK AND WHERE HE FELL STILL REACH THE READER, off the face of the
       // bar. The mockup's plaque has room for a name and a number and nothing
@@ -616,7 +625,10 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
        */
       if (row.style.color !== TEXT) row.style.color = TEXT
 
-      const cross = crossAt(i)
+      // HIS OWN PLOT, NOT HIS ROW. `Grave.plot` is the chronological position,
+      // so a man keeps his spot on the hillside for the life of the campaign
+      // however the column is sorted around him.
+      const cross = crossAt(grave.plot)
       if (cross.style.display !== '') cross.style.display = ''
       // The hill carries the same distinction the column does: this mission's
       // dead are warm and bright, the older ones have weathered to bone.

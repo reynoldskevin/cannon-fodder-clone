@@ -903,7 +903,8 @@ describe('sorting Boot Hill does not change who deploys (ticket 065)', () => {
      * veteran and the roster deliberately does not lead with him.
      */
     const { runner } = runnerFor(THREE_LEVELS)
-    expect(runner.startCampaign().ok).toBe(true)
+    // `deploy` walks Menu -> Mission itself, `startCampaign` included; calling
+    // it first would leave that second call refused and nothing deployed.
     const squad = deploy(runner)
     runner.finishMission(missionEvents([], 'complete'), assignmentFor(squad))
 
