@@ -260,7 +260,14 @@ describe('a target that dies is not a target that got away', () => {
   const setup = () => {
     const r = rig()
     const enemy = r.spawn(10, 5, 'enemy')
-    const player = r.spawn(6, 5, 'player') // one hit point, like every soldier
+    /**
+     * THREE tiles, inside the shipped closing distance of 3.84 (ticket 037), so
+     * he engages from the first tick. At the four tiles this used to be he now
+     * walks in first, and "does not walk over to look" below would be counting
+     * the APPROACH rather than a march onto the corpse — the order it exists to
+     * rule out would be buried among orders that are perfectly correct.
+     */
+    const player = r.spawn(7, 5, 'player') // one hit point, like every soldier
     const events = r.run(120)
     return { r, enemy, player, events }
   }

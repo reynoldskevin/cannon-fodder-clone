@@ -28,10 +28,16 @@ const duelLevel = (apart: number) =>
 /**
  * The frame the first round of the mission was fired on, or `null`.
  *
- * Five tiles apart: inside the rifle's eight from the first frame, so the enemy
- * engages immediately and this measures the beat rather than the walk.
+ * THREE tiles apart: inside the enemy's CLOSING distance from the first frame,
+ * so he engages immediately and this measures the beat rather than the walk.
+ *
+ * It was five while the enemy halted at the edge of his rifle. Ticket 037 stops
+ * him at `closeToFraction` of it — 0.6 of 6.4, or 3.84 tiles — so at five he now
+ * walks in first and the "first shot" being measured is the end of an approach,
+ * not the end of a reaction beat. The walk has its own describe block below,
+ * which is where that behaviour belongs.
  */
-function firstShotFrame(seed: number, apart = 5): number | null {
+function firstShotFrame(seed: number, apart = 3): number | null {
   const session = createSession(duelLevel(apart), { seed })
   for (let frame = 0; frame < 600; frame += 1) {
     session.advance(1 / 60)

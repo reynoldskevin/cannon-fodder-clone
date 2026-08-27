@@ -99,6 +99,32 @@ export const DEFAULT_ALERT_TIMEOUT_TICKS = 300
 export const DEFAULT_REACTION_TICKS = 45
 
 /**
+ * How close an enemy walks before he stops and shoots, as a FRACTION OF HIS OWN
+ * WEAPON RANGE (ticket 037).
+ *
+ * A FRACTION AND NOT A DISTANCE, which is the one thing that keeps this file's
+ * second rule — "ranges are not weapon ranges" — intact. Nothing here says how
+ * far a rifle shoots; this says what part of whatever it reaches he wants to be
+ * inside, and the machine multiplies it by the number the weapon table gives.
+ * A halt distance in tiles would be a second "how far can he shoot" that a
+ * retune in `weapons.ts` silently stopped agreeing with, and it would need
+ * retuning by hand every time a weapon moved.
+ *
+ * Three fifths, matching the rifleman's row for the reason `archetypes.ts`
+ * gives: these values are the FALLBACK FOR AN UNKNOWN KIND, and the shipped kind
+ * every level spawns must not behave differently from it by accident. RAISE IT
+ * toward 1 and enemies open fire from the far edge of their envelope, where the
+ * accuracy curve is at its worst — 1 is exactly the halt-at-maximum-range
+ * behaviour this ticket replaced. LOWER IT and they walk further with their
+ * rifles down before firing: more accurate when they arrive, and further inside
+ * the squad's own reach on the way.
+ *
+ * ENTRY ONLY. `engage` is left on the FULL weapon range, never on this fraction;
+ * the two thresholds and the reason there must be two are in `system.ts`.
+ */
+export const DEFAULT_CLOSE_TO_FRACTION = 0.6
+
+/**
  * How close to its destination a man must be to have ARRIVED, in tiles.
  *
  * Under one tile, because the squad system walks a unit onto the CENTRE of its

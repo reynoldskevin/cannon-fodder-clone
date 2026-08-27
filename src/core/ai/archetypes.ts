@@ -90,6 +90,34 @@ export interface ArchetypeSpec {
    * lives.
    */
   readonly reactionTicks: number
+  /**
+   * How close this kind wants to be before it stops walking and shoots, as a
+   * FRACTION OF ITS OWN WEAPON RANGE. See `DEFAULT_CLOSE_TO_FRACTION`.
+   *
+   * A fraction rather than a distance in tiles, for exactly the reason
+   * `aggression` is one: a halt distance stated in tiles would have to be
+   * retuned by hand every time a weapon's range moved, and ticket 036 has just
+   * moved one. RAISE IT toward 1 and the kind opens fire from the far edge of
+   * its envelope, where the accuracy curve is at its worst — he shoots sooner
+   * and hits less, and stands off at a distance the player can disengage from.
+   * LOWER IT and he walks further before firing: he arrives more accurate, but
+   * he spends the whole approach in `pursue` with his rifle down and ends the
+   * walk well inside the squad's own range.
+   *
+   * `1` reproduces the halt-at-maximum-range behaviour the machine had before
+   * ticket 037, which is what makes this an honest knob rather than a new rule:
+   * a row that wants a man at arm's length and a row that wants him holding the
+   * treeline are the same code.
+   *
+   * IT IS THE ENTRY THRESHOLD ONLY. `engage` is LEFT on the full weapon range,
+   * not on this one — see the two thresholds in `system.ts`'s `step`. A single
+   * boundary would leave a man who halted here vibrating between `pursue` and
+   * `engage` as his target drifted a foot either way.
+   *
+   * A kind that carries no weapon has no range for this to be a fraction of, and
+   * closes forever exactly as it did before; zero times any fraction is zero.
+   */
+  readonly closeToFraction: number
 }
 
 /**
@@ -146,6 +174,23 @@ export const ARCHETYPES: Readonly<Record<string, ArchetypeSpec>> = {
     // trying first — 30 for a game that feels too slow, 60 if enemies read as
     // standing about. Say which was played, in this comment, when one is.
     reactionTicks: 45,
+    // Three fifths of his own rifle: about 3.8 tiles of the 6.4 ticket 036 gave
+    // him. Equal to `DEFAULT_CLOSE_TO_FRACTION` like every other number in this
+    // row — see the note at the top of it.
+    //
+    // CHOSEN ON THE ACCURACY CURVE, NOT ON PLAY. `combat/weapons.ts` grades a
+    // shot from best at point-blank to worst at `rangeTiles`, so the far edge of
+    // the envelope is the least effective distance available to him and the old
+    // machine halted him at precisely it. Something short of the midpoint moves
+    // him to the better half of his own curve while still leaving a gap the
+    // player can see him crossing — he is in `pursue` for that walk, with his
+    // rifle down, which is the beat ticket 012a's argument asks for.
+    //
+    // What has NOT happened is somebody sitting down and playing it. 0.5 and
+    // 0.75 are the neighbours worth trying first — 0.5 if enemies still read as
+    // standing off, 0.75 if they close far enough to feel suicidal. Say which
+    // was played, in this comment, when one is.
+    closeToFraction: 0.6,
   },
   /**
    * The marksman. Sees half again as far as the line infantryman and is happy
@@ -191,6 +236,13 @@ export const ARCHETYPES: Readonly<Record<string, ArchetypeSpec>> = {
     // off the mark than a conscript would be a row stating the opposite of what
     // ticket 018 placed him for.
     reactionTicks: 20,
+    // He does not advance at all, and that is the third thing that says what he
+    // is for. A marksman who walks toward the squad to get a better shot has
+    // thrown away the only thing that made him worth placing — the same argument
+    // this row already makes with `aggression: 0.5` and its short pursue
+    // timeout. LOWER IT and he becomes a rifleman with better eyes, which is a
+    // waste of a row; there is nowhere to raise it to.
+    closeToFraction: 1,
   },
 }
 

@@ -31,7 +31,30 @@ import type { Rig } from './rig'
 const table = (reactionTicks: number, over: Partial<ArchetypeSpec> = {}): Record<string, ArchetypeSpec> => {
   const base = ARCHETYPES[DEFAULT_ARCHETYPE_NAME]
   if (base === undefined) throw new Error('no default archetype')
-  return { [DEFAULT_ARCHETYPE_NAME]: { ...base, reactionTicks, ...over } }
+  return {
+    [DEFAULT_ARCHETYPE_NAME]: {
+      ...base,
+      /**
+       * THE CLOSING DISTANCE IS HELD AT 1 THROUGHOUT THIS SUITE (ticket 037),
+       * which reproduces the pre-037 halt-at-maximum-range behaviour EXACTLY.
+       *
+       * This is an experimental control, not a workaround. Every case here
+       * measures the reaction BEAT, and `contact()` says so in its own comment:
+       * it parks the two men five tiles apart precisely so the enemy engages on
+       * the first tick and the suite is not also measuring an approach. At the
+       * shipped 0.6 the rifleman's closing distance is 3.84 tiles, so five tiles
+       * is a `pursue` — every timing assertion below would silently become a
+       * measurement of walking speed.
+       *
+       * The shipped fraction is the SUBJECT of `closing-distance.test.ts`, and
+       * that is where it belongs; holding it constant here is what keeps these
+       * two suites from testing each other's variable.
+       */
+      closeToFraction: 1,
+      reactionTicks,
+      ...over,
+    },
+  }
 }
 
 /**
@@ -286,7 +309,16 @@ describe('where the count comes from', () => {
      * `WEAPON_BY_KIND` arms nobody it has not heard of, so the man never
      * engages, never fires, and the test measures an enemy who cannot shoot.
      */
-    const r = rig(OPEN, { archetypes: {} })
+    /**
+     * `closeToFraction` is overridden through OPTIONS here, not through the
+     * table, because the table is deliberately empty — that is the whole point
+     * of the case. It is the same control every other case in this suite gets
+     * via `table()`: five tiles must be an immediate `engage` so what is
+     * measured is the beat, and `DEFAULT_CLOSE_TO_FRACTION` would make it a
+     * walk. The reaction default is still the one falling all the way through,
+     * which is what this case exists to pin.
+     */
+    const r = rig(OPEN, { archetypes: {}, closeToFraction: 1 })
     r.spawn(10, 5, 'enemy')
     r.spawn(5, 5, 'player', 10_000)
     const at = ticksToFirstOrder(r, 300)
