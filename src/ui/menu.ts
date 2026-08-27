@@ -27,7 +27,6 @@
 import {
   createButton,
   createChrome,
-  createHeading,
   createNotice,
   setNotice,
   setText,
@@ -37,6 +36,11 @@ import {
   MUTED,
 } from './screen-chrome'
 import type { CampaignSummary } from '../core/campaign'
+import jungleUrl from '../../assets/source/jungle-background.png?url'
+import logoUrl from '../../assets/source/logo.png?url'
+import sargeUrl from '../../assets/source/character-sarge.png?url'
+import shadesUrl from '../../assets/source/character-shades.png?url'
+import luckyUrl from '../../assets/source/character-lucky.png?url'
 
 /** Everything the Menu draws. All of it comes from `core`. */
 export interface MenuModel {
@@ -100,18 +104,243 @@ export interface MenuScreen {
  */
 const RESTART_ARMED_MS = 6000
 
+/**
+ * What a button on this screen sits on.
+ *
+ * NEARLY OPAQUE AND NEARLY BLACK, not the shared `transparent`: the buttons are
+ * over jungle now, and the shared style's bare border round bright leaves is a
+ * shape you have to hunt for rather than a control.
+ */
+const BUTTON_FILL = 'rgba(4,9,7,0.72)'
+
+/** The armed wipe's fill — the warm one, over the same dark. */
+const RESTART_ARMED_FILL = 'rgba(255,143,107,0.28)'
+
+/**
+ * How long one man takes to arrive, and the gap between them.
+ *
+ * THE STAGGER IS THE ANIMATION. Three figures bouncing up together is one event
+ * the eye reads as a single card sliding in; one after another is a squad
+ * arriving, which is what the screen is about. The gap is shorter than the
+ * travel so the next man leaves the floor while the one before him is still
+ * settling — they overlap rather than queue.
+ */
+const ENTRANCE_MS = 820
+const ENTRANCE_STAGGER_MS = 260
+
+/**
+ * The bounce.
+ *
+ * A CUBIC-BEZIER AND NOT KEYFRAMES, because `src/ui` ships no stylesheet — every
+ * screen in this layer is inline styles on elements it made, and `@keyframes`
+ * cannot be written inline. The final control point overshoots (y > 1), so the
+ * figure rises past its resting place and drops back onto it, which is the whole
+ * bounce; a plain ease would slide.
+ */
+const ENTRANCE_EASE = 'cubic-bezier(0.22, 1.4, 0.32, 1)'
+
+/**
+ * Where the logo comes down to, measured from the top of the window.
+ *
+ * IT IS THE PANEL'S TOP PADDING TOO, so the logo is simply the first thing in
+ * the column rather than a floating element positioned over it — the notice and
+ * the campaign totals go on flowing underneath it as they always did, and there
+ * is no second number to keep in step with this one when they do.
+ */
+const LOGO_TOP = '10vh'
+
+/**
+ * Off the top of the window: up by its own height AND by the drop it is going to
+ * make, so its bottom edge starts exactly on the top edge of the screen.
+ */
+const LOGO_OFFSTAGE = `translateY(calc(-100% - ${LOGO_TOP}))`
+
+/**
+ * The heartbeat the logo settles into once it has landed.
+ *
+ * SLOW AND SMALL. It is on screen for as long as the player leaves the game
+ * sitting on the menu, and anything faster or wider than this stops reading as
+ * "the title is alive" and starts reading as a thing demanding to be clicked.
+ *
+ * WEB ANIMATIONS AND NOT A TRANSITION, because it repeats forever: a transition
+ * has one end state and would need a `transitionend` handler flipping it back
+ * and forth to loop, and `@keyframes` is not available to a layer that ships no
+ * stylesheet. `Element.animate` is the DOM API for exactly this, and it hands
+ * back a handle that `dispose` can cancel.
+ */
+const PULSE_MS = 2400
+const PULSE_KEYFRAMES: Keyframe[] = [
+  { transform: 'translateY(0) scale(1)' },
+  { transform: 'translateY(0) scale(1.045)' },
+  { transform: 'translateY(0) scale(1)' },
+]
+
+/**
+ * One of the three on the title card.
+ *
+ * `resting` IS THE TRANSFORM THE FIGURE ENDS ON and `translate` is only its
+ * horizontal half: the entrance animates the vertical part from "below the
+ * bottom of the screen" to nothing, and anything else in the transform — the
+ * lean, the horizontal offset — has to be identical at both ends or the man
+ * would slide sideways and unrotate as he lands.
+ */
+interface CastEntry {
+  readonly src: string
+  readonly alt: string
+  /**
+   * Where the TOP of the image comes to rest, measured down from the top of the
+   * viewport, in `vh`.
+   *
+   * THE TOP AND NOT THE FEET, and in `vh` rather than a percentage. At this size
+   * the men are taller than the screen — the boots are below the bottom edge and
+   * a `bottom` offset would be positioning something nobody can see. `vh` is
+   * what makes `offstage` expressible at all: a `%` in a transform is a
+   * percentage of the ELEMENT, so "start at the bottom of the WINDOW" cannot be
+   * written as an arithmetic on a `%` placement.
+   */
+  readonly top: string
+  /** Height, so the three can differ without hard-coding pixels. */
+  readonly height: string
+  /** Horizontal placement, applied as the first half of the transform. */
+  readonly translate: string
+  /** The lean, applied last so it cannot rotate the placement with it. */
+  readonly rotate: string
+  /** Painting order: Sarge in front, the other two behind him. */
+  readonly depth: string
+}
+
+/**
+ * SARGE FIRST AND CENTRALLY, the other two behind and to either side. The order
+ * of this array is the order they arrive in, so it is the only place the
+ * choreography is written down.
+ *
+ * THE HEIGHTS ARE THREE TIMES WHAT THEY WERE. They no longer describe a figure
+ * standing on the screen — each man is now well over a screen tall, and what the
+ * player sees is the top of him: head, shoulders and gun, with everything below
+ * running off the bottom edge. Sarge rises highest, to 20% down the screen; the
+ * other two stop a fifth of a screen lower, which is most of what makes them
+ * read as standing behind him — Shades is nearly Sarge's size and still reads as
+ * further back, because he stops lower and is further out.
+ */
+const CAST: readonly CastEntry[] = [
+  {
+    src: sargeUrl,
+    alt: 'Sarge',
+    top: '20vh',
+    height: 'min(138vh, 162vw)',
+    translate: 'translateX(-50%)',
+    rotate: '',
+    depth: '3',
+  },
+  {
+    src: shadesUrl,
+    alt: 'Shades',
+    // Lower than Sarge and further out: three figures on one line at one size
+    // read as a row of stickers, not as depth. Still half again Lucky's size,
+    // and the 10vw of extra clearance is what keeps him out of the middle of
+    // the card at it.
+    top: '40vh',
+    height: 'min(130vh, 151vw)',
+    translate: 'translateX(calc(-50% - min(38vw, 34rem) - 10vw))',
+    rotate: 'rotate(-30deg)',
+    depth: '2',
+  },
+  {
+    src: luckyUrl,
+    alt: 'Lucky',
+    top: '40vh',
+    height: 'min(108vh, 126vw)',
+    translate: 'translateX(calc(-50% + min(38vw, 34rem) + 10vw))',
+    rotate: 'rotate(30deg)',
+    depth: '2',
+  },
+]
+
+/** Where a cast member sits, and where he comes in from. */
+const resting = (member: CastEntry): string => `${member.translate} translateY(0) ${member.rotate}`
+
+/**
+ * Off the bottom of the screen entirely.
+ *
+ * THE DISTANCE FROM THE RESTING TOP TO THE BOTTOM OF THE WINDOW, so the figure
+ * starts with his highest pixel exactly on the bottom edge — no part of him is
+ * on screen, and he travels no further than he has to. `100vh` and not the
+ * element's own `100%`: he is taller than the viewport now, and starting him a
+ * full body length down would mean most of the entrance is spent crossing space
+ * nobody can see, arriving late and at speed.
+ */
+const offstage = (member: CastEntry): string =>
+  `${member.translate} translateY(calc(100vh - ${member.top})) ${member.rotate}`
+
 export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen {
   const { backdrop, panel } = createChrome('Main menu')
+
+  /**
+   * THE JUNGLE, FULL BLEED (ticket 045). The shared chrome is flat black, which
+   * is right for the mission card and for Boot Hill — this is the screen the
+   * game is met on, and it is the one that gets art. Set on the instance rather
+   * than in `screen-chrome.ts`: the other two screens are unchanged, and the
+   * shared constant is pinned opaque-black by `screen-chrome.test.ts`.
+   *
+   * `cover` AND CENTRED, so a window of any shape is filled and the crop is
+   * taken off the edges rather than letterboxed; the black stays underneath as
+   * the colour of anything the image has not painted, including the first frame
+   * before it has loaded.
+   */
+  backdrop.style.backgroundImage = `url(${jungleUrl})`
+  backdrop.style.backgroundSize = 'cover'
+  backdrop.style.backgroundPosition = 'center'
+  // The column is the whole screen now — see `panel` below — so the chrome's own
+  // indent would be a second, smaller viewport inside it.
+  backdrop.style.padding = '0'
 
   /**
    * THE GAME'S NAME, NOT THE REPOSITORY'S (ticket 040). The start screen is the
    * first thing anybody sees and it read `Game Week` — the name of the build
    * exercise, which means nothing to a player.
    */
-  const heading = createHeading('Cannon Fodder')
+  /**
+   * THE PAINTED LOGO, NOT SET TYPE (ticket 045). The title was the shared
+   * `createHeading` — system-ui, letterspaced, uppercased — which is the right
+   * answer for "Campaign complete" on a black card and the wrong one for the
+   * first thing anybody sees.
+   *
+   * STILL AN `h1` WITH THE WORDS IN IT. The name of the game is the page's
+   * heading whether it is drawn in letters or in pixels, and `alt` is what keeps
+   * it readable to a screen reader and to anyone whose image never loads. A bare
+   * `<img>` would have quietly deleted the only heading on the screen.
+   */
+  const heading = document.createElement('h1')
+  // `line-height:0` so the h1 is exactly as tall as the picture in it: an inline
+  // image otherwise sits on a text baseline and leaves a strip of descender
+  // space under it, which reads as the logo hanging slightly too high.
+  heading.style.cssText = 'margin:0;line-height:0'
 
-  const blurb = document.createElement('p')
-  blurb.style.cssText = `margin:0;color:${MUTED}`
+  const logo = document.createElement('img')
+  logo.src = logoUrl
+  logo.alt = 'Cannon Fodder'
+  logo.draggable = false
+  logo.style.cssText = [
+    'display:block',
+    // Wide enough to be the title, capped so it does not outgrow the column on a
+    // large screen or crowd the men on a small one.
+    'width:min(34rem, 62vw)',
+    'height:auto',
+    'filter:drop-shadow(0 6px 16px rgba(0,0,0,0.8))',
+    `transform:${LOGO_OFFSTAGE}`,
+  ].join(';')
+  heading.append(logo)
+
+  /**
+   * The one line under the title, and only the campaign's end has one now.
+   *
+   * A NOTICE RATHER THAN A PLAIN PARAGRAPH, so it takes no room at all when
+   * there is nothing to say: the start screen's "Pick your men, take the island,
+   * and count who comes back" is gone, and a `<p>` left empty in its place would
+   * hold a line of air between the title and the squad on every fresh campaign —
+   * which is every campaign but the last screen of one.
+   */
+  const blurb = createNotice(MUTED)
 
   // Warm rather than muted: a save that could not be written is the one line on
   // this screen the player must not skim past.
@@ -125,7 +354,9 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
    * campaign's numbers on screen beside half of the new one's.
    */
   const summary = document.createElement('section')
-  summary.style.cssText = 'display:none;flex-direction:column;gap:0.5rem'
+  // Bounded, because the roll now shares the screen with three figures and a
+  // long campaign's dead would otherwise push the buttons off the bottom.
+  summary.style.cssText = 'display:none;flex-direction:column;gap:0.5rem;max-height:38vh'
 
   const summaryHeading = document.createElement('h2')
   summaryHeading.textContent = 'Campaign complete'
@@ -161,7 +392,144 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
   restart.style.borderColor = 'rgba(255,143,107,0.55)'
   restart.style.color = BAD
 
-  panel.append(heading, blurb, notice, summary, start, restart)
+  // The shared button aligns itself to the left of a column; these two sit side
+  // by side in a centred row, so each one gives that up and takes a fill of its
+  // own — a transparent button on jungle is a rectangle of leaves with words on.
+  for (const button of [start, restart]) {
+    button.style.alignSelf = 'auto'
+    button.style.margin = '0'
+    button.style.background = BUTTON_FILL
+    button.style.backdropFilter = 'blur(2px)'
+  }
+
+  /**
+   * THE WHOLE SCREEN, not a column indented into one corner.
+   *
+   * The shared `PANEL_STYLE` is a reading column: `width:min(46rem, 100%)`, left
+   * aligned, vertically centred. This screen is a title card — art behind, text
+   * above it, controls along the bottom — so it takes the full rectangle and
+   * hands the reading width back to the text alone (`masthead`). Overridden on
+   * the instance rather than in `screen-chrome.ts`, for the same reason as the
+   * background: the Briefing and Boot Hill are unchanged.
+   *
+   * `pointer-events:none` COMES BACK OFF THE COLUMN. The shared value turns it
+   * on so buttons work; a column that is now the size of the viewport would
+   * swallow every click the backdrop was careful to let through, so the two
+   * pieces that actually take input turn it on for themselves.
+   */
+  panel.style.cssText = [
+    'position:absolute',
+    'inset:0',
+    'display:flex',
+    'flex-direction:column',
+    'align-items:center',
+    'justify-content:space-between',
+    'gap:1rem',
+    // The top padding IS the logo's resting place — see `LOGO_TOP`.
+    `padding:${LOGO_TOP} clamp(1rem, 5vw, 4rem) clamp(1.5rem, 5vh, 3rem)`,
+    'box-sizing:border-box',
+    'overflow:hidden',
+    'pointer-events:none',
+  ].join(';')
+
+  /**
+   * Dark at the top and along the bottom, clear through the middle.
+   *
+   * WITHOUT IT THE TEXT IS UNREADABLE. The jungle is bright, busy and mid-green,
+   * and white type on it is only legible where the leaves happen to be dark. A
+   * flat tint over the whole image would fix that by throwing away the art; a
+   * gradient darkens the two bands the words are in and leaves the middle — where
+   * the three figures stand — alone.
+   */
+  const scrim = document.createElement('div')
+  scrim.style.cssText = [
+    'position:absolute',
+    'inset:0',
+    'z-index:0',
+    'pointer-events:none',
+    'background:linear-gradient(' +
+      'rgba(2,6,4,0.82) 0%,' +
+      'rgba(2,6,4,0.35) 30%,' +
+      'rgba(2,6,4,0.25) 55%,' +
+      'rgba(2,6,4,0.85) 100%)',
+  ].join(';')
+
+  /**
+   * Where the squad stands.
+   *
+   * ITS OWN LAYER, ABSOLUTE, so the three figures are placed against the screen
+   * rather than flowed between the title and the buttons: their positions are
+   * percentages of the viewport ("40% up"), and a flex child's height is
+   * whatever the text above it left over. `overflow:hidden` on the panel is what
+   * keeps the entrance off-screen rather than growing the page.
+   */
+  const cast = document.createElement('div')
+  cast.style.cssText = 'position:absolute;inset:0;z-index:1;pointer-events:none'
+
+  /** The title, the blurb, the notice and the totals — the readable column. */
+  const masthead = document.createElement('div')
+  masthead.style.cssText = [
+    'position:relative',
+    'z-index:2',
+    'display:flex',
+    'flex-direction:column',
+    'align-items:center',
+    'gap:0.75rem',
+    'width:min(46rem, 100%)',
+    'text-align:center',
+    'text-shadow:0 2px 6px rgba(0,0,0,0.85)',
+    // Only this and the button row take clicks; see the panel above.
+    'pointer-events:auto',
+  ].join(';')
+  masthead.append(heading, blurb, notice, summary)
+
+  /** Both buttons, side by side, centred along the bottom. */
+  const controls = document.createElement('div')
+  controls.style.cssText = [
+    'position:relative',
+    'z-index:2',
+    'display:flex',
+    'flex-wrap:wrap',
+    'justify-content:center',
+    'align-items:center',
+    'gap:1rem',
+    'pointer-events:auto',
+  ].join(';')
+  controls.append(start, restart)
+
+  /**
+   * The three of them, built from `CAST` and started off-screen.
+   *
+   * DRAGGING IS OFF and they take no clicks: they are scenery over a button
+   * layer, and a figure that could be picked up and dropped on the Start button
+   * is a way to lose a click, not a feature.
+   */
+  const figures = CAST.map((member) => {
+    const figure = document.createElement('img')
+    figure.src = member.src
+    figure.alt = member.alt
+    figure.draggable = false
+    figure.style.cssText = [
+      'position:absolute',
+      'left:50%',
+      `top:${member.top}`,
+      `height:${member.height}`,
+      'width:auto',
+      `z-index:${member.depth}`,
+      // The lean pivots on the top edge — the part of the man that is actually
+      // on screen. On his feet it would swing his head out of frame, since the
+      // feet are now a screen and a half below the bottom of the window.
+      'transform-origin:top center',
+      'user-select:none',
+      'pointer-events:none',
+      'filter:drop-shadow(0 12px 18px rgba(0,0,0,0.55))',
+      `transform:${offstage(member)}`,
+    ].join(';')
+    return figure
+  })
+  cast.append(...figures)
+
+  panel.append(scrim, cast, masthead, controls)
   mount.append(backdrop)
   // Focused, so the keyboard alone can start the game — and so the player's next
   // click does not go to the canvas underneath by accident. Start, never
@@ -173,6 +541,83 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
   let armed = false
   let armedTimer: ReturnType<typeof setTimeout> | undefined
   let model: MenuModel = options
+
+  /**
+   * Every pending piece of the entrance, so `dispose` can drop the lot.
+   *
+   * A SCREEN CAN BE TAKEN DOWN MID-ENTRANCE: the Start button is focused and
+   * clickable from the first frame, and a player who presses Enter immediately
+   * leaves three timers pointing at elements that are no longer on the page.
+   * They would do no visible harm — the nodes are detached — but a timer nobody
+   * cancelled is exactly what the armed-restart one is careful not to be.
+   */
+  const entranceTimers: ReturnType<typeof setTimeout>[] = []
+
+  /** The logo's heartbeat, once it is running. Cancelled on `dispose`. */
+  let pulse: Animation | undefined
+
+  /**
+   * Start the heartbeat, but not for a player who has asked for stillness.
+   *
+   * `prefers-reduced-motion` IS CHECKED FOR THIS ONE AND NOT FOR THE ENTRANCE,
+   * and the difference is that the entrance ENDS. A drop that is over in under a
+   * second is motion the setting is not really about; a scale that never stops
+   * is, and it is on screen for as long as the player leaves the game sitting on
+   * the menu.
+   */
+  const startPulse = (): void => {
+    if (done) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    pulse = logo.animate(PULSE_KEYFRAMES, {
+      duration: PULSE_MS,
+      iterations: Infinity,
+      easing: 'ease-in-out',
+    })
+  }
+
+  /**
+   * Bring the squad on, one after another.
+   *
+   * TWO FRAMES AND NOT ONE. The figures are appended holding `offstage`, and a
+   * transform set in the same frame the element was inserted is coalesced with
+   * it — the browser has no previous value to animate from, so the men would
+   * simply appear where they belong. The inner `requestAnimationFrame` is what
+   * gives the start position a frame to be real in. `setTimeout` inside that
+   * would do it too, but a rAF is the frame boundary rather than an approach to
+   * it.
+   */
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (done) return
+      // The logo drops first and from the opposite direction: it comes down out
+      // of the top while the squad comes up out of the bottom, and the two
+      // meeting is the screen assembling itself rather than a queue of things
+      // sliding in from the same edge.
+      logo.style.transition = `transform ${String(ENTRANCE_MS)}ms ${ENTRANCE_EASE}`
+      logo.style.transform = 'translateY(0)'
+      // The pulse takes over WHEN THE DROP IS DONE, not alongside it: both
+      // animate `transform`, and a Web Animation runs above the inline style, so
+      // starting it early would snap the logo to its resting place and throw the
+      // rest of the bounce away.
+      entranceTimers.push(setTimeout(startPulse, ENTRANCE_MS))
+      figures.forEach((figure, index) => {
+        const member = CAST[index]
+        if (member === undefined) return
+        const march = (): void => {
+          figure.style.transition = `transform ${String(ENTRANCE_MS)}ms ${ENTRANCE_EASE}`
+          figure.style.transform = resting(member)
+        }
+        // Sarge is index 0 and does not wait: the first man is the screen
+        // arriving, and a title card that pauses before anything happens reads
+        // as one that has not loaded.
+        if (index === 0) {
+          march()
+          return
+        }
+        entranceTimers.push(setTimeout(march, index * ENTRANCE_STAGGER_MS))
+      })
+    })
+  })
 
   const restartLabel = (): string => {
     const graves = model.summary.casualties
@@ -187,7 +632,7 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
     armedTimer = undefined
     armed = false
     setText(restart, restartLabel())
-    restart.style.background = 'transparent'
+    restart.style.background = BUTTON_FILL
   }
 
   const armRestart = (): void => {
@@ -195,7 +640,7 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
     setText(restart, restartLabel())
     // Visibly different as well as differently worded: the label change alone is
     // easy to press through, and this button is not one to press through.
-    restart.style.background = 'rgba(255,143,107,0.18)'
+    restart.style.background = RESTART_ARMED_FILL
     if (armedTimer !== undefined) clearTimeout(armedTimer)
     armedTimer = setTimeout(disarm, RESTART_ARMED_MS)
   }
@@ -203,11 +648,9 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
   const render = (next: MenuModel): void => {
     model = next
     setNotice(notice, next.notice)
-    setText(
+    setNotice(
       blurb,
-      next.campaignOver
-        ? 'The island is taken. Start over, and none of them come back.'
-        : 'Pick your men, take the island, and count who comes back.',
+      next.campaignOver ? 'The island is taken. Start over, and none of them come back.' : null,
     )
     // The Start button reads differently once the campaign is over: it is the
     // same command and the same replay, but "Start campaign" over a finished one
@@ -252,6 +695,13 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
     // into elements nothing can see, and on a page that may already be gone.
     if (armedTimer !== undefined) clearTimeout(armedTimer)
     armedTimer = undefined
+    // Same reason, for the men still walking on. See `entranceTimers`.
+    for (const timer of entranceTimers) clearTimeout(timer)
+    entranceTimers.length = 0
+    // The heartbeat would otherwise go on ticking against a detached element for
+    // as long as anything holds a reference to it.
+    pulse?.cancel()
+    pulse = undefined
     backdrop.remove()
   }
 
