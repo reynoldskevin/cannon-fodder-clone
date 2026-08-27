@@ -22,6 +22,7 @@ import { createSession } from '../core/session'
 import { ordnanceForHotkey } from '../core/armoury'
 import { createTracerBuffer } from '../core/render-state/tracers'
 import { createFxBuffer } from '../core/render-state/fx'
+import { createMissionEndHold } from '../core/render-state/mission-end'
 import { shakeFor } from '../core/view/shake'
 import { cueFor, firingCue, type CueRequest } from '../core/audio-events'
 import { createAudioBus } from '../audio'
@@ -50,6 +51,7 @@ import { ZoomController } from '../input/zoom-controller'
 import { showControlHint, type ControlHint } from '../ui/control-hint'
 import { showFatalError, type FatalErrorReport } from '../ui/error-overlay'
 import { createHud, type RosterMember } from '../ui/hud'
+import { createMissionBanner } from '../ui/mission-banner'
 import { createBootHill } from '../ui/boot-hill'
 import { createMenu } from '../ui/menu'
 import { createBriefing } from '../ui/briefing'
@@ -627,6 +629,25 @@ async function boot(): Promise<void> {
   const hud = createHud(mount)
 
   /**
+   * MISSION COMPLETE / MISSION FAILED, and the three seconds it stays up
+   * (ticket 058).
+   *
+   * TWO OBJECTS BECAUSE THEY ARE TWO DECISIONS. The hold is the policy — when to
+   * start, what to say, when the three seconds are up, and that the transition
+   * happens once — and it lives in `core` where Vitest can reach it. The banner
+   * is the picture and knows no rule at all: it is handed a string or a `null`
+   * and does what it is told.
+   *
+   * BOTH MADE ONCE PER PAGE, like the audio bus and unlike the tracer and FX
+   * buffers. The banner is asked for its text on EVERY frame, so a factory
+   * called from the loop would build and destroy elements at 60 Hz; the hold
+   * resets itself on `done`, so it is ready for the next mission without being
+   * rebuilt.
+   */
+  const missionEnd = createMissionEndHold()
+  const missionBanner = createMissionBanner(mount)
+
+  /**
    * The audio bus (ticket 027).
    *
    * ONE PER PAGE, NOT ONE PER MISSION — unlike the tracer and FX buffers above,
@@ -977,6 +998,10 @@ async function boot(): Promise<void> {
     // from outside it.
     debug?.dispose()
     hud.dispose()
+    // The banner is a `div` on `mount` and nothing else; the hold it is driven
+    // by has no timer to cancel, which is the reason it takes `now` as an
+    // argument rather than reading a clock.
+    missionBanner.dispose()
     // Its own window listeners (the gesture it is waiting for), its own live
     // sources and the audio hardware itself — none of which anything else here
     // knows about. A leaked bus goes on playing the dead session's last voices
@@ -1322,13 +1347,22 @@ async function boot(): Promise<void> {
          * this runs inside the render loop's `try`, and a sound that took the
          * frame down would end the mission.
          *
-         * THE MISSION-END CUES ARE EXEMPT FROM `onMission`, and that exemption is
-         * the point of them. Everything else is gated for the reason the FX above
-         * are: the session keeps stepping behind Boot Hill and the Briefing, and
-         * rifles firing under an end-of-mission screen are a fault. But victory
-         * and defeat are what those screens are FOR — and they land on the very
-         * frame the mission ends, which `endMission` (below this loop) turns into
-         * a screen change a moment later.
+         * THE MISSION-END CUES ARE EXEMPT FROM `onMission`. Everything else is
+         * gated for the reason the FX above are: the session keeps stepping
+         * behind Boot Hill and the Briefing, and rifles firing under an
+         * end-of-mission screen are a fault. Victory and defeat are what those
+         * screens are FOR.
+         *
+         * TICKET 058 MADE THIS EXEMPTION A BELT-AND-BRACES ONE RATHER THAN THE
+         * LOAD-BEARING THING IT WAS, and the note is here because the difference
+         * is invisible from the code. It used to be the whole reason those cues
+         * were heard at all: they land on the frame the mission is decided, and
+         * that was the frame `endMission` changed the screen, so a gated cue was
+         * a silent one. The mission now holds for three seconds before the
+         * screen changes, so `onMission` is still true when they fire and the
+         * exemption is no longer what saves them. It is kept because it costs
+         * nothing and because the alternative is a silent victory if the hold is
+         * ever shortened to nothing.
          */
         const cue =
           onMission || event.type === 'MissionComplete' || event.type === 'MissionFailed'
@@ -1446,7 +1480,42 @@ async function boot(): Promise<void> {
       // said the same thing until the screen after it was dismissed, at which
       // point it would fire again over a mission that had already been recorded
       // — and the campaign would bury the same men twice.
-      if (outcome !== 'playing' && runner.screen() === 'Mission') endMission()
+      //
+      // AND IT IS ALSO WHAT KEEPS THE HOLD TO ONE PASS (ticket 058). `begin` is
+      // idempotent, so calling it on every frame of the three seconds is free;
+      // `done` then RESETS the hold, and this guard is the only reason a second
+      // one does not start on the very next frame — by then the runner has left
+      // `Mission`. `mission-end.test.ts` models this loop with the guard in it
+      // for exactly that reason.
+      if (outcome !== 'playing' && runner.screen() === 'Mission') {
+        /**
+         * THE MISSION NO LONGER ENDS ON THE FRAME IT IS DECIDED.
+         *
+         * It used to: `outcome()` is latched, so the first frame it stopped
+         * reading `playing` was the frame the screen changed. Which meant the
+         * victory and defeat cues — the two that are deliberately exempt from
+         * the `onMission` gate above so they are not swallowed — played under
+         * Boot Hill or under the Briefing, over a field that was already gone.
+         *
+         * Now the field stays up for three seconds with the result across it,
+         * and the cue plays over the ground it belongs to.
+         *
+         * `elapsed` IS A QUERY AND FIRES NOTHING. It goes on answering `true`
+         * until `done`, so the transition cannot be missed by a frame that
+         * happened to be busy — and cannot be run twice, because `done` clears
+         * the latch before `endMission` is called.
+         */
+        missionEnd.begin(outcome, elapsed)
+        if (missionEnd.elapsed(elapsed)) {
+          missionEnd.done()
+          endMission()
+        }
+      }
+      // EVERY FRAME AND NOT ONLY THE ONES INSIDE THE HOLD, because this is also
+      // what takes the banner down: `banner()` answers `null` the moment `done`
+      // has run, and `show` writes to the DOM only when the text has changed, so
+      // the ordinary case is a string comparison.
+      missionBanner.show(missionEnd.banner())
       stage.built.entities.update(elapsed, alpha)
       // EVERY FRAME, not only on a stepping one: a tracer fades on the display's
       // clock, so a frame that ran no simulation step still has to redraw the
