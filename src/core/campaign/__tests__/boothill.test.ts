@@ -543,3 +543,91 @@ describe('the scoreboard and the column beside the hill', () => {
     expect(model.squad.map((m) => m.name)).toEqual(roster.map((m) => m.name))
   })
 })
+
+describe('the badge beside each name (ticket 062)', () => {
+  /**
+   * THE MODEL CARRIES AN INDEX, NOT A URL AND NOT A CELL. Boot Hill is a `div`
+   * with no tests, so "which badge" is decided here and the screen only draws
+   * it — the same split every other field on this model is built on.
+   */
+
+  it('a living man`s badge is derived, like his rank', () => {
+    const s = createCampaign({ seed: 70, recruits: 4 })
+    const model = bootHillModel(s, [])
+    for (const man of model.squad) {
+      expect({ rank: man.rank, badge: RANKS[man.rankIndex]?.name }).toEqual({
+        rank: man.rank,
+        badge: man.rank,
+      })
+    }
+  })
+
+  it('and it climbs as he survives missions', () => {
+    /**
+     * ONE RUNG PER MISSION IS THE WHOLE TICKET, seen from the screen. A badge
+     * that never moved would be the failure a player would actually notice, and
+     * it is invisible to every assertion about `rank` alone if the two were
+     * computed apart.
+     */
+    let s = createCampaign({ seed: 71, recruits: 4 })
+    const seen: number[] = []
+    for (let mission = 0; mission < 5; mission += 1) {
+      const first = bootHillModel(s, []).squad[0]
+      if (first !== undefined) seen.push(first.rankIndex)
+      s = fight(s, 1, [])
+    }
+    expect(seen).toEqual([0, 1, 2, 3, 4])
+  })
+
+  it('and a grave`s badge comes from the rank CARVED on it', () => {
+    /**
+     * NOT FROM HIS MISSION COUNT. `types.ts` argues at length that a dead man's
+     * rank is recorded and never recomputed — his record has stopped changing,
+     * so recomputing can only overwrite a fact with a guess made under a newer
+     * table. The badge has to obey the same rule or the stone would say one
+     * thing in words and another in metal.
+     */
+    let s = createCampaign({ seed: 72, recruits: 4 })
+    for (let mission = 0; mission < 3; mission += 1) s = fight(s, 1, [])
+    const veteran = recruitsAvailable(s)[0]!
+    const after = fight(s, 2, [veteran.id])
+    const stone = bootHillModel(after, []).graves.find((g) => g.name === veteran.name)
+    expect(stone?.rankAtDeath).toBe(veteran.rank)
+    expect(RANKS[stone?.rankIndex ?? -1]?.name).toBe(veteran.rank)
+  })
+
+  it('and a stone carved under a ladder that no longer has that rank gets NO badge', () => {
+    /**
+     * THE MIGRATION CASE, AND THE REASON THE FIELD IS NULLABLE. A save written
+     * before this ticket can name a rank the table no longer has. Falling back
+     * to index 0 would pin a private's single chevron on a dead Major —
+     * silently, on a memorial. `null` means the screen draws nothing.
+     *
+     * Built by hand rather than through `fight`, because there is no way to make
+     * today's ladder write yesterday's name.
+     */
+    const s = createCampaign({ seed: 73, recruits: 2 })
+    const doomed = recruitsAvailable(s)[0]!
+    const legacy: CampaignState = {
+      ...s,
+      recruits: s.recruits.filter((r) => r.id !== doomed.id),
+      dead: [
+        {
+          id: doomed.id,
+          name: doomed.name,
+          missionsSurvived: 3,
+          kills: 1,
+          rank: 'Field Marshal',
+          status: 'dead',
+          diedOnLevel: 2,
+          rankAtDeath: 'Field Marshal',
+        },
+      ],
+    }
+    const stone = bootHillModel(legacy, []).graves[0]
+    // The words are untouched — the stone still says what it always said.
+    expect(stone?.rankAtDeath).toBe('Field Marshal')
+    // Only the badge is withheld.
+    expect(stone?.rankIndex).toBeNull()
+  })
+})
