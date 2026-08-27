@@ -130,7 +130,15 @@ export interface SpriteManifest {
   readonly atlas: { readonly file: string; readonly width: number; readonly height: number }
   readonly units: Readonly<Record<string, ManifestUnit>>
   readonly props: Readonly<Record<string, ManifestProp>>
+  /** The multi-frame, facing-less effects (ticket 064). */
+  readonly effects: Readonly<Record<string, ManifestEffect>>
   readonly ground?: Readonly<Record<string, ManifestGround | undefined>>
+}
+
+/** An effect: an ordered run of prop-shaped frames, and the rate they play at. */
+export interface ManifestEffect {
+  readonly fps: number
+  readonly frames: readonly ManifestProp[]
 }
 
 /* --------------------------------------------------------------- world sizes */
@@ -211,6 +219,20 @@ const CELL_WORLD_HEIGHT: Readonly<Record<string, number>> = {
    */
   grenade: 0.58,
   rocket: 0.81,
+  /**
+   * THE BLAST (ticket 064), and sized against the hole it makes rather than
+   * against the man who threw it.
+   *
+   * The cell is 1024px and the widest frame's painted box is 783x669, so at 3.2
+   * the fireball is about 2.1 world units across and 2.1 tall — a shade over two
+   * tiles. A grenade's blast radius is measured in tiles, so a fireball much
+   * smaller than that would show a puff over ground that killed everyone
+   * standing on it; much bigger and it would claim ground that took no damage.
+   *
+   * It is comfortably larger than a soldier (1.5 tall), which is the point: this
+   * is the one thing on screen that should make you stop watching the men.
+   */
+  explosion: 3.2,
 }
 
 /** Fallback for a source the table above does not name, so new art still draws. */
@@ -218,6 +240,16 @@ const DEFAULT_CELL_WORLD_HEIGHT = 2
 
 /** The synthetic animation name every static prop answers to. */
 export const STATIC_CLIP = 'static'
+
+/**
+ * The synthetic animation name every effect answers to (ticket 064).
+ *
+ * SPELLED HERE AND IN `core/session`, NOT SHARED. `src/core` may not import
+ * `src/render` — that is the seam the whole architecture is built on — so core
+ * writes the same literal itself, exactly as it already does for `'idle'`,
+ * `'die'` and `'static'`. `blast-drawn.test.ts` is what holds the two together.
+ */
+export const BURST_CLIP = 'burst'
 
 /** A prop has exactly one frame and holds it forever. */
 const STATIC_ANIMATION: AnimationClip = { frameCount: 1, fps: 1, loop: false }
@@ -329,6 +361,38 @@ class AtlasUnitVisual implements UnitVisual {
       )
       this.clips.set(`${prop}|${STATIC_CLIP}`, STATIC_ANIMATION)
     }
+
+    /**
+     * EFFECTS (ticket 064): N frames, no facings.
+     *
+     * REGISTERED UNDER ONE SYNTHETIC DIRECTION, like a prop, because a fireball
+     * looks the same from every side and the eight-way lookup would need eight
+     * copies of it in the atlas. `frame()` is asked for a direction it will not
+     * find and falls through to the `BURST_CLIP` key below.
+     *
+     * `loop: false` IS NOT OPTIONAL. `core/session` drops the drawable once the
+     * clip has run its length; a looping blast would restart the moment the two
+     * disagreed about how long that is, and a fireball that never stops is a
+     * campfire.
+     *
+     * `effects` IS READ DEFENSIVELY. A manifest generated before this ticket has
+     * no such key, and a game that threw on an old `sprites.manifest.json`
+     * would be a black canvas rather than a missing explosion.
+     */
+    for (const [effect, definition] of Object.entries(manifest.effects ?? {})) {
+      const perPixel = worldPerPixel(effect, definition.frames[0]?.cell.height ?? 0)
+      definition.frames.forEach((frame, index) => {
+        this.frames.set(
+          key(effect, BURST_CLIP, BURST_CLIP, index),
+          resolve(frame, perPixel, atlasW, atlasH),
+        )
+      })
+      this.clips.set(`${effect}|${BURST_CLIP}`, {
+        frameCount: Math.max(1, definition.frames.length),
+        fps: definition.fps,
+        loop: false,
+      })
+    }
   }
 
   clip(unit: string, animation: string): AnimationClip {
@@ -347,6 +411,19 @@ class AtlasUnitVisual implements UnitVisual {
     return (
       this.frames.get(key(unit, animation, direction, frame)) ??
       this.frames.get(key(unit, animation, direction, 0)) ??
+      /**
+       * A DIRECTION-LESS SOURCE, WHICH IS WHAT AN EFFECT IS (ticket 064).
+       *
+       * Props and effects have no facings, so both store their frames under a
+       * direction equal to the ANIMATION name — `static|static` for a prop,
+       * `burst|burst` for an effect. That convention was already here, unstated,
+       * in the prop fallback below; this line is the general form of it, and it
+       * is what lets an effect keep its frame INDEX. Falling through to the prop
+       * line instead would have collapsed a three-frame explosion to whichever
+       * single frame that key found — or, for a source that is not also a prop,
+       * to `null` and nothing drawn at all.
+       */
+      this.frames.get(key(unit, animation, animation, frame)) ??
       this.frames.get(key(unit, STATIC_CLIP, STATIC_CLIP, 0)) ??
       null
     )

@@ -326,7 +326,7 @@ describe('the explosion clip (ticket 064)', () => {
     // Read from the manifest rather than written down here: the number is
     // spritegen's, and `blast-drawn.test.ts` is what ties it to the session's
     // lifetime.
-    expect(visual.clip('explosion', 'burst').fps).toBe(manifest.effects.explosion.fps)
+    expect(visual.clip('explosion', 'burst').fps).toBe(manifest.effects['explosion']?.fps)
   })
 
   it('and every frame resolves to its OWN quad', () => {
@@ -344,11 +344,18 @@ describe('the explosion clip (ticket 064)', () => {
     expect(new Set(uvs).size).toBe(3)
   })
 
-  it('and the frames get bigger, because the blast grows', () => {
-    // The sheet is painted as an expanding fireball. A reader that sorted or
-    // reversed the frames would play the explosion backwards.
+  it('and the LAST frame is the widest, because the blast ends widest', () => {
+    /**
+     * A reader that reversed the frames, or took them in the packer's
+     * lexicographic id order, would play the explosion backwards.
+     *
+     * NOT "each is wider than the last" — that is false of this artwork, and
+     * `tools/spritegen/__tests__/assets.test.ts` measures why: frame 0 is a
+     * small fireball surrounded by flung debris whose specks push its trimmed
+     * box wider than frame 1's compact starburst.
+     */
     const widths = [0, 1, 2].map((i) => visual.frame('explosion', 'burst', 'S', i)?.width ?? 0)
-    expect(widths[1]).toBeGreaterThan(Number(widths[0]))
+    expect(widths[2]).toBeGreaterThan(Number(widths[0]))
     expect(widths[2]).toBeGreaterThan(Number(widths[1]))
   })
 

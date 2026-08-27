@@ -144,18 +144,24 @@ describe('and it is drawn where the round landed', () => {
 })
 
 describe('and it plays once and stops', () => {
-  it('lives long enough to show all three frames', () => {
+  it('is drawn for exactly as long as its three frames take to play', () => {
     /**
-     * THE CLIP IS `BLAST_FRAMES / BLAST_FPS` SECONDS LONG, and the blast has to
-     * outlive it. Dropped a frame early and the last drawing of the explosion —
-     * the big one — is never seen.
+     * THE CLIP IS `BLAST_FRAMES / BLAST_FPS` SECONDS — 0.25s, which at the fixed
+     * 60Hz step is 15 ticks — and the blast has to be drawn on every one of
+     * them. One tick short and the last drawing of the explosion, the big one,
+     * is never seen; one tick long and a burnt-out fireball is held on screen.
+     *
+     * COUNTED RATHER THAN WALKED, because the detonation frame is the FIRST tick
+     * of the fifteen and `detonate` has already consumed it — a loop that then
+     * asked for fifteen MORE would be asking for sixteen and would fail on a
+     * correct implementation. Counting every frame the blast appears on is exact
+     * in both directions and does not have to know where the walk started.
      */
     const s = lob()
     detonate(s)
-    const wanted = Math.floor((BLAST_FRAMES / BLAST_FPS) * 60)
-    for (let f = 0; f < wanted; f += 1) {
-      expect({ f, drawn: blasts(frame(s)).length }).toEqual({ f, drawn: 1 })
-    }
+    let drawn = 1 // the detonation frame itself, already drawn by `detonate`
+    for (let f = 0; f < 120; f += 1) drawn += blasts(frame(s)).length
+    expect(drawn).toBe(Math.round(BLAST_FRAMES / BLAST_FPS / (1 / 60)))
   })
 
   it('and is gone once they have played', () => {
@@ -188,23 +194,39 @@ describe('and it plays once and stops', () => {
 describe('and two bangs are two blasts', () => {
   it('never one', () => {
     /**
-     * The pouch and the cooldown allow two grenades in the air at once, and two
-     * craters is the ordinary case rather than an edge one. A blast keyed on
-     * anything but the event would merge them.
+     * TWO THROWERS, NOT ONE THROWING TWICE, AND MUTATION TESTING IS WHY.
+     *
+     * The first version of this case had one man lobbing a grenade every 30
+     * frames and asserted that the live blasts had distinct ids. A blast lives
+     * 15 ticks, so no two were EVER alive at the same moment — the set it
+     * checked never held more than one element, and hardcoding `seq: 1` for
+     * every blast in the session passed the whole suite. The assertion was
+     * true and vacuous.
+     *
+     * Two men on adjacent tiles throwing the same distance land together:
+     * measured, both blasts are on screen for frames 39-53. `expect(most)` is
+     * the non-vacuity check, and it is what makes the id comparison mean
+     * something.
      */
-    const s = createSession(makeLevel({ avatars: [{ x: 4, y: 7 }], enemies: [] }))
-    const id = s.selection()[0]
-    if (id === undefined) throw new Error('no squad')
+    const s = createSession(
+      makeLevel({ avatars: [{ x: 4, y: 7 }, { x: 4, y: 9 }], enemies: [] }),
+    )
+    const ids = s.selection()
+    const [first, second] = ids
+    if (first === undefined || second === undefined) throw new Error('need two throwers')
+    s.queue.push({ type: 'fire', unitIds: [first], ordnance: 'grenade', target: { x: 12, y: 7 } })
+    s.queue.push({ type: 'fire', unitIds: [second], ordnance: 'grenade', target: { x: 12, y: 9 } })
+
     let most = 0
-    for (let f = 0; f < 400; f += 1) {
-      if (f % 30 === 0) {
-        s.queue.push({ type: 'fire', unitIds: [id], ordnance: 'grenade', target: { x: 8 + (f % 5), y: 7 } })
-      }
+    for (let f = 0; f < 300; f += 1) {
       const live = blasts(frame(s))
       most = Math.max(most, live.length)
+      // Two craters, two ids. A blast keyed on the tick, or on anything the two
+      // share, would collapse them into one drawable.
       expect(new Set(live.map((b) => b.id)).size).toBe(live.length)
     }
-    expect(most).toBeGreaterThan(0)
+    // The whole point: there really were two at once.
+    expect(most).toBe(2)
   })
 
   it('and a blast`s id collides with nothing else on the field', () => {

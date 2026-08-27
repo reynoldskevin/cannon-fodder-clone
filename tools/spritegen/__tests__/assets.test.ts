@@ -206,20 +206,30 @@ describe('effects — the third category (ticket 064)', () => {
     }
   })
 
-  it('and the frames get bigger, because the blast grows', () => {
+  it('and the LAST frame is the biggest, because the blast ends widest', () => {
     /**
      * THE ORDER IS THE ANIMATION. The sheet is painted left to right as a
-     * fireball expanding, so a slicer that reversed the strip or sorted the
-     * frames by packing position would play the explosion backwards — it would
-     * still be three frames of fire and would look, at a glance, fine.
+     * fireball expanding, so a slicer that reversed the strip, or read the
+     * frames back in the packer's own (lexicographic) id order, would play the
+     * explosion backwards — three frames of fire that look fine at a glance.
      *
-     * Trimmed rects, so this is the size of the PAINTED blast rather than of
-     * the cell it sits in.
+     * THE OBVIOUS CHECK IS WRONG HERE AND IT IS WORTH SAYING WHY. "Each frame is
+     * bigger than the last" fails on this artwork: the trimmed boxes measure
+     * 443520, 333234 and 523827 square source pixels. Frame 0 is a SMALL
+     * fireball surrounded by flung debris — a stray star up and left, specks
+     * top-right — and those specks push its bounding box wider than frame 1's
+     * compact starburst. The fireball grows monotonically; its bounding box does
+     * not, and only the opaque-pixel count would (159098, 163937, 249453), which
+     * the manifest does not carry.
+     *
+     * So the property asserted is the one that is true AND still catches a
+     * reversal: the last frame is the largest of the three. Reversed, the 523827
+     * box lands first and this fails on the very first comparison.
      */
     const areas = (out.manifest.effects.explosion?.frames ?? []).map(
       (f) => f.rect.width * f.rect.height,
     )
-    expect(areas[1]).toBeGreaterThan(Number(areas[0]))
+    expect(areas[2]).toBeGreaterThan(Number(areas[0]))
     expect(areas[2]).toBeGreaterThan(Number(areas[1]))
   })
 
