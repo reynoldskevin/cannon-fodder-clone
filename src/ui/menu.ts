@@ -63,6 +63,16 @@ export interface MenuModel {
    * off-by-one ticket 020 measured.
    */
   readonly campaignOver: boolean
+  /**
+   * Is the player COMING BACK to a campaign, rather than beginning one?
+   *
+   * HANDED IN FOR THE SAME REASON `campaignOver` IS. "Levels completed or
+   * casualties or kills" off `summary` picks out the same campaigns today, and
+   * writing it here would still be a second spelling of `campaignUnderway` in
+   * the one layer nothing can test — one that agrees with core until the day the
+   * campaign records something the summary does not add up.
+   */
+  readonly campaignUnderway: boolean
 }
 
 export interface MenuOptions extends MenuModel {
@@ -652,10 +662,26 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
       blurb,
       next.campaignOver ? 'The island is taken. Start over, and none of them come back.' : null,
     )
-    // The Start button reads differently once the campaign is over: it is the
-    // same command and the same replay, but "Start campaign" over a finished one
-    // reads like a wipe — which is the very thing it is not.
-    setText(start, next.campaignOver ? 'Play again (keeps Boot Hill)' : 'Start campaign')
+    /**
+     * ONE COMMAND, THREE THINGS TO CALL IT.
+     *
+     * The button always issues `onStart` and always has; what changes is what
+     * that honestly IS to the player in front of it. Over a finished campaign
+     * "Start campaign" reads like a wipe, which is the very thing it is not.
+     * Over a campaign in progress it reads like the beginning of one, when the
+     * men, the graves and the unlocked level are all still there — a returning
+     * player is CONTINUING, and the button should say so.
+     *
+     * FINISHED IS CHECKED FIRST, because a finished campaign is also an underway
+     * one and "Continue" is the wrong word for a campaign with nothing left to
+     * do.
+     */
+    const startLabel = next.campaignOver
+      ? 'Play again (keeps Boot Hill)'
+      : next.campaignUnderway
+        ? 'Continue campaign'
+        : 'Start campaign'
+    setText(start, startLabel)
 
     summary.style.display = next.campaignOver ? 'flex' : 'none'
     if (next.campaignOver) {

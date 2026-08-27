@@ -21,6 +21,10 @@ export {
   createCampaign,
   recruit,
   recruitsAvailable,
+  // Ticket 046. Whether the Menu's one button reads "Start" or "Continue" is a
+  // question about the campaign, so it is answered here rather than by a screen
+  // that nothing tests reading a summary and guessing.
+  campaignUnderway,
   applyMissionReport,
   missionReport,
   // Shared with `core/flow` on purpose: the Debrief screen and the roster read
