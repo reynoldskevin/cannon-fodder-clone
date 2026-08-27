@@ -205,13 +205,21 @@ describe('contact interrupts the beat', () => {
      * He is placed near the SECOND waypoint and interrupted there; resuming
      * correctly means continuing east, not marching west to the first.
      */
-    // NO facing override here, unlike the rest of this suite: this case puts its
-    // man due SOUTH of the guard, which the shipped default already looks at.
-    // Faced east with the others he would never see him and never be interrupted,
-    // and "resumes toward the nearest waypoint" would be measuring a beat that
-    // was never broken.
+    /**
+     * FACED SOUTH EXPLICITLY, unlike the rest of this suite, and stated rather
+     * than inherited. This case puts its man due SOUTH of the guard, so the
+     * guard has to be looking that way to be interrupted at all — faced east
+     * with the others he never sees him, and "resumes toward the nearest
+     * waypoint" would be measuring a beat that was never broken.
+     *
+     * It relied on the fixed southward default until ticket 039 made the default
+     * an inward direction: the guard walks to tile 13, east of this arena's
+     * centre, so the computed default now points him WEST. A fixture that leans
+     * on a default is a fixture that moves when the default does.
+     */
     const r = rig(OPEN)
     const enemy = r.spawn(2, 5, 'enemy')
+    r.ai.face(enemy.id, 0, 1)
     r.ai.assignPatrol(enemy.id, [
       { x: 2, y: 5 },
       { x: 18, y: 5 },

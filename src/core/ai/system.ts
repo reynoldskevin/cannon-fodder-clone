@@ -624,6 +624,43 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
   const levelSize = { w: grid.w, h: grid.h }
 
   /**
+   * The MIDDLE of the level, in world units, resolved once (ticket 039). It is
+   * what a man who has never moved and never been told where to look points at.
+   *
+   * TILES IN, WORLD OUT, and that conversion is the whole reason this is not
+   * `grid.w / 2`. `grid.w`/`grid.h` are TILE COUNTS, and every position it is
+   * compared against — `unit.x`, `unit.z` — is in world units, so a midpoint
+   * taken in tiles and subtracted from a world position would be an offset in
+   * neither space. `tileToWorld` is the one spelling of that mapping in the
+   * codebase; see `view/projection.ts`.
+   *
+   * BOTH AXES, SEPARATELY. Every shipped map is wider than it is tall (57 x 45
+   * and 92 x 72), so one axis's midpoint used for both would aim every enemy at
+   * a point that is the middle of nothing — the obvious slip, and the one
+   * `facing.test.ts` builds a 24 x 12 arena specifically to catch.
+   *
+   * THE CENTRE TILE, NOT THE GEOMETRIC CENTRE POINT, and the rounding is
+   * deliberate. The middle of a `w` wide grid is tile `(w - 1) / 2`, which on an
+   * EVEN width is a half tile — a place no unit can ever stand, because
+   * everything in this engine is placed at a tile centre. Left unrounded, "a man
+   * standing exactly on the centre" would be an unreachable state on half of all
+   * maps and the zero-offset fallback below would be dead code that no fixture
+   * could exercise. `Math.round` is exactly what `worldToTileX`/`worldToTileY`
+   * apply to name the tile a world point falls in, so this IS the tile
+   * containing the geometric centre, found the same way everything else here
+   * finds a tile. What it costs is at most half a tile of aim point, and only
+   * on an even dimension: level 1 (57 x 45) is odd on both, so the rounding
+   * moves nothing there at all, and on level 2 (92 x 72) the nearest enemy to
+   * the middle is 16.97 tiles from it, where half a tile is 1.7 degrees of
+   * bearing — a thirty-fifth of the 60-degree half-arc it feeds.
+   */
+  const levelCentre = tileToWorld(
+    Math.round((grid.w - 1) / 2),
+    Math.round((grid.h - 1) / 2),
+    levelSize,
+  )
+
+  /**
    * What each unit under this machine is doing, by entity id.
    *
    * Keyed by the id and never by an index into the entity array, which
@@ -718,6 +755,50 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    * not name: the system options are the fallback, and every enemy in every
    * level authored before ticket 018 takes that path. See `AiOptions.archetypes`.
    */
+  /**
+   * Which way a man standing HERE looks before anything has happened to him
+   * (ticket 039): inward, at the middle of the level.
+   *
+   * A SPAWN POSTURE, NOT A BEHAVIOUR, which is why it is called from `memoryFor`
+   * and from nowhere else. It is read once, on the tick the machine first sees
+   * him — while he is still standing where the level put him — and never again.
+   * Recomputed on every idle tick instead, it would spin a guard who walked east
+   * and halted back toward the middle the moment he stopped, which contradicts
+   * rung 3 of `turn`'s ladder ("an idle man keeps the facing he had") and is not
+   * what a soldier does.
+   *
+   * WHY INWARD RATHER THAN A COMPASS POINT. A fixed default is wrong for
+   * whoever stands on the wrong side of the map: ticket 038 shipped a southward
+   * one, and level 2's enemies standing south of its middle spent the mission
+   * watching the void past the bottom edge. Sampling both shipped levels' arcs
+   * every 5 degrees out to twelve tiles, that default left 88% of level 2's
+   * sampled arc on the map where this one leaves 100%. An inward direction cannot leave
+   * the map from anywhere on it, so the property holds on the three levels not
+   * yet imported as well, with no authored data.
+   *
+   * THE EXACT CENTRE HAS NO DIRECTION TO COMPUTE. Its offset is the zero vector,
+   * and dividing by that length stores NaN — which LOSES EVERY COMPARISON, so
+   * the arc's dot product would never reach its threshold and that one man would
+   * be blind in all directions for the rest of the mission with nothing on
+   * screen to say why. `DEFAULT_ENEMY_FACING` is the finite unit vector he gets
+   * instead; it is a guard on a degenerate input and not a policy, and
+   * `tuning.ts` says so.
+   *
+   * An object per call, allocated once per unit at memory creation and never per
+   * tick — `memoryFor` is already allocating the record it goes into.
+   */
+  function facingTowardCentre(unit: Entity): Facing {
+    const dx = levelCentre.x - unit.x
+    const dz = levelCentre.z - unit.z
+    const lengthSq = dx * dx + dz * dz
+    // The same finiteness-and-zero test `faceAlong` applies, on a squared length
+    // for the same reason: it is the cheaper multiply, and an infinite or NaN
+    // position fails `Number.isFinite` here just as surely as a zero offset does.
+    if (!Number.isFinite(lengthSq) || lengthSq <= 0) return DEFAULT_ENEMY_FACING
+    const length = Math.sqrt(lengthSq)
+    return { dx: dx / length, dz: dz / length }
+  }
+
   function memoryFor(unit: Entity): Memory {
     const unitId = unit.id
     const existing = memories.get(unitId)
@@ -740,6 +821,24 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
     // `pendingFacings`.
     const authoredFacing = pendingFacings.get(unitId)
     pendingFacings.delete(unitId)
+    /**
+     * The fourth and last rung of the precedence ladder in `turn`, reached by a
+     * man who has never moved and never made contact: the AUTHORED direction if
+     * the level gave him one, otherwise the inward default computed from where
+     * he is standing right now (ticket 039).
+     *
+     * AUTHORED WINS OUTRIGHT, and `??` short-circuits so the computation is not
+     * even run for a man who has one. That precedence matters more after this
+     * ticket than before it: the inward default is good enough that writing a
+     * `SpawnPoint.facing` is now a deliberate choice about one guard rather than
+     * a correction of a default that did not suit the map.
+     *
+     * Both are unit vectors by the time they land here — `face` normalised the
+     * authored one before parking it, and `facingTowardCentre` normalises its
+     * own answer and falls back to a vector that is already normal — which the
+     * arc's dot product depends on.
+     */
+    const spawnFacing = authoredFacing ?? facingTowardCentre(unit)
     const sight =
       (options.sightRangeTiles ?? spec?.sightRangeTiles ?? DEFAULT_SIGHT_RANGE_TILES) *
       TILE_WORLD_SIZE
@@ -787,13 +886,9 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
       hasTarget: false,
       targetId: 0,
       deadline: 0,
-      // The authored direction if the level gave him one, otherwise the default
-      // — which is the fourth and last rung of ticket 038's precedence ladder,
-      // reached by a man who has never moved and never made contact. Both are
-      // unit vectors by the time they land here: `DEFAULT_ENEMY_FACING` already
-      // is one, and `face` normalised the other before it was parked.
-      facingDx: authoredFacing?.dx ?? DEFAULT_ENEMY_FACING.dx,
-      facingDz: authoredFacing?.dz ?? DEFAULT_ENEMY_FACING.dz,
+      // Settled just above, once, and never recomputed. See `spawnFacing`.
+      facingDx: spawnFacing.dx,
+      facingDz: spawnFacing.dz,
       hasTrack: false,
       trackX: 0,
       trackZ: 0,
@@ -1166,9 +1261,13 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    *      something does not snap back to a compass default, and this is also
    *      what makes the mechanic legible: a guard the squad lured east stays
    *      looking east, so the blind side stays where the player last saw it go.
-   *   4. NEVER MOVED, NEVER CONTACTED — the authored facing or the default, and
-   *      that rung is settled once in `memoryFor` rather than here, because it
-   *      is the value the other three start from.
+   *   4. NEVER MOVED, NEVER CONTACTED — the authored facing if the level gave
+   *      him one, otherwise INWARD, at the middle of the level (ticket 039).
+   *      That rung is settled once in `memoryFor` rather than here, because it
+   *      is the value the other three start from — and because it is a spawn
+   *      posture rather than a behaviour: recomputed here it would re-aim every
+   *      man at the centre the moment he stopped walking, which is rung 3
+   *      deleted.
    *
    * DETERMINISTIC BY CONSTRUCTION. It reads two positions and the previous
    * facing, all of which are already deterministic, and it is written only here,

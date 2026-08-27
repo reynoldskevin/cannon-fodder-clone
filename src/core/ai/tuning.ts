@@ -190,40 +190,33 @@ export const VISION_HALF_ANGLE_COS = 0.5
 export const DEFAULT_AWARENESS_RADIUS_TILES = 2
 
 /**
- * Which way an enemy is looking before anything has happened to him, as a UNIT
- * VECTOR (ticket 038). `-z` is north, so this is SOUTH.
+ * The answer when there is NO DIRECTION TO COMPUTE, as a unit vector (ticket
+ * 039). `-z` is north, so this is south.
  *
- * COUNTED ON THE SHIPPED MAPS RATHER THAN PICKED — AND IT DOES NOT SUIT ALL OF
- * THEM. Level 1's squad starts at `y = 39, 41` and all three of its enemies sit
- * north of that, at `y = 6, 9, 13`: the default faces every one of them the way
- * the player actually comes. Level 2's squad starts at `y = 44, 45` against
- * enemies at `y = 8, 8, 8, 9, 14, 19, 24, 27, 40, 42, 59, 64, 65, 65, 69` — ten
- * north of the squad and **FIVE SOUTH OF IT**, and those five face directly away
- * from the approach.
+ * IT IS NOT THE DEFAULT FACING ANY MORE, and the name is the only thing left of
+ * that. An enemy who has never moved and was authored no `SpawnPoint.facing`
+ * looks INWARD, at the middle of the level, computed in `system.ts` from where
+ * he stands — see `facingTowardCentre` there. This constant is what is left when
+ * that computation has no answer, which is exactly one case: a man standing ON
+ * the centre, whose offset to it is the zero vector.
  *
- * SAID PLAINLY BECAUSE AN EARLIER DRAFT OF THIS COMMENT CLAIMED "the squad
- * arrives from the south on both", which is false, and adversarial review caught
- * it by counting. Those five men are close to free kills at mission start. The
- * fix is per-spawn (`SpawnPoint.facing`, below) or a different default policy —
- * it is NOT a reason to move this number, because north would break the ten and
- * level 1's three as well.
+ * A DEGENERATE-INPUT GUARD, NOT A POLICY. Nothing about south is argued for
+ * here, because nothing needs to be — one man on one tile of one map reaches it,
+ * and which way he happens to look is beneath notice. What is NOT beneath notice
+ * is that he gets a finite vector at all: normalising a zero-length offset
+ * stores NaN, and NaN loses every comparison it enters, so the arc's dot product
+ * would never reach `VISION_HALF_ANGLE_COS` and that man would be blind in every
+ * direction at once, for the rest of the mission, with nothing on screen to
+ * explain it. `AiSystem.face` refuses a degenerate vector for the same reason.
  *
- * A UNIT VECTOR, and it has to be: the arc test is a dot product against
- * `VISION_HALF_ANGLE_COS`, so a default of any other length would scale that
- * product and silently widen or narrow the arc for every enemy who had not
- * moved yet. `AiSystem.face` normalises whatever it is handed for the same
- * reason; this one is already normal so nothing has to.
+ * KEEP IT A UNIT VECTOR. The arc test is a dot product against
+ * `VISION_HALF_ANGLE_COS`, so a value of any other length would scale that
+ * product and silently widen or narrow the arc for whoever fell back to it. Any
+ * direction of length 1 would do; none of them is better than another.
  *
- * THE BLIND ARC IS THEREFORE PREDICTABLE, which is an accepted tradeoff rather
- * than an oversight — a fixed default was taken over an idle scanning sweep
- * because a predictable blind arc is legible to the player where a moving one is
- * guesswork. `SpawnPoint.facing` has parsed since ticket 018 and the session
- * seeds the AI from it, so a level that wants a guard looking the other way can
- * say so today with no code change at all.
- *
- * CHANGE IT and every enemy in every level that authored no `facing` turns at
- * once, which on the shipped maps means turning the garrison away from the
- * approach.
+ * CHANGE IT and, on the shipped maps, nothing moves at all — no enemy on either
+ * of them stands on the exact centre tile. That is the honest measure of how
+ * much this number now decides.
  */
 export const DEFAULT_ENEMY_FACING: { readonly dx: number; readonly dz: number } = {
   dx: 0,
