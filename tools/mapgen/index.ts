@@ -35,6 +35,7 @@ import {
   blockedGrassToCanopy,
   buildTerrain,
   buildWalkable,
+  declaredTerrainMask,
   MAX_INK_FRACTION,
   tileAverages,
   walkableFromMask,
@@ -643,7 +644,16 @@ export function importLevel(options: ImportOptions): ImportResult {
       )}`,
     )
   }
-  const classified = buildTerrain(averages, legend.walkableMinLuminance)
+  // The legend's declared terrain colours are matched against these AVERAGES,
+  // which is why they are handed in here and never to `detectMarkers`: a marker
+  // colour is annotation and is masked OUT of the averages, while a terrain
+  // colour is the terrain the averages measure.
+  const classified = buildTerrain(
+    averages,
+    legend.walkableMinLuminance,
+    legend.terrainColours,
+    legend.colourTolerance,
+  )
   const maskPath = join(sourceDir, 'walkable.png')
   let walkable: boolean[][]
   let walkableSource: 'heuristic' | 'mask'
@@ -659,7 +669,12 @@ export function importLevel(options: ImportOptions): ImportResult {
     walkable = walkableFromMask(mask, tileSize, w, h)
     walkableSource = 'mask'
   } else {
-    walkable = buildWalkable(averages, legend.walkableMinLuminance)
+    walkable = buildWalkable(
+      averages,
+      legend.walkableMinLuminance,
+      legend.terrainColours,
+      legend.colourTolerance,
+    )
     walkableSource = 'heuristic'
     warnings.push(
       'no walkable mask (walkable.png) in the source directory — walkability was ' +
@@ -672,8 +687,13 @@ export function importLevel(options: ImportOptions): ImportResult {
   // AFTER walkability is known, and after the despeckle inside `buildTerrain`:
   // a blocked tile that still reads as grass is drawn as a raised dark block
   // sitting in a field. As canopy it lies flat and earns a tree instead. See
-  // `blockedGrassToCanopy` for why the order is not negotiable.
-  const terrain = blockedGrassToCanopy(classified, walkable)
+  // `blockedGrassToCanopy` for why the order is not negotiable — and why a
+  // legend-declared tile is exempt from it, exactly as it is from the despeckle.
+  const terrain = blockedGrassToCanopy(
+    classified,
+    walkable,
+    declaredTerrainMask(averages, legend.terrainColours, legend.colourTolerance),
+  )
 
   warnings.push(...sanityCheckWalkability(walkable, spawns, walkableSource, legend.objectives))
 

@@ -46,6 +46,17 @@ export const TERRAIN = {
   ROCK: 3,
   /** Blue-dominant: water. Passable on foot only. */
   WATER: 4,
+  /**
+   * A deck across the water (ticket 033). DECLARED by the level's legend, never
+   * guessed from a colour — the importer has no rule that produces this id on
+   * its own.
+   *
+   * Every lookup below gives it the table's DEFAULT answer, and each of those is
+   * the right answer for its own reason rather than an accident of the fallback:
+   * it carries vehicles, it is crossed at full speed, and it can be fought on.
+   * Those reasons are written out at each function.
+   */
+  BRIDGE: 5,
 } as const
 
 /**
@@ -58,8 +69,10 @@ export const TERRAIN = {
  * meaningful rather than decorative. A bridge that saves a man a few seconds is
  * scenery; a bridge that is the only way a vehicle ever crosses is level
  * design — and that cannot be reconstructed later from a map on which every
- * crossing was equally passable. A bridge needs no rule of its own here: it is
- * drawn as dry ground across the water, so it is simply not `WATER`.
+ * crossing was equally passable. `BRIDGE` (ticket 033) still needs no rule of
+ * its own here — it takes `ALL_TRAVERSAL` by simply not being `WATER` — but that
+ * is now a decision rather than a coincidence, and the bridge test in
+ * `__tests__/bridge-terrain.test.ts` is what says it was made.
  *
  * AN UNKNOWN TILE ID IS PASSABLE TO EVERYONE, NEVER TO NOBODY. `TileId` is an
  * open enum by design — `types.ts` states that adding a tile id must never be a
