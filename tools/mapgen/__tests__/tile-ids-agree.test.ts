@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { TILE } from '../terrain'
+import { TILE, TERRAIN_NAMES } from '../terrain'
 import { TERRAIN } from '../../../src/core/level/terrain'
 
 /**
@@ -49,5 +49,35 @@ describe('core/level TERRAIN and tools/mapgen TILE', () => {
     // rule: a drift here does not merely mis-colour a tile, it decides whether a
     // river is a road.
     expect(TERRAIN.WATER).toBe(TILE.WATER)
+  })
+
+  it('and name BRIDGE as the same id, which ticket 033 adds', () => {
+    /**
+     * The second id with a traversal rule, and the first one a LEVEL AUTHOR can
+     * summon by name: `legend.json` says `"100,100,100": "bridge"` and this
+     * table is what turns that word into the number written to disk. A drift
+     * here does not mis-colour a tile, it decides whether the only crossing on
+     * level 2 is a road or a river.
+     */
+    expect(TERRAIN.BRIDGE).toBe(TILE.BRIDGE)
+  })
+})
+
+describe('the legend`s terrain vocabulary', () => {
+  it('names every id in the tile table, and only those', () => {
+    /**
+     * `TERRAIN_NAMES` is what a level author is allowed to write. An id missing
+     * from it is a terrain nobody can declare; a name with no id is a legend
+     * that parses and then resolves to nothing. Both are silent, so both are
+     * asserted.
+     */
+    expect(Object.keys(TERRAIN_NAMES).sort()).toEqual(
+      Object.keys(TILE)
+        .map((k) => k.toLowerCase())
+        .sort(),
+    )
+    for (const [name, id] of Object.entries(TERRAIN_NAMES)) {
+      expect({ name, id }).toEqual({ name, id: TILE[name.toUpperCase() as keyof typeof TILE] })
+    }
   })
 })
