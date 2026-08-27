@@ -139,15 +139,48 @@ describe('a body keeps what identified it', () => {
      * in, which passes on `undefined === undefined` — so it would have gone green
      * on a corpse that had lost its tint at the moment it was created.
      */
-    const s = createSession(ARENA())
-    const { deadId, team } = fightUntilADeath(s)
-    run(s, 600)
-    const body = s.renderEntities(FLAT).find((r) => r.id === deadId)
-    expect(body).toBeDefined()
-    expect({ team, tinted: body?.tint !== undefined }).toEqual({
-      team,
-      tinted: team === 'enemy',
-    })
+    /**
+     * A BRAWL RATHER THAN A DUEL, and the fixture is load-bearing. A first draft
+     * took whoever fell first in a 1v1 — which is usually one of ours, and ours
+     * are untinted — so `tint: undefined` on every corpse in the game passed it.
+     * The second draft asked that fixture for an ENEMY death, which never comes:
+     * the lone player loses. The third made it eight a side and still saw none —
+     * `autoEngageTeams` defaults to `['enemy']`, so a player squad with no orders
+     * stands there and is shot. THE SQUAD HAS TO BE TOLD TO FIRE, and then both
+     * sides lose men: measured at 8 player and 5 enemy deaths over these 900
+     * frames. Mutation-checked: dropping the corpse tint fails here now.
+     */
+    const s = createSession(
+      makeLevel({
+        avatars: Array.from({ length: 8 }, (_v, i) => ({ x: 6, y: 3 + i })),
+        enemies: Array.from({ length: 8 }, (_v, i) => ({ x: 9, y: 3 + i })),
+      }),
+    )
+    const teamOf = new Map<number, string>()
+    for (let f = 0; f < 900; f += 1) {
+      // Re-issued periodically rather than once: an order is dropped when its
+      // target dies, and this fixture kills the man it was aimed at.
+      if (f % 60 === 0) {
+        for (const unit of s.world.entities) {
+          if (unit.team !== 'player') continue
+          s.queue.push({
+            type: 'fire',
+            unitIds: [unit.id],
+            ordnance: 'rifle',
+            target: { x: 9, y: 6 },
+          })
+        }
+      }
+      s.advance(1 / 60)
+      for (const e of s.events()) if (e.type === 'UnitDied') teamOf.set(e.id, e.team)
+    }
+    const bodies = s.renderEntities(FLAT).filter((r) => r.animation === 'die')
+    const byTeam = (team: string) => bodies.filter((b) => teamOf.get(b.id) === team)
+    // Both sides really lost men, or the comparison below has nothing to compare.
+    expect(byTeam('enemy').length).toBeGreaterThan(0)
+    expect(byTeam('player').length).toBeGreaterThan(0)
+    expect(byTeam('enemy').every((b) => b.tint !== undefined)).toBe(true)
+    expect(byTeam('player').every((b) => b.tint === undefined)).toBe(true)
   })
 
   it('and the spot he fell on, which never drifts', () => {

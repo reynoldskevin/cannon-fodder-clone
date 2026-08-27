@@ -301,16 +301,6 @@ const DIE_ANIMATION = 'die'
 const IDLE_ANIMATION = 'idle'
 
 /**
- * The `die` clip's length, in frames and frames per second, from
- * `tools/spritegen/index.ts`: `SHEET_GRID.cols` is 4, so every animation is four
- * frames, and `FPS.die` is 8. Restated rather than imported because `tools/` is
- * offline build tooling that the game never loads, and read out of the sprite
- * manifest at runtime it would be `render/`'s business, not the sim's.
- */
-const DIE_FRAME_COUNT = 4
-const DIE_FPS = 8
-
-/**
  * The `fire` clip's length, from the same table: `FPS.fire` is 12 and every
  * animation is four frames.
  */
@@ -329,15 +319,26 @@ const FIRE_FPS = 12
 const FIRE_TICKS = Math.ceil(FIRE_FRAME_COUNT / FIRE_FPS / FIXED_TIMESTEP)
 
 /**
- * How many simulation steps a corpse keeps being drawn for: 4/8 s of clip at
- * 60 Hz, so 30 ticks.
+ * A CORPSE IS NEVER DROPPED (ticket 049), and there is no constant here any more.
  *
- * Dropping a unit from the render list on the tick it dies makes corpses vanish
- * mid-fall — the death animation is a one-shot the renderer needs the entity to
- * still exist for. Rounded up, so the last frame of the clip is shown rather
- * than skipped by a fraction of a step.
+ * There was one — `DEATH_TICKS`, 4 frames over 8 fps at 60 Hz, thirty steps — and
+ * a corpse was pruned the moment it elapsed. That was right about the animation
+ * and wrong about the game: `die` is a one-shot whose LAST FRAME IS THE FALLEN
+ * POSE (`render-state/animation.ts` clamps it and says why), so a body was
+ * removed at the exact instant it became the thing worth looking at, and a
+ * firefight left no trace of itself.
+ *
+ * SO THEY STAY FOR THE MISSION, and the list is bounded by something better than
+ * a timeout: a man dies once, `world.ts` never reuses an id within a mission, and
+ * a mission fields dozens of men. `main.ts` builds a NEW SESSION per mission, so
+ * the list dies with it and there is no reset to forget — see the case in
+ * `corpses-remain.test.ts` that fails the day a session is reused instead.
+ *
+ * NONE OF IT REACHES THE SIMULATION. A corpse is built from `UnitDied` after the
+ * fact, the entity is already out of `world.entities`, and `renderEntities` is a
+ * pure read. Keeping a hundred of them cannot move a mission, which is asserted
+ * rather than assumed.
  */
-const DEATH_TICKS = Math.ceil(DIE_FRAME_COUNT / DIE_FPS / FIXED_TIMESTEP)
 
 /**
  * Where prop ids start, chosen to clear both id spaces they share a renderer
@@ -739,7 +740,10 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
    */
   const tracks = new Map<number, Track>()
 
-  /** The recent dead, in death order. Pruned every step; see `DEATH_TICKS`. */
+  /**
+   * The dead, in death order, for the whole mission (ticket 049). Never pruned;
+   * bounded by the roll, because a man dies once and ids are not reused.
+   */
   const corpses: Corpse[] = []
 
   /**
@@ -847,20 +851,6 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
     }
   }
 
-  /** Drop corpses whose clip has finished. Compacted in place, order preserved. */
-  function pruneCorpses(): void {
-    const tick = world.tickCount
-    let write = 0
-    for (let i = 0; i < corpses.length; i += 1) {
-      const corpse = corpses[i]
-      if (corpse === undefined) continue
-      if (tick - corpse.diedAtTick >= DEATH_TICKS) continue
-      corpses[write] = corpse
-      write += 1
-    }
-    corpses.length = write
-  }
-
   /**
    * Drop fire timestamps that have outlived their clip.
    *
@@ -903,7 +893,6 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
       world.tick()
       collectEvents()
       forgetMovedFacings()
-      pruneCorpses()
       pruneFireTimes()
     }
     return loop.alpha
