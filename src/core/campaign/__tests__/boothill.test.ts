@@ -650,3 +650,170 @@ describe('and the model no longer carries what the box needed (ticket 063)', () 
     expect(bootHillModel(after).fallenThisMission).toEqual([])
   })
 })
+
+describe('both columns run by rank (ticket 065)', () => {
+  /** Survive `n` winning missions with everybody alive. */
+  const veteran = (state: CampaignState, n: number): CampaignState => {
+    let s = state
+    for (let i = 0; i < n; i += 1) s = fight(s, 1, [])
+    return s
+  }
+
+  it('the SQUAD column is highest rank first', () => {
+    /**
+     * The men are all equal on a fresh campaign, so somebody has to be promoted
+     * before the order can mean anything: three missions with one man sitting
+     * them out gives two ranks in one column.
+     *
+     * Built by hand rather than by fighting, because `applyMissionReport`
+     * credits every man on the roster and there is no way to bench one.
+     */
+    const base = veteran(createCampaign({ seed: 90, recruits: 4 }), 2)
+    const roster = base.recruits
+    const mixed: CampaignState = {
+      ...base,
+      // Deliberately WORST FIRST in the stored roster, so a model that simply
+      // passed the roster through would fail this.
+      recruits: [
+        { ...roster[0]!, missionsSurvived: 0 },
+        { ...roster[1]!, missionsSurvived: 5 },
+        { ...roster[2]!, missionsSurvived: 2 },
+        { ...roster[3]!, missionsSurvived: 9 },
+      ],
+    }
+    const squad = bootHillModel(mixed).squad
+    expect(squad.map((m) => m.rankIndex)).toEqual([9, 5, 2, 0])
+  })
+
+  it('and men of equal rank keep the order the roster had', () => {
+    /**
+     * A STABLE SORT, and it matters: every man on a fresh campaign holds the
+     * same rank, so an unstable one would shuffle the whole column on a screen
+     * the player sees between every mission.
+     */
+    const s = createCampaign({ seed: 91, recruits: 6 })
+    const rosterOrder = recruitsAvailable(s).map((m) => m.name)
+    expect(bootHillModel(s).squad.map((m) => m.name)).toEqual(rosterOrder)
+  })
+
+  it('the HEROES column is highest rank first too', () => {
+    const base = createCampaign({ seed: 92, recruits: 4 })
+    const dead = base.recruits.slice(0, 3)
+    const withGraves: CampaignState = {
+      ...base,
+      recruits: base.recruits.slice(3),
+      dead: [
+        { ...dead[0]!, status: 'dead', diedOnLevel: 1, rank: 'Corporal', rankAtDeath: 'Corporal' },
+        { ...dead[1]!, status: 'dead', diedOnLevel: 2, rank: 'Major', rankAtDeath: 'Major' },
+        { ...dead[2]!, status: 'dead', diedOnLevel: 3, rank: 'Private', rankAtDeath: 'Private' },
+      ],
+    }
+    const graves = bootHillModel(withGraves).graves
+    expect(graves.map((g) => g.rankAtDeath)).toEqual(['Major', 'Corporal', 'Private'])
+  })
+
+  it('and a rank this ladder no longer has sorts LAST, not first', () => {
+    /**
+     * `rankIndex` IS NULL FOR A STONE CARVED UNDER AN OLDER LADDER (ticket 062).
+     * A comparator that treated `null` as a number would sort it as 0 — which is
+     * Private, the bottom — or, if it fell through to `undefined` arithmetic,
+     * produce `NaN` and leave the whole column in whatever order the sort
+     * happened to walk it. Unknown is not the same as lowest, but it belongs at
+     * the end either way, and it must not disturb the men around it.
+     */
+    const base = createCampaign({ seed: 93, recruits: 3 })
+    const dead = base.recruits.slice(0, 2)
+    const withGraves: CampaignState = {
+      ...base,
+      recruits: base.recruits.slice(2),
+      dead: [
+        {
+          ...dead[0]!,
+          status: 'dead',
+          diedOnLevel: 1,
+          rank: 'Field Marshal',
+          rankAtDeath: 'Field Marshal',
+        },
+        { ...dead[1]!, status: 'dead', diedOnLevel: 2, rank: 'Private', rankAtDeath: 'Private' },
+      ],
+    }
+    const graves = bootHillModel(withGraves).graves
+    expect(graves.map((g) => g.rankAtDeath)).toEqual(['Private', 'Field Marshal'])
+    expect(graves[1]?.rankIndex).toBeNull()
+  })
+})
+
+describe('and the sort does not break what read the old order (ticket 065)', () => {
+  it('this mission`s dead are still marked fresh, wherever they land', () => {
+    /**
+     * THE TRAP THIS TICKET IS REALLY ABOUT. `fallenSince` marks the fresh stones
+     * by slicing past `previous.dead.length` — it assumes the new ones are the
+     * TAIL of a chronological list — and `boot-hill.ts` re-derived the same tail
+     * to colour them. Sort the list and a freshly buried Private lands at the
+     * bottom while the colouring still paints whoever is now last.
+     *
+     * So freshness is a FIELD on the grave, decided before the sort. Here a
+     * high-ranked man dies first and a low-ranked one dies this mission, so the
+     * fresh stone is NOT last after sorting — which is exactly the case the old
+     * positional rule got wrong.
+     */
+    const base = createCampaign({ seed: 94, recruits: 4 })
+    const old = base.recruits[0]!
+    const before: CampaignState = {
+      ...base,
+      recruits: base.recruits.slice(1),
+      dead: [{ ...old, status: 'dead', diedOnLevel: 1, rank: 'Major', rankAtDeath: 'Major' }],
+    }
+    const justFell = before.recruits[0]!
+    const after: CampaignState = {
+      ...before,
+      recruits: before.recruits.slice(1),
+      dead: [
+        ...before.dead,
+        { ...justFell, status: 'dead', diedOnLevel: 2, rank: 'Private', rankAtDeath: 'Private' },
+      ],
+    }
+    const graves = bootHillModel(after, before).graves
+    // Sorted: the Major first, the freshly-fallen Private second.
+    expect(graves.map((g) => g.name)).toEqual([old.name, justFell.name])
+    expect(graves.map((g) => g.fresh)).toEqual([false, true])
+  })
+
+  it('and a cross keeps its place on the hill when a senior man is buried', () => {
+    /**
+     * `plot(index)` PUTS A CROSS ON THE HILLSIDE FROM ITS INDEX, and the file it
+     * lives in argues at length that a man must keep his plot for the life of
+     * the campaign — a memorial that rearranges its dead is worse than none. A
+     * rank-sorted list would move every grave below a newly-buried officer.
+     *
+     * So the plot is a FIELD too, and it is the CHRONOLOGICAL position: the
+     * order `state.dead` is appended in, which never changes.
+     */
+    const base = createCampaign({ seed: 95, recruits: 4 })
+    const first = base.recruits[0]!
+    const one: CampaignState = {
+      ...base,
+      recruits: base.recruits.slice(1),
+      dead: [{ ...first, status: 'dead', diedOnLevel: 1, rank: 'Private', rankAtDeath: 'Private' }],
+    }
+    const plotBefore = bootHillModel(one).graves[0]?.plot
+
+    const officer = one.recruits[0]!
+    const two: CampaignState = {
+      ...one,
+      recruits: one.recruits.slice(1),
+      dead: [
+        ...one.dead,
+        { ...officer, status: 'dead', diedOnLevel: 2, rank: 'Major', rankAtDeath: 'Major' },
+      ],
+    }
+    const graves = bootHillModel(two).graves
+    // The Major now sorts ABOVE him in the column...
+    expect(graves[0]?.name).toBe(officer.name)
+    // ...and the private's cross has not moved an inch.
+    expect(graves.find((g) => g.name === first.name)?.plot).toBe(plotBefore)
+    // The two crosses are distinct plots, which is what makes the check above
+    // more than "they are both zero".
+    expect(new Set(graves.map((g) => g.plot)).size).toBe(2)
+  })
+})
