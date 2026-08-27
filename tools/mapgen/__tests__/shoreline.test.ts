@@ -1,6 +1,11 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { importLevel } from '../index'
 import { TILE, classifyTile, shorelineAdjustedAverages, tileAverages } from '../terrain'
 import type { Image, RGB } from '../image'
+import { canvas, encodePng, drawCrosshair, fillRect } from './helpers/png'
 
 /**
  * Ticket 035 — a tile at the waterline is what its LAND is.
@@ -124,9 +129,10 @@ describe('a tile at the waterline', () => {
     /**
      * HONEST ABOUT ITS OWN LIMIT. Where a tile catches only a sliver of land, the
      * painted outline really is the plurality of that land, and the modal vote
-     * says rock. That is the rule working, not failing — 28 such tiles survive on
-     * level 2, and the fix for them is the artwork or a declared colour, not a
-     * cleverer heuristic. Pinned so nobody "improves" it into a special case.
+     * says rock. That is the rule working, not failing — 26 such tiles survive on
+     * level 2 (the ticket projected 28), and the fix for them is the artwork or a
+     * declared colour, not a cleverer heuristic. Pinned so nobody "improves" it
+     * into a special case.
      */
     const sliver = mix(WATER, 3, STROKE, 0)
     const { after } = adjust([[solid(WATER), sliver, solid(GRASS)]])
@@ -191,10 +197,10 @@ describe('it drops exactly the pixels the classifier calls water', () => {
      * grass colour. Any water left in the sum shifts every channel, so this
      * cannot pass on a rule that merely weighted the water down.
      *
-     * It also pins that the rule uses `classifyTile`'s own water test rather
-     * than a second threshold of its own — a drift between the two would show up
-     * as a shoreline that moved without the artwork changing, and the arithmetic
-     * here would stop landing on the nose.
+     * WHAT IT DOES NOT PIN, said plainly because the first draft claimed it did:
+     * this cannot tell `classifyTile`'s water test from a hand-rolled
+     * `b > r && b > g`. On these colours the two agree. The case that separates
+     * them is below.
      */
     const { adjusted } = adjust([[solid(WATER), mix(WATER, 3, GRASS, 0), solid(GRASS)]])
     expect(adjusted[0]?.[1]).toEqual([...GRASS])
@@ -222,6 +228,134 @@ describe('it drops exactly the pixels the classifier calls water', () => {
   })
 })
 
+describe('the gaps review found by mutation, each now closed', () => {
+  it('drops the pixels classifyTile calls water, NOT the ones `b > r && b > g` does', () => {
+    /**
+     * THE TWO TESTS ARE NOT THE SAME TEST, and swapping one for the other left
+     * all 2010 tests green. `classifyTile` returns UNKNOWN for anything with
+     * `max(r,g,b) < 12` BEFORE it ever reaches the blue comparison — so a
+     * near-black bluish shadow pixel is UNKNOWN to the classifier and WATER to a
+     * hand-rolled blue test.
+     *
+     * That difference is visible: with the classifier, the shadow pixels stay in
+     * the land vote and win it, so the tile reads `unknown`; with a hand-rolled
+     * test they are discarded as water and the grass wins.
+     *
+     * Pinned as UNKNOWN rather than as the nicer-looking answer on purpose. It
+     * is what the rule as specified does, and a shadowed bank voting itself into
+     * a hole in the map is worth having stated somewhere — see the ticket's own
+     * argument for rejecting map-wide modal classification.
+     */
+    const shadow: RGB = [2, 3, 8]
+    expect(classifyTile(shadow, 55)).toBe(TILE.UNKNOWN)
+
+    const bank = Array.from({ length: TS }, (_, i) =>
+      i < 2 ? WATER : i < 6 ? shadow : GRASS,
+    )
+    const { after } = adjust([[solid(WATER), bank, solid(GRASS)]])
+    expect(after[0]?.[1]).toBe(TILE.UNKNOWN)
+  })
+
+  it('excludes annotation ink from the land vote', () => {
+    /**
+     * A crosshair drawn on a bank tile must not vote on what that tile is — the
+     * same rule `tileAverages` has always applied, for the reason its comment
+     * gives: annotation is drawn ON the terrain it describes, and letting it into
+     * the mean makes the map disagree with itself.
+     *
+     * Deleting the ink skip left all 2010 tests green, because nothing here ever
+     * passed a mask.
+     */
+    const marker: RGB = [255, 60, 60]
+    const tiles = [[solid(WATER), Array.from({ length: TS }, (_, i) => (i < 2 ? WATER : i < 4 ? GRASS : marker)), solid(GRASS)]]
+    const image = imageOf(tiles)
+    const { averages } = tileAverages(image, TS, 3, 1)
+
+    // Mask the marker columns of the middle tile, as `detect.ts` would.
+    const inkMask = new Uint8Array(image.width * image.height)
+    for (let y = 0; y < image.height; y += 1) {
+      for (let x = TS + 4; x < TS * 2; x += 1) inkMask[y * image.width + x] = 1
+    }
+
+    const withInk = shorelineAdjustedAverages(image, TS, averages, 55, inkMask)
+    const without = shorelineAdjustedAverages(image, TS, averages, 55)
+    expect(classifyTile(withInk[0]?.[1] ?? [0, 0, 0], 55)).toBe(TILE.GRASS)
+    expect(classifyTile(without[0]?.[1] ?? [0, 0, 0], 55)).not.toBe(TILE.GRASS)
+  })
+
+  it('breaks a tied vote on the LOWER tile id, never on iteration order', () => {
+    /**
+     * Ties happen on the real artwork: flipping the tie-break to the higher id
+     * changes `level2.json`. Both directions, and dropping the tie clause so it
+     * fell to `Map` insertion order, left all 2010 tests green.
+     *
+     * A bank tile split exactly evenly between grass (1) and canopy (2) land
+     * pixels. Lower id wins, so it is grass — and it stays grass whichever order
+     * the pixels are visited in, which is the property that actually matters.
+     */
+    const even = Array.from({ length: TS }, (_, i) => (i < 2 ? WATER : i < 5 ? GRASS : CANOPY))
+    const reversed = Array.from({ length: TS }, (_, i) => (i < 2 ? WATER : i < 5 ? CANOPY : GRASS))
+    expect(adjust([[solid(WATER), even, solid(GRASS)]]).after[0]?.[1]).toBe(TILE.GRASS)
+    expect(adjust([[solid(WATER), reversed, solid(GRASS)]]).after[0]?.[1]).toBe(TILE.GRASS)
+  })
+
+  it('and water membership is untouched, so this rule cannot erode a river', () => {
+    /**
+     * The rule only ever rewrites NON-water tiles, and this says so directly: the
+     * set of tiles the classifier calls water is identical before and after.
+     *
+     * WORTH BEING PRECISE ABOUT, because review reported this rule "eroding" a
+     * pond and it does not. A small water island CAN be dissolved by
+     * `despeckleTerrain` — but that is pre-existing behaviour, reproduced on
+     * `main`: a clean 2x2 pond in open grass comes out grass with this rule and
+     * without it, identically. That is a real bug in the despeckle and it is not
+     * this ticket's.
+     */
+    const tiles = [
+      [solid(WATER), mix(WATER, 4, GRASS, 1), solid(GRASS)],
+      [solid(WATER), mix(WATER, 3, CANOPY, 0), solid(CANOPY)],
+    ]
+    const { before, after } = adjust(tiles)
+    const waterSet = (grid: number[][]) =>
+      grid.flatMap((row, y) => row.map((id, x) => (id === TILE.WATER ? `${String(x)},${String(y)}` : ''))).filter(Boolean)
+    expect(waterSet(after)).toEqual(waterSet(before))
+  })
+})
+
+describe('a declared tile is never re-judged', () => {
+  it('keeps its plain average even though it sits on the waterline', () => {
+    /**
+     * THE COLLISION WITH TICKET 033, PINNED AT THE SEAM WHERE IT CAN ACTUALLY
+     * FAIL. My first attempt at this was through `importLevel` with a solid grey
+     * deck, and it was toothless: the modal vote over a uniform deck returns the
+     * deck colour, so the tile stayed inside the declaration's tolerance either
+     * way. Deleting the declared skip left all 2010 tests green under it.
+     *
+     * Here the declared tile's land is deliberately NOT uniform, so the modal
+     * vote would move its average somewhere the declaration could no longer
+     * claim. With the mask it is skipped outright; without it, it moves. That is
+     * the difference the skip exists to make.
+     *
+     * It matters because a bridge runs ACROSS a river — every deck tile touches
+     * water, so every deck tile is a shoreline tile, and the wrong order silently
+     * undoes 033 on the only level either ticket is about.
+     */
+    const mottled: RGB = [60, 58, 55]
+    const deck: RGB = [100, 100, 100]
+    const tile = Array.from({ length: TS }, (_, i) => (i < 3 ? deck : mottled))
+    const tiles = [[solid(WATER), tile, solid(GRASS)]]
+    const image = imageOf(tiles)
+    const { averages } = tileAverages(image, TS, 3, 1)
+
+    const declaredMask = [[false, true, false]]
+    const skipped = shorelineAdjustedAverages(image, TS, averages, 55, undefined, declaredMask)
+    const judged = shorelineAdjustedAverages(image, TS, averages, 55)
+
+    expect(skipped[0]?.[1]).toEqual(averages[0]?.[1])
+    expect(judged[0]?.[1]).not.toEqual(averages[0]?.[1])
+  })
+})
+
 describe('the adjustment is a pure function of the image', () => {
   it('produces the same grid twice, so the import stays idempotent', () => {
     const tiles = [[solid(WATER), mix(WATER, 2, GRASS, 1), solid(GRASS)]]
@@ -237,5 +371,81 @@ describe('the adjustment is a pure function of the image', () => {
     const snapshot = JSON.stringify(averages)
     shorelineAdjustedAverages(image, TS, averages, 55)
     expect(JSON.stringify(averages)).toBe(snapshot)
+  })
+})
+
+describe('through the real importer, terrain and passability agree', () => {
+  /**
+   * ACCEPTANCE CRITERION 7, AND THE ONE TEST IN THIS TICKET THAT CAN CATCH IT.
+   * Feeding the adjusted grid to `buildTerrain` but NOT to `buildWalkable` left
+   * all 2010 tests green while changing 46 tiles' passability on level 2 — the
+   * bank would look like open grass and refuse to be walked on.
+   *
+   * The committed-artifact test next door CANNOT catch that: it reads
+   * `level2.json`, so a change to the pipeline moves nothing until somebody
+   * re-runs the import. That is a real gap in that kind of test and it is worth
+   * naming — an artifact test guards the artifact, not the code that made it.
+   */
+  const MTS = 16
+  const RIVER: RGB = [0, 32, 80]
+  const OPEN: RGB = [80, 100, 8]
+  const OUTLINE: RGB = [80, 0, 0]
+  const AVATAR: RGB = [60, 160, 255]
+  const ENEMY: RGB = [255, 60, 60]
+
+  let dir: string
+  let outDir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'mapgen-shore-'))
+    outDir = mkdtempSync(join(tmpdir(), 'mapgen-shore-out-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+    rmSync(outDir, { recursive: true, force: true })
+  })
+
+  it('a bank whose land is grass comes out grass AND walkable', () => {
+    const w = 14
+    const h = 14
+    const px = canvas(w * MTS, h * MTS, OPEN)
+    // A river down the middle, wide enough that its halves survive the despeckle.
+    fillRect(px, w * MTS, 6 * MTS, 0, 2 * MTS, h * MTS, RIVER)
+    // The painted outline along both banks, three pixels proud of the water —
+    // the same convention level 2's artist used, and the thing that drags a
+    // bank tile's average into rock.
+    fillRect(px, w * MTS, 6 * MTS - 3, 0, 3, h * MTS, OUTLINE)
+    fillRect(px, w * MTS, 8 * MTS, 0, 3, h * MTS, OUTLINE)
+    // And half of each bank tile is river, so its plain mean is dark.
+    fillRect(px, w * MTS, 5 * MTS + MTS / 2, 0, MTS / 2 - 3, h * MTS, RIVER)
+    fillRect(px, w * MTS, 8 * MTS + 3, 0, MTS / 2 - 3, h * MTS, RIVER)
+    drawCrosshair(px, w * MTS, 1 * MTS + MTS / 2, 2 * MTS + MTS / 2, AVATAR)
+    drawCrosshair(px, w * MTS, 12 * MTS + MTS / 2, 2 * MTS + MTS / 2, ENEMY)
+    writeFileSync(join(dir, 'map.png'), encodePng(w * MTS, h * MTS, px))
+    writeFileSync(
+      join(dir, 'legend.json'),
+      JSON.stringify({
+        tileSize: MTS,
+        colourTolerance: 40,
+        markerColours: { '60,160,255': 'avatars', '255,60,60': 'enemies' },
+        labels: [],
+      }),
+    )
+
+    const { level } = importLevel({ sourceDir: dir, outDir, name: 'shore' })
+
+    // The two bank columns either side of the river.
+    const banks: { x: number; y: number }[] = []
+    for (let y = 0; y < h; y += 1) {
+      for (const x of [5, 8]) banks.push({ x, y })
+    }
+    const disagreeing = banks.filter(
+      (t) => level.terrain[t.y]?.[t.x] === TILE.GRASS && level.walkable[t.y]?.[t.x] !== true,
+    )
+    // Not "some are grass": a tile that reads as open ground and refuses to be
+    // walked on is the invisible wall this ticket exists to remove.
+    expect(disagreeing).toEqual([])
+
+    const grassBanks = banks.filter((t) => level.terrain[t.y]?.[t.x] === TILE.GRASS)
+    expect(grassBanks.length).toBeGreaterThan(banks.length / 2)
   })
 })
