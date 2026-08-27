@@ -21,6 +21,7 @@
  * the entire memorial to add one name to the end of it.
  */
 
+import { createChrome } from './screen-chrome'
 import type { BootHillModel, Grave, Promotion } from '../core/campaign'
 
 export interface BootHillOptions {
@@ -70,38 +71,6 @@ const FRESH = '#ff8f6b'
 const MARK_FRESH = '✚'
 const MARK_OLD = '·'
 
-const BACKDROP_STYLE = [
-  'position:fixed',
-  'inset:0',
-  'z-index:60',
-  'display:flex',
-  'align-items:center',
-  'justify-content:center',
-  'padding:2rem',
-  'background:rgba(9,11,13,0.82)',
-  'font:15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif',
-  'color:' + TEXT,
-  // The screen sits over the canvas, and a click that lands on the backdrop is
-  // a click the player meant for nothing. Only the panel takes input — see
-  // below — so a stray press cannot be swallowed by an invisible full-bleed
-  // div, which is the failure `hud.ts` guards against for the same reason.
-  'pointer-events:none',
-].join(';')
-
-const PANEL_STYLE = [
-  'display:flex',
-  'flex-direction:column',
-  'gap:1rem',
-  'width:min(34rem, 100%)',
-  'max-height:100%',
-  'padding:1.75rem 2rem',
-  'border-radius:10px',
-  'border:1px solid rgba(159,179,189,0.35)',
-  'background:rgba(13,16,18,0.94)',
-  // Re-enabled for the panel alone: the button inside it has to be clickable.
-  'pointer-events:auto',
-].join(';')
-
 const LIST_STYLE = 'margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0.35rem'
 
 /** Write `text` into `node` only when it has actually changed. See `hud.ts`. */
@@ -127,14 +96,12 @@ export function promotionLine(promotion: Promotion): string {
 }
 
 export function createBootHill(mount: HTMLElement, options: BootHillOptions): BootHillScreen {
-  const backdrop = document.createElement('div')
-  backdrop.setAttribute('role', 'dialog')
-  backdrop.setAttribute('aria-modal', 'false')
-  backdrop.setAttribute('aria-label', 'Boot Hill')
-  backdrop.style.cssText = BACKDROP_STYLE
-
-  const panel = document.createElement('div')
-  panel.style.cssText = PANEL_STYLE
+  // THE SHARED SURFACE, NOT A COPY OF IT (ticket 043). This file used to
+  // transcribe the backdrop and panel styles itself, which is precisely how the
+  // memorial could have stayed a translucent overlay after the shared value was
+  // made opaque — two spellings, one of them fixed. `createChrome` sets the
+  // role, the `aria-modal="false"` and the label this screen used to set by hand.
+  const { backdrop, panel } = createChrome('Boot Hill')
 
   const heading = document.createElement('h1')
   heading.textContent = 'Boot Hill'
@@ -177,7 +144,10 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
   ].join(';')
 
   panel.append(heading, summary, graves, promotionsHeading, promotions, carryOn)
-  backdrop.append(panel)
+  // No `backdrop.append(panel)` here: `createChrome` has already done it. This
+  // file used to build both itself and the line survived the conversion, which
+  // re-appended the same node to the same parent — a no-op the DOM absorbs
+  // silently, and exactly the sort of leftover a conversion leaves behind.
   mount.append(backdrop)
   // Focused, so the keyboard alone can leave the memorial — and so the player's
   // next click does not go to the map underneath by accident.
