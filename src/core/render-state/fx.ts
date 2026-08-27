@@ -46,7 +46,7 @@
  * without being handed a list that has drifted from the type. Adding a kind here
  * is a compile error everywhere it has to be handled, which is the point.
  */
-export const FX_KINDS = ['muzzle', 'burst', 'death'] as const
+export const FX_KINDS = ['muzzle', 'burst'] as const
 
 export type FxKind = (typeof FX_KINDS)[number]
 
@@ -54,11 +54,11 @@ export type FxKind = (typeof FX_KINDS)[number]
  * How long each kind stays on screen, in real seconds.
  *
  * PER KIND, NOT ONE SHARED NUMBER. A muzzle flash is a blink at 0.05 s and a
- * death puff hangs for 1.2; one lifetime tuned for either makes the other look
+ * detonation hangs for 0.4; one lifetime tuned for either makes the other look
  * broken, and it reads as "the effects are bad" rather than as a number somebody
- * chose. The spread was wider still while the 45-second scorch mark was here,
- * and the argument does not depend on it — twenty-four times is as much of a
- * spread as a shared number could serve.
+ * chose. The spread was wider while the 45-second scorch mark (ticket 047) and
+ * the 1.2-second death puff (051) were here, and the argument does not depend on
+ * how many kinds there are — eight times is still more than one number serves.
  */
 export const FX_LIFETIME_SECONDS: Record<FxKind, number> = {
   /**
@@ -79,17 +79,6 @@ export const FX_LIFETIME_SECONDS: Record<FxKind, number> = {
    * screen is over before the eye reaches it.
    */
   burst: 0.4,
-  /**
-   * The puff where a man falls.
-   *
-   * THE LONGEST OF THE THREE SHORT ONES on purpose: a death is the most important
-   * thing that happens in a firefight and the one the player most needs to
-   * notice, and this hangs long enough to be found by an eye that was looking
-   * somewhere else. It is a particle effect and NOT the death animation, which is
-   * the sprite's own business (ticket 028) — raising it does not hold the body up
-   * any longer.
-   */
-  death: 1.2,
 }
 
 /**

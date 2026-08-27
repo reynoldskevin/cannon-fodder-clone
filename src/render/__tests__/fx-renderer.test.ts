@@ -85,7 +85,7 @@ describe('every kind the buffer can produce is drawable', () => {
     // the effect is simply missing — which looks exactly like the bug this whole
     // ticket exists to fix.
     const r = createFxRenderer()
-    for (const kind of ['muzzle', 'burst', 'death'] as const) {
+    for (const kind of ['muzzle', 'burst'] as const) {
       r.update([fx({ kind })])
       expect({ kind, drawn: r.drawnCount }).toEqual({ kind, drawn: 1 })
     }
@@ -286,7 +286,7 @@ describe('an airburst is drawn in the air', () => {
      * would fail here rather than be discovered on screen.
      */
     const ground = { size: { w: 21, h: 21 }, heightAt: () => 0 }
-    for (const kind of ['muzzle', 'burst', 'death'] as const) {
+    for (const kind of ['muzzle', 'burst'] as const) {
       const low = createFxRenderer({ ground })
       low.update([fx({ kind })])
       const high = createFxRenderer({ ground })

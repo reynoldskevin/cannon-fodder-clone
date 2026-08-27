@@ -397,6 +397,13 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
    * gravestones" by pressing the same button, and the second press is what makes
    * the difference deliberate. It is DOM, so nothing tests it; what IS tested,
    * in `core/flow`, is that no other command the runner has ever clears the save.
+   *
+   * AND IT IS NOT ON THE SCREEN AT ALL UNTIL THERE IS SOMETHING TO WIPE (ticket
+   * 050). On a first run it offered to erase a campaign that does not exist yet:
+   * a destructive-looking button beside Start, on the one screen where the
+   * player has no idea what either of them does, and the answer to "what happens
+   * if I press this" was "nothing at all". Shown from the moment the campaign
+   * has a history — the same `campaignUnderway` that makes Start say "Continue".
    */
   const restart = createButton('')
   restart.style.borderColor = 'rgba(255,143,107,0.55)'
@@ -682,6 +689,20 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
         ? 'Continue campaign'
         : 'Start campaign'
     setText(start, startLabel)
+
+    /**
+     * THE WIPE IS ONLY OFFERED WHEN THERE IS A CAMPAIGN TO WIPE.
+     *
+     * `display` AND NOT `disabled` OR A DIMMED BUTTON: a greyed-out "Start over"
+     * still tells a first-time player that this screen can destroy something of
+     * his, which is a question he does not have yet. The control simply is not
+     * there until he has a campaign, and then it is.
+     *
+     * IT IS REMOVED FROM THE TAB ORDER WITH IT — that is `display:none` rather
+     * than `visibility` or an opacity, so the keyboard cannot reach a button
+     * nobody can see and Enter cannot arm a wipe off screen.
+     */
+    restart.style.display = next.campaignUnderway ? '' : 'none'
 
     summary.style.display = next.campaignOver ? 'flex' : 'none'
     if (next.campaignOver) {

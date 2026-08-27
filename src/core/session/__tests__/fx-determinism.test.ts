@@ -90,9 +90,11 @@ function play(seed: number, withFx: boolean): { hash: number; deaths: number; bo
         // The shake request too, since that is the one FX number computed from
         // event data rather than merely stored.
         void shakeFor(Math.hypot(event.x, event.z), event.radiusTiles)
-      } else if (event.type === 'UnitDied') {
-        effects.add({ kind: 'death', x: 0, z: 0, scale: 1 }, clock)
       }
+      // A DEATH ASKS FOR NO EFFECT SINCE TICKET 051. It used to add a `death`
+      // puff here, mirroring `main.ts`; the red quad is gone and the body left
+      // on the field by ticket 049 is what says somebody fell. The SOUND is
+      // untouched and is not this suite's subject.
     }
     // Read them back every frame, as a renderer would. `visible` is documented
     // as a pure query; if it were not, this is where the difference would enter.
