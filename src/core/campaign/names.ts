@@ -11,11 +11,9 @@
  *
  * So names are ISSUED BY INDEX, not drawn:
  *
- *   - The pool is shuffled once, deterministically, from the campaign's seed.
- *     Same seed, same roster — a returning player must get his squad back, not
- *     a set of strangers wearing his save file. Two different seeds give two
- *     different rosters, or "seeded" would be indistinguishable from
- *     "hardcoded".
+ *   - The pool is read STRAIGHT THROUGH, in its own order (ticket 052). A fresh
+ *     campaign always opens on Jools and Jops, because the roll this pool came
+ *     from has an order and those are the first two men on it.
  *   - The campaign remembers how many men it has EVER recruited and issues the
  *     next index. That counter only rises, so a dead man's name is never handed
  *     to a living one — no cross-check against the dead list is needed, which
@@ -23,12 +21,17 @@
  *   - Past the end of the pool the name gets a generation suffix (`Jones II`,
  *     `Jones III`) rather than repeating. Ugly is survivable; ambiguous is not.
  *
- * Randomness is SEEDED (`core/world/prng`). `Math.random` here would break the
- * reload promise above, and is asserted against by the purity suite.
+ * THERE IS NO RANDOMNESS HERE AT ALL, AND THAT IS A REVERSAL. The pool used to be
+ * shuffled from the campaign's seed, on the argument that a fixed order would
+ * make "seeded" indistinguishable from "hardcoded" — fair, while the pool was
+ * thirty invented surnames and no order among them was better than another.
+ * Ticket 045 replaced it with the shipped roll, which HAS an order, and dealing
+ * that order at random threw away the only thing it carried.
+ *
+ * WHAT THE SHUFFLE WAS NEVER DOING is the reload promise: a returning player gets
+ * his squad back because naming is a pure function of a counter the save holds,
+ * not because the deal was reproducible. Dropping the seed costs that nothing.
  */
-
-import { createRng } from '../world/prng'
-import type { Rng } from '../world/prng'
 
 /**
  * The pool (ticket 045). Plain data, imported from `recruit_names.csv` — the
@@ -115,41 +118,24 @@ function roman(value: number): string {
 }
 
 /**
- * Fisher-Yates over a copy. In place on the pool itself would make the module
- * constant differ between two campaigns in the same session, which is a
- * cross-campaign leak that no test in this ticket would catch.
+ * `count` names for the men numbered `fromIndex` onwards.
+ *
+ * NO SEED PARAMETER SINCE TICKET 052, and its absence is the feature: naming is
+ * now a pure function of the counter, so recruitment replays from a save that
+ * holds only that number. It took a `seed` while the pool was shuffled, and
+ * keeping the argument to ignore it would leave every caller looking like it
+ * still mattered.
  */
-function shuffled(pool: readonly string[], rng: Rng): string[] {
-  const out = [...pool]
-  for (let i = out.length - 1; i > 0; i -= 1) {
-    const j = rng.int(i + 1)
-    const here = out[i]
-    const there = out[j]
-    // Both are in range by construction; the guard is what `noUncheckedIndexedAccess`
-    // costs, and skipping a swap is safer than asserting a non-null.
-    if (here === undefined || there === undefined) continue
-    out[i] = there
-    out[j] = here
-  }
-  return out
-}
-
-/**
- * `count` names for the men numbered `fromIndex` onwards in a campaign seeded
- * with `seed`. Pure: the same arguments always give the same names, which is
- * what lets recruitment be replayed from a save that stores only a seed and a
- * counter.
- */
-export function issueNames(seed: number, fromIndex: number, count: number): string[] {
-  const order = shuffled(NAME_POOL, createRng(seed))
+export function issueNames(fromIndex: number, count: number): string[] {
+  const pool = NAME_POOL
   const names: string[] = []
   for (let n = 0; n < count; n += 1) {
     const index = fromIndex + n
     // `?? 'Soldier'` is unreachable with a non-empty pool and exists only to
     // satisfy the index-may-be-undefined rule; an empty pool would make every
     // name identical, which is why the pool above must never be emptied.
-    const base = order[index % order.length] ?? 'Soldier'
-    const generation = Math.floor(index / order.length)
+    const base = pool[index % pool.length] ?? 'Soldier'
+    const generation = Math.floor(index / pool.length)
     names.push(generation === 0 ? base : `${base} ${roman(generation + 1)}`)
   }
   return names
