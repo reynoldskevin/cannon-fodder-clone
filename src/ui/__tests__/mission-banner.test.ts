@@ -98,6 +98,24 @@ describe('and it never gets in the way of the field it is over', () => {
     expect(BANNER_LAYER_STYLE).not.toMatch(/background(-color)?\s*:/)
   })
 
+  it('but does sit above the HUD, which is the only other thing on screen', () => {
+    /**
+     * A TIE IS NOT AN ANSWER. `hud.ts` is `z-index:40`, and two elements on the
+     * same layer are ordered by which was appended last — which this layer wins
+     * only because it is appended when shown and the HUD at boot. Pinned as a
+     * number so the result stops depending on that.
+     *
+     * The imported HUD constant would be better than a literal, but `hud.ts`
+     * builds its DOM in the module body and cannot be imported without a
+     * `document` — see the header. 40 is transcribed, and this is the case that
+     * fails if the two ever meet again.
+     */
+    const z = Number(layer.get('z-index'))
+    expect(z).toBeGreaterThan(40)
+    // And below a campaign screen (`screen-chrome.ts`, 60), which must cover it.
+    expect(z).toBeLessThan(60)
+  })
+
   it('though the words stay legible over whatever terrain is under them', () => {
     // Jungle, river and sand all pass under this text and none of them is a
     // reliable backdrop for a light face. The shadow is what makes the words

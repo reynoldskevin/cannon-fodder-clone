@@ -183,22 +183,35 @@ describe('a run of frames, the way the render loop actually calls it', () => {
     /**
      * THE WHOLE TICKET IN ONE CASE, driven at 60 Hz the way the loop drives it:
      * the outcome lands, the banner goes up, `begin` is called again on every
-     * subsequent frame because the guard in `main.ts` is still true, and exactly
-     * ONE frame gets to run the transition.
+     * subsequent frame because the outcome stays decided, and exactly ONE frame
+     * gets to run the transition.
+     *
+     * `screen` IS IN HERE BECAUSE IT IS IN THE REAL GUARD, and leaving it out
+     * made this case assert something the design deliberately does not provide.
+     * `main.ts` reads `outcome !== 'playing' && runner.screen() === 'Mission'`,
+     * and its own comment says why the SCREEN is the guard rather than a flag of
+     * its own: the mission is over exactly once, and no row of the flow table
+     * leaves `Mission` and returns to it. Modelled without it, the hold resets on
+     * `done`, `begin` starts a second hold on the next frame, and three seconds
+     * later the mission is recorded again — which is a true statement about a
+     * loop the game does not have.
      */
     const hold = createMissionEndHold()
     let transitions = 0
     let bannerFrames = 0
     let decided = false
+    let screen: 'Mission' | 'BootHill' = 'Mission'
     for (let f = 0; f < 600; f += 1) {
       const now = f / 60
       // Frame 60 (one second in) is where the mission is decided.
       if (f >= 60) decided = true
-      if (decided) {
+      if (decided && screen === 'Mission') {
         hold.begin('complete', now)
         if (hold.elapsed(now)) {
           hold.done()
           transitions += 1
+          // What `endMission` does, a step later: the router leaves the mission.
+          screen = 'BootHill'
         }
       }
       if (hold.banner() !== null) bannerFrames += 1
