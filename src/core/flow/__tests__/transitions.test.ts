@@ -109,6 +109,9 @@ describe('every transition the chart promises', () => {
     ['Mission', 'missionFailed', 'Briefing'],
     ['BootHill', 'campaignComplete', 'Menu'],
     ['Menu', 'demoShortcut', 'Mission'],
+    // Ticket 059. The Briefing was a one-way door: every route in left the
+    // player with deploy as the only thing he could do.
+    ['Briefing', 'backToBase', 'BootHill'],
   ]
 
   it('works, one by one', () => {
@@ -184,6 +187,57 @@ describe('every transition the chart promises', () => {
 
   it('and Boot Hill is still the way out of the campaign', () => {
     expect(walk(INITIAL_SCREEN, ['startCampaign', 'campaignComplete'])).toBe('Menu')
+  })
+})
+
+describe('the way back off the briefing (ticket 059)', () => {
+  /** Walk the chart, throwing on any refusal — the sibling helper's twin. */
+  const walkFrom = (from: Screen, events: readonly FlowEvent[]): Screen => {
+    let screen = from
+    for (const event of events) {
+      const result = advance(screen, event)
+      if (!result.ok) throw new Error(`${screen} refused ${event}: ${result.reason}`)
+      screen = result.state
+    }
+    return screen
+  }
+
+  it('only the Briefing has it', () => {
+    /**
+     * THE ROW IS ONE DOOR, NOT A GLOBAL BACK BUTTON. `backToBase` reaching Boot
+     * Hill from a MISSION would tear the level down mid-firefight and bury
+     * nobody; from the Menu it would open the memorial of a campaign that has
+     * not been started. The sweep below already refuses every unnamed pairing,
+     * but it would go on passing if this row were widened by mistake — so the
+     * three refusals are named.
+     */
+    for (const from of ['Menu', 'BootHill', 'Mission'] as const) {
+      const result = advance(from, 'backToBase')
+      expect({ from, ok: result.ok }).toEqual({ from, ok: false })
+    }
+  })
+
+  it('and it does not tear down a mission, because it cannot leave one', () => {
+    // `isMissionExit` decides teardown, and this row's `from` is the Briefing —
+    // so no scene is released and none should be. Stated because the row was
+    // added by hand to a table whose other rows include two that DO exit.
+    expect(isMissionExit('Briefing', 'BootHill')).toBe(false)
+  })
+
+  it('and the door swings both ways without landing anywhere new', () => {
+    /**
+     * BootHill -> Briefing -> BootHill. The chart has to come back to exactly
+     * where it started: a round trip that landed on the Menu, or on a screen
+     * with no rows out, would be a softlock that type-checks.
+     */
+    expect(walkFrom('BootHill', ['squadAssigned', 'backToBase'])).toBe('BootHill')
+    expect(walkFrom('BootHill', ['squadAssigned', 'backToBase', 'squadAssigned'])).toBe('Briefing')
+  })
+
+  it('and a player who lost can still get back to the hill', () => {
+    // The other route in. A loss lands on the Briefing, and reading the memorial
+    // before retrying is the case this row was asked for.
+    expect(walkFrom('Mission', ['missionFailed', 'backToBase'])).toBe('BootHill')
   })
 })
 

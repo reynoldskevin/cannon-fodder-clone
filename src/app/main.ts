@@ -1153,6 +1153,12 @@ async function boot(): Promise<void> {
             announce(runner.deploy(), 'deploying')
             reconcile()
           },
+          // Ticket 059. The same shape as every other handler in this router:
+          // call a command, then ask `reconcile` — never mount a screen here.
+          onBackToBase: () => {
+            announce(runner.backToBase(), 'going back to base')
+            reconcile()
+          },
         })
       case 'boot-hill': {
         const hill = createBootHill(mount, {

@@ -41,6 +41,8 @@ export interface BriefingOptions {
   readonly model: BriefingModel
   /** Send them in. The chart decides where that goes. */
   readonly onDeploy: () => void
+  /** Back to Boot Hill without deploying (ticket 059). */
+  readonly onBackToBase: () => void
 }
 
 export interface BriefingScreen {
@@ -68,6 +70,69 @@ const RULE = MUTED
 const TITLE_SIZE = 'clamp(2.08rem, 6.5vw, 3.58rem)'
 const CARD_TITLE_SIZE = 'clamp(1.76rem, 5.2vw, 2.73rem)'
 const BODY_SIZE = 'clamp(1.24rem, 3.12vw, 1.76rem)'
+
+/**
+ * The two buttons, as words and as styles (ticket 059).
+ *
+ * PULLED OUT OF THE FACTORY SO THEY CAN BE COMPARED. Vitest runs
+ * `environment: 'node'` and there is no jsdom, so nothing can build this screen
+ * and measure it — but "the back button is smaller than the deploy button" is a
+ * decision, and a decision belongs somewhere a test can read it.
+ * `briefing-buttons.test.ts` imports these four and compares the two clamps at
+ * both ends. Same split `screen-chrome.ts` and `mission-banner.ts` run on.
+ */
+export const DEPLOY_LABEL = 'GO FOR IT'
+export const BACK_TO_BASE_LABEL = 'BACK TO BASE'
+
+/**
+ * GO FOR IT — the card's own voice, at the card's heading size.
+ *
+ * IT KEEPS `createButton`'S SHAPE AND LOSES ITS CHROME: the border and the pill
+ * would be a second box inside the box the mockup already draws, where the
+ * original simply sets the words larger and puts them last.
+ */
+export const DEPLOY_STYLE = [
+  'align-self:center',
+  'margin:0',
+  'padding:0.1em 0.4em',
+  'border:none',
+  'background:transparent',
+  `color:${TEXT}`,
+  `font-family:${DISPLAY_FONT}`,
+  `font-size:${CARD_TITLE_SIZE}`,
+  'letter-spacing:0.06em',
+  'line-height:1.1',
+].join(';')
+
+/**
+ * BACK TO BASE — smaller, quieter, and OUTSIDE the card.
+ *
+ * SMALLER AT BOTH ENDS OF THE CLAMP, not just at the top. Two clamps can cross:
+ * a back button whose minimum sat above GO FOR IT's would be the smaller one on
+ * a monitor and the BIGGER one on a phone, which is exactly the bug a
+ * single-width check waves through. Every bound here is below the matching bound
+ * of `CARD_TITLE_SIZE`.
+ *
+ * `MUTED` RATHER THAN `TEXT`, because size alone still reads as a second call to
+ * action. The point of a secondary action is that the eye passes over it on the
+ * way to the real one — the player came here to deploy.
+ *
+ * THE MARGIN IS WHAT PUTS IT UNDER THE BOX. It is appended to the panel and not
+ * to the card, so the hairline border stays drawn around the briefing itself;
+ * the space above it is what stops it reading as a detached orphan.
+ */
+export const BACK_TO_BASE_STYLE = [
+  'align-self:center',
+  'margin:clamp(0.75rem, 2.5vh, 1.5rem) 0 0',
+  'padding:0.1em 0.4em',
+  'border:none',
+  'background:transparent',
+  `color:${MUTED}`,
+  `font-family:${DISPLAY_FONT}`,
+  'font-size:clamp(0.95rem, 2.4vw, 1.35rem)',
+  'letter-spacing:0.1em',
+  'line-height:1.1',
+].join(';')
 
 /**
  * The card's sentence, minus its list of objectives.
@@ -243,20 +308,22 @@ export function createBriefing(mount: HTMLElement, options: BriefingOptions): Br
    * this screen means losing the mission) and its focus behaviour, which is why
    * it is still built by the shared helper rather than by hand.
    */
-  const deploy = createButton('GO FOR IT')
-  deploy.style.alignSelf = 'center'
-  deploy.style.margin = '0'
-  deploy.style.padding = '0.1em 0.4em'
-  deploy.style.border = 'none'
-  deploy.style.background = 'transparent'
-  deploy.style.color = TEXT
-  deploy.style.fontFamily = DISPLAY_FONT
-  deploy.style.fontSize = CARD_TITLE_SIZE
-  deploy.style.letterSpacing = '0.06em'
-  deploy.style.lineHeight = '1.1'
+  const deploy = createButton(DEPLOY_LABEL)
+  deploy.style.cssText = DEPLOY_STYLE
+
+  /**
+   * BACK TO BASE — under the card, not in it (ticket 059).
+   *
+   * APPENDED TO THE PANEL RATHER THAN THE CARD, which is the whole of "under the
+   * box": the card is the hairline-bordered briefing and this is not part of it,
+   * so putting it inside would draw the border around a control that leaves the
+   * screen.
+   */
+  const back = createButton(BACK_TO_BASE_LABEL)
+  back.style.cssText = BACK_TO_BASE_STYLE
 
   card.append(cardHeading, orders, gap, reserve, deploy)
-  panel.append(heading, card)
+  panel.append(heading, card, back)
   mount.append(backdrop)
   // Focused, so the keyboard alone can start the mission — and so the player's
   // next click does not go to the canvas underneath by accident.
@@ -278,13 +345,36 @@ export function createBriefing(mount: HTMLElement, options: BriefingOptions): Br
    * deploys ONCE rather than being handled by a button listener and then again
    * on the way up. Two handlers with a `stopPropagation` between them would do
    * the same thing and leave the next reader working out which one fired.
+   *
+   * SO THE SECOND BUTTON HAD TO BE ROUTED HERE, AND NOT GIVEN A LISTENER OF ITS
+   * OWN (ticket 059). THIS IS THE SHARP EDGE OF THAT TICKET. A `back` with its
+   * own `click` handler would fire it AND THEN bubble into this one, so a single
+   * press on BACK TO BASE would go back to base and immediately deploy — in that
+   * order, both commands accepted by the chart, and the player would land in a
+   * mission he pressed Back to avoid. Adding `stopPropagation` to that handler
+   * would fix it and would put the screen's behaviour in two places that have to
+   * agree; asking WHERE THE CLICK CAME FROM keeps the one-listener shape the
+   * comment above is about.
+   *
+   * `contains` RATHER THAN `=== back`, because a click lands on whatever is
+   * under the cursor — for a button with text that is often the text node or an
+   * inline child, not the button element. `event.target === back` would be true
+   * for a press on the button's padding and false for a press on its letters,
+   * which is a bug that works when you test it and fails when you use it.
    */
-  backdrop.addEventListener('click', () => {
+  backdrop.addEventListener('click', (event) => {
     // The same flag as the removal: `dispose` detaches the backdrop but does not
     // drop this listener, and a second deploy costs an entire Three.js scene —
     // which is exactly what the runner refuses, but a screen that fired twice
     // would be relying on it to.
     if (done) return
+    const target = event.target
+    if (target instanceof Node && back.contains(target)) {
+      // The screen is NOT torn down here either — the router reconciles from
+      // `runner.screen()`, and a refused move must leave the card up.
+      options.onBackToBase()
+      return
+    }
     // The screen is NOT torn down here. The router reconciles from
     // `runner.screen()` after the command, so a refused deploy leaves the card
     // up rather than leaving the player with no screen at all.
