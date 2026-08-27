@@ -107,14 +107,16 @@ interface ManifestProp extends ManifestFrame {
   readonly cell: Cell
 }
 /**
- * The tileable jungle floor (ticket 009c).
+ * One tileable ground texture (ticket 009c; three of them since ticket 034).
  *
- * Deliberately NOT in the atlas: it is the one image that has to wrap, and a
+ * Deliberately NOT in the atlas: these are the images that have to wrap, and a
  * packed rect cannot — `RepeatWrapping` wraps the whole texture, so a tiling
- * source must own its own image. Optional in the type because a manifest
- * emitted before ticket 004's floor pass has no such entry.
+ * source must own its own image. The record is optional in the type because a
+ * manifest emitted before ticket 034 has `floor` instead and no `ground` at all;
+ * `loadGroundTextures` turns that into a named boot failure rather than a
+ * `undefined.file` read.
  */
-interface ManifestFloor {
+interface ManifestGround {
   readonly file: string
   readonly width: number
   readonly height: number
@@ -128,7 +130,7 @@ export interface SpriteManifest {
   readonly atlas: { readonly file: string; readonly width: number; readonly height: number }
   readonly units: Readonly<Record<string, ManifestUnit>>
   readonly props: Readonly<Record<string, ManifestProp>>
-  readonly floor?: ManifestFloor
+  readonly ground?: Readonly<Record<string, ManifestGround | undefined>>
 }
 
 /* --------------------------------------------------------------- world sizes */
@@ -379,8 +381,9 @@ function resolve(
 /**
  * Resolve a filename declared in the manifest against the manifest's own URL.
  *
- * Shared with the floor loader: that `atlas.file` and `floor.file` stay bare
- * filenames is the manifest's business, not any caller's.
+ * Shared with the ground-texture loader: that `atlas.file` and every
+ * `ground.*.file` stay bare filenames is the manifest's business, not any
+ * caller's.
  */
 export function resolveAssetUrl(file: string, manifestUrl: string): string {
   return new URL(file, new URL(manifestUrl, window.location.href)).href
@@ -390,9 +393,9 @@ export function resolveAssetUrl(file: string, manifestUrl: string): string {
  * Fetch and validate the sprite manifest.
  *
  * Split out from `loadSpriteAtlas` for ticket 009c: the manifest now describes
- * two independent GPU resources — the packed atlas and the tileable floor — and
- * fetching it twice to build them would put a redundant round trip in front of
- * the first frame.
+ * independent GPU resources — the packed atlas and the tileable ground
+ * textures — and fetching it once per resource would put redundant round trips
+ * in front of the first frame.
  *
  * `manifestUrl` is relative on purpose, like the level URL: `vite.config.ts`
  * sets `base: './'`, so the built page may be served from any path.

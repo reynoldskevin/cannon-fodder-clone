@@ -35,7 +35,8 @@ import {
   type SpriteManifest,
   type UnitVisual,
 } from '../render/sprite-atlas'
-import { FloorTextureError, loadFloorTexture } from '../render/floor-texture'
+import { GroundTextureError, loadGroundTextures } from '../render/ground-texture'
+import type { GroundSurface } from '../core/view/ground-surface'
 import { isEditableTarget } from '../input/editable-target'
 import { PanController } from '../input/pan-controller'
 import { PointerController } from '../input/pointer-controller'
@@ -209,25 +210,27 @@ async function fetchVisual(manifest: SpriteManifest, url: string): Promise<UnitV
 }
 
 /**
- * Load the tiling jungle floor (ticket 009c).
+ * Load the tiling ground textures (ticket 009c; three of them since 034).
  *
- * A missing floor texture stops the boot for the same reason a missing atlas
+ * A missing ground texture stops the boot for the same reason a missing atlas
  * does: the alternative is a map whose terrain is untextured or black, which is
- * the silent, plausible-looking failure the overlay exists to prevent. The
- * terrain constructor requires the texture, so this is enforced by the types as
- * well as by the boot order.
+ * the silent, plausible-looking failure the overlay exists to prevent. And no
+ * texture falls back to another — a river drawn as jungle floor would be the
+ * plausible-looking failure rather than the visible one. The terrain constructor
+ * requires all three, so this is enforced by the types as well as by the boot
+ * order.
  */
-async function fetchFloor(
+async function fetchGround(
   manifest: SpriteManifest,
   url: string,
   maxAnisotropy: number,
-): Promise<THREE.Texture> {
+): Promise<Record<GroundSurface, THREE.Texture>> {
   try {
-    return await loadFloorTexture(manifest, url, maxAnisotropy)
+    return await loadGroundTextures(manifest, url, maxAnisotropy)
   } catch (cause) {
-    if (cause instanceof FloorTextureError) {
+    if (cause instanceof GroundTextureError) {
       throw new BootError(
-        'The jungle floor texture could not be loaded',
+        'The ground textures could not be loaded',
         cause.detail,
         cause.technical,
       )
@@ -333,9 +336,9 @@ async function boot(): Promise<void> {
   const levels = await Promise.all(
     levelNames.map((name) => fetchLevel(`${LEVELS_DIR}/${name}.json`)),
   )
-  const [visual, floor] = await Promise.all([
+  const [visual, ground] = await Promise.all([
     fetchVisual(manifest, SPRITES_URL),
-    fetchFloor(manifest, SPRITES_URL, renderer.capabilities.getMaxAnisotropy()),
+    fetchGround(manifest, SPRITES_URL, renderer.capabilities.getMaxAnisotropy()),
   ])
 
   const firstLevel = levels[0]
@@ -398,7 +401,7 @@ async function boot(): Promise<void> {
    * reference. One value means "swap the level" is one assignment and one
    * disposal, rather than six that a later edit can forget one of.
    *
-   * WHAT IS NOT IN IT: the atlas, the floor texture and the HUD, which are
+   * WHAT IS NOT IN IT: the atlas, the ground textures and the HUD, which are
    * loaded once for the page and outlive any level.
    */
   let stage = buildStage(firstLevel)
@@ -413,7 +416,7 @@ async function boot(): Promise<void> {
   }
 
   function buildStage(level: LevelData): Stage {
-    const built = SceneBuilder.build(level, visual, floor, elevation, (heightAt) =>
+    const built = SceneBuilder.build(level, visual, ground, elevation, (heightAt) =>
       session.renderEntities(heightAt),
     )
     // Sized from the buffer's own capacity, which is what lets the geometry be
@@ -453,7 +456,7 @@ async function boot(): Promise<void> {
   /**
    * Release the GPU resources and window listeners a stage OWNS.
    *
-   * Not the atlas visual and not the floor texture: they are passed in to every
+   * Not the atlas visual and not the ground textures: they are passed in to every
    * stage and outlive all of them, so they are freed by `teardown` instead.
    */
   function disposeStage(old: Stage): void {
@@ -754,7 +757,7 @@ async function boot(): Promise<void> {
      * Release the mission that is ending.
      *
      * WHAT A MISSION OWNS HERE IS THE SESSION, THE TRACERS AND THE POINTER — NOT
-     * THE STAGE. The terrain, the atlas and the floor stay up behind the Debrief
+     * THE STAGE. The terrain, the atlas and the ground stay up behind the Debrief
      * and Boot Hill; disposing them here would leave nothing to come back to and
      * a black canvas behind both. The stage is swapped by `startMission` when the
      * campaign moves to a DIFFERENT level, and freed for good by `teardown()`
@@ -883,7 +886,7 @@ async function boot(): Promise<void> {
     // Owned here, not by the terrain or the entity renderer: both are loaded
     // once for the session and outlive any single level (ticket 020), so they
     // are freed with the session and not with the stage that happens to be up.
-    floor.dispose()
+    for (const texture of Object.values(ground)) texture.dispose()
     visual.dispose()
   }
 

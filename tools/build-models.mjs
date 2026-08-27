@@ -2,10 +2,10 @@
 /**
  * tools/build-models — the offline sprite pipeline (ticket 004).
  *
- * Reads `assets/source/sprites/` (the soldier sheets, the props and the floor
- * tile) and writes `public/generated/sprites/{atlas.png, floor.png,
- * sprites.manifest.json}`. The game loads only those; it never slices a sheet
- * at runtime.
+ * Reads `assets/source/sprites/` (the soldier sheets, the props and the three
+ * tileable ground textures) and writes `public/generated/sprites/{atlas.png,
+ * floor.png, water.png, bridge.png, sprites.manifest.json}`. The game loads
+ * only those; it never slices a sheet at runtime.
  *
  * The name is historical: the plan specced voxelisation here. The sprites are
  * drawn at the camera's own 55° angle and the camera never rotates, so a
@@ -43,7 +43,7 @@ const { buildSprites, SpritegenError, DIRECTIONS } = await import('./spritegen/i
 const kb = (path) => `${(statSync(path).size / 1024).toFixed(0)} KB`
 
 try {
-  const { manifest, atlasPath, manifestPath, floorPath, matteDecisions } = buildSprites({
+  const { manifest, atlasPath, manifestPath, groundPaths, matteDecisions } = buildSprites({
     sourceDir,
     outDir,
   })
@@ -62,10 +62,12 @@ try {
       `animations x ${DIRECTIONS.length} directions), ` +
       `${Object.keys(manifest.props).length} props`,
   )
-  console.log(
-    `  floor ${manifest.floor.width}x${manifest.floor.height} kept out of the atlas so it ` +
-      `still tiles (${kb(floorPath)})`,
-  )
+  for (const [name, entry] of Object.entries(manifest.ground)) {
+    console.log(
+      `  ground/${name} ${entry.width}x${entry.height} kept out of the atlas so it ` +
+        `still tiles (${kb(groundPaths[name])})`,
+    )
+  }
   console.log(`  manifest ${kb(manifestPath)} -> ${manifestPath} (rects are ${manifest.origin} origin, y-down)`)
 
   // The de-matte heuristic decides per image whether to bleed opaque colour

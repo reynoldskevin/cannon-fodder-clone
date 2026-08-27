@@ -15,12 +15,19 @@
  * ends). Hidden interior walls are never emitted, which is what keeps a
  * mostly-flat map cheap while blocked tiles still read as solid raised blocks.
  *
- * TICKET 009C — THE JUNGLE FLOOR. Tops are no longer flat colour: they sample
- * the tileable `floor.png` through world-space UVs and take their per-tile
- * colour as a TINT over it (see `floorTint` below). Skirts are not textured at
- * all and keep the flat shaded colour they always had — see `SIDE_MATERIAL`.
- * That is two materials, so the mesh carries two geometry groups and costs two
- * draw calls instead of one; still one geometry, still built once at load.
+ * TICKET 009C — THE JUNGLE FLOOR. Tops are no longer flat colour: they sample a
+ * tileable texture through world-space UVs and take their per-tile colour as a
+ * TINT over it (see `groundTint` in `core/view/ground-tint`). Skirts are not
+ * textured at all and keep the flat shaded colour they always had — see
+ * `SIDE_MATERIAL_NOTE`.
+ *
+ * TICKET 034 — THREE GROUND TEXTURES. Water and the bridge sample their own art
+ * instead of the jungle floor tinted blue and brown. A geometry group is how one
+ * geometry addresses more than one material and groups must be CONTIGUOUS, so
+ * the index buffer is now four concatenated lists — jungle tops, water tops,
+ * bridge tops, skirts — over the same single vertex buffer. Four draw calls for
+ * the whole terrain instead of two; still ONE geometry, still built once at load,
+ * still nothing allocated per frame.
  */
 
 import * as THREE from 'three'
@@ -29,6 +36,8 @@ import { FLOOR_REPEAT_WORLD_UNITS, floorUv } from '../core/view/floor-uv'
 import { TILE_WORLD_SIZE, tileToWorld } from '../core/view/projection'
 import { TERRAIN_SKIRT_FLOOR } from '../core/view/relief'
 import { CANOPY_INTERIOR_COLOUR, tileStyle } from '../core/view/terrain-style'
+import { GROUND_SURFACES, groundSurfaceFor, type GroundSurface } from '../core/view/ground-surface'
+import { TINT_EXPOSURE, groundTint } from '../core/view/ground-tint'
 import { CANOPY_TILE_ID, canopyDepth } from '../core/render-state/scenery'
 
 /**
@@ -42,118 +51,13 @@ const SKIRT_FLOOR = TERRAIN_SKIRT_FLOOR
 const SIDE_SHADE = 0.62
 
 /**
- * Mean colour of `floor.png` in LINEAR space, measured off the asset:
+ * Geometry-group material slots: one per ground texture, then the untextured
+ * skirts.
  *
- *     node -e "const {PNG}=require('pngjs'),fs=require('fs');
- *       const p=PNG.sync.read(fs.readFileSync('public/generated/sprites/floor.png'));
- *       const lin=v=>{v/=255;return v<=0.04045?v/12.92:((v+0.055)/1.055)**2.4};
- *       let a=[0,0,0];for(let i=0;i<p.data.length;i+=4)for(let c=0;c<3;c++)a[c]+=lin(p.data[i+c]);
- *       console.log(a.map(v=>(v/(p.width*p.height)).toFixed(4)))"
- *
- * It matters because the floor is DARK — luminance 0.061 linear, a deep olive —
- * and multiplying it by the old vertex colours unchanged would have dropped the
- * whole map to about a fifth of the brightness ticket 009 tuned. The tint has to
- * be a gain, and the gain has to be computed against this number. Hardcoded
- * rather than measured at runtime: reading it back from the GPU would mean a
- * canvas round trip on boot to recover a constant that only changes when the
- * art does.
+ * The tops are laid out in `GROUND_SURFACES` order so the slot for a surface is
+ * its index in that list — one list, no second table to keep in step.
  */
-const FLOOR_MEAN_LINEAR = { r: 0.0693, g: 0.0642, b: 0.0093 } as const
-
-/** Rec. 709 luminance — the same weighting three uses internally. */
-const luminance = (r: number, g: number, b: number): number => 0.2126 * r + 0.7152 * g + 0.0722 * b
-
-const FLOOR_MEAN_LUMINANCE = luminance(FLOOR_MEAN_LINEAR.r, FLOOR_MEAN_LINEAR.g, FLOOR_MEAN_LINEAR.b)
-
-/**
- * How much of a tile's own HUE is pushed onto the floor texture, 0..1.
- *
- * 0 leaves the texture's own colour alone and only matches its brightness to the
- * tile; 1 forces the tile's average colour to equal ticket 009's flat colour
- * exactly. 1 is wrong here: the floor's blue channel is nearly empty (0.009
- * linear), so an exact match needs an 8x blue gain, and that turns every grey
- * pebble in the art violet and drains the greens.
- *
- * 0.35 is the compromise that shipped. It is enough that canopy tiles pull the
- * floor visibly greener and deeper, and that rock tiles pull it paler and
- * greyer, while the ferns and leaf litter keep their painted colour on all of
- * them. Below about 0.2 the terrain types stop separating by hue and rely on
- * brightness alone; above about 0.5 the rock tiles go grey enough that the
- * jungle art stops reading as jungle on them.
- */
-const TINT_HUE_STRENGTH = 0.35
-
-/**
- * What fraction of ticket 009's flat albedo the textured floor reproduces.
- *
- * 1.0 makes the floor's MEAN colour equal the old flat colour exactly — which
- * sounds like the obviously correct answer and is not. The floor has a wide
- * dynamic range (deep soil against sunlit fronds) where the flat colour had
- * none, so a gain that lifts its mean to 0.288 linear takes the fronds to about
- * 1.9 before the sun is even applied. Everything above white clips, the greens
- * flatten into a pale yellow wash, and the map stops looking like jungle floor
- * and starts looking like straw. That is exactly what 1.0 rendered.
- *
- * 0.5 is the value that keeps the fronds inside the range once the sun and the
- * hemisphere fill are applied, so the floor arrives on screen looking like the
- * art it was painted as: deep soil, mossy green, orange leaf litter. It costs
- * half a stop of overall map brightness against ticket 009, which is a fair
- * trade and arguably an improvement — the old map was a bright green that no
- * jungle floor is.
- *
- * It is applied to the SKIRTS as well, so the tops/sides relationship is
- * untouched by it.
- */
-const TINT_EXPOSURE = 0.5
-
-/**
- * The tint a tile's flat colour becomes once the floor texture is multiplied in.
- *
- * The material computes `texture * vertexColour`, so the vertex colour is no
- * longer "the colour of the tile" — it is "what the floor has to be multiplied
- * by to LOOK like that tile". Two components:
- *
- *   gain — a scalar that lifts the floor's mean luminance to the tile's, so the
- *     textured map has exactly the brightness ticket 009 chose. This is why
- *     canopy still reads darker than grass and blocked still reads distinct from
- *     walkable: the hierarchy is preserved by construction, not by eye.
- *   correction — the per-channel ratio between the tile's hue and the floor's,
- *     mixed in at `TINT_HUE_STRENGTH`.
- *
- * The result is renormalised so the mixing cannot drift the luminance it was the
- * whole point of preserving. Values above 1 are expected and fine: this is a
- * linear float multiplier, not a colour, and it is only clamped at output.
- */
-function floorTint(colour: THREE.Color, out: THREE.Color): THREE.Color {
-  const tileLuminance = luminance(colour.r, colour.g, colour.b)
-  if (tileLuminance <= 0) return out.setRGB(0, 0, 0)
-
-  const target = tileLuminance * TINT_EXPOSURE
-  const gain = target / FLOOR_MEAN_LUMINANCE
-  const mix = (tile: number, floor: number): number => {
-    // Both normalised to luminance 1 first, so this is hue and nothing else.
-    const correction = tile / tileLuminance / (floor / FLOOR_MEAN_LUMINANCE)
-    return 1 - TINT_HUE_STRENGTH + TINT_HUE_STRENGTH * correction
-  }
-
-  out.setRGB(
-    gain * mix(colour.r, FLOOR_MEAN_LINEAR.r),
-    gain * mix(colour.g, FLOOR_MEAN_LINEAR.g),
-    gain * mix(colour.b, FLOOR_MEAN_LINEAR.b),
-  )
-
-  // Renormalise: `mix` preserves hue direction but not luminance exactly.
-  const achieved = luminance(
-    out.r * FLOOR_MEAN_LINEAR.r,
-    out.g * FLOOR_MEAN_LINEAR.g,
-    out.b * FLOOR_MEAN_LINEAR.b,
-  )
-  return achieved > 0 ? out.multiplyScalar(target / achieved) : out
-}
-
-/** Geometry-group material slots: tops sample the floor, skirts do not. */
-const MATERIAL_TOP = 0
-const MATERIAL_SIDE = 1
+const MATERIAL_SIDE = GROUND_SURFACES.length
 
 interface Vec3 {
   x: number
@@ -179,18 +83,20 @@ export class TerrainRenderer {
   private readonly size: { readonly w: number; readonly h: number }
 
   /**
-   * `floor` is the tileable jungle texture, required rather than optional: a
-   * terrain built without it would be the flat-colour map ticket 009c exists to
-   * replace, and silently falling back to it is exactly the "looks plausible, is
-   * wrong" outcome the boot error overlay exists to prevent. The caller loads it
-   * and reports the failure.
+   * `ground` carries all three tileable textures, required rather than optional:
+   * a terrain built without them would be the flat-colour map ticket 009c exists
+   * to replace, and silently falling back to the jungle for a missing water or
+   * bridge image is exactly the "looks plausible, is wrong" outcome the boot
+   * error overlay exists to prevent. The caller loads them and reports the
+   * failure.
    */
-  constructor(level: LevelData, floor: THREE.Texture) {
+  constructor(level: LevelData, ground: Record<GroundSurface, THREE.Texture>) {
     this.size = level.size
     const { w, h } = level.size
 
     this.heights = new Float32Array(w * h)
     const colours = new Array<THREE.Color>(w * h)
+    const surfaces = new Array<GroundSurface>(w * h)
 
     const fallbackColour = new THREE.Color('#ff00ff')
     for (let y = 0; y < h; y += 1) {
@@ -214,6 +120,10 @@ export class TerrainRenderer {
         // only thing distinguishing the inside of a forest from its edge.
         this.heights[index] = style.height
         colours[index] = new THREE.Color(depth > 0 ? CANOPY_INTERIOR_COLOUR : style.colour)
+        // Which texture this tile's top samples. A decision taken in
+        // `core/view`, where it is unit tested; all the renderer does with it is
+        // choose an index list.
+        surfaces[index] = groundSurfaceFor(id)
       }
     }
 
@@ -221,10 +131,12 @@ export class TerrainRenderer {
     const normals: number[] = []
     const vertexColours: number[] = []
     const uvs: number[] = []
-    // Two index lists over ONE vertex buffer: tops sample the floor texture,
-    // skirts do not, and a group is how a single geometry addresses two
-    // materials. Concatenated below, tops first, so the groups are contiguous.
-    const topIndices: number[] = []
+    // FOUR index lists over ONE vertex buffer: a top samples one of three ground
+    // textures, a skirt samples none, and a group is how a single geometry
+    // addresses more than one material. Concatenated below in this order, so the
+    // groups are contiguous — which is the only layout `addGroup` can describe.
+    const topIndices = {} as Record<GroundSurface, number[]>
+    for (const surface of GROUND_SURFACES) topIndices[surface] = []
     const sideIndices: number[] = []
 
     const half = TILE_WORLD_SIZE / 2
@@ -236,6 +148,7 @@ export class TerrainRenderer {
         const index = y * w + x
         const top = this.heights[index] ?? 0
         const colour = colours[index] ?? fallbackColour
+        const surface = surfaces[index] ?? 'jungle'
 
         const centre = tileToWorld(x, y, level.size)
         const x0 = centre.x - half
@@ -243,17 +156,20 @@ export class TerrainRenderer {
         const z0 = centre.z - half
         const z1 = centre.z + half
 
-        // Top face. UVs come from the CORNERS' world positions, so the pattern
-        // runs straight through the tile and into its neighbours — the tile grid
-        // leaves no trace in the texture at all.
+        // Top face. UVs come from the CORNERS' world positions — for EVERY
+        // surface, not just the jungle — so the pattern runs straight through the
+        // tile and into its neighbours and the tile grid leaves no trace in the
+        // texture at all. It is what stops a run of river reading as a row of
+        // squares.
+        const tint = groundTint(surface, colour)
         this.pushQuad(
-          { positions, normals, colours: vertexColours, uvs, indices: topIndices },
+          { positions, normals, colours: vertexColours, uvs, indices: topIndices[surface] },
           { x: x0, y: top, z: z0 },
           { x: x1, y: top, z: z0 },
           { x: x1, y: top, z: z1 },
           { x: x0, y: top, z: z1 },
           { x: 0, y: 1, z: 0 },
-          floorTint(colour, topTint),
+          topTint.setRGB(tint.r, tint.g, tint.b),
           true,
         )
 
@@ -308,13 +224,28 @@ export class TerrainRenderer {
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(vertexColours, 3))
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
-    geometry.setIndex([...topIndices, ...sideIndices])
-    geometry.addGroup(0, topIndices.length, MATERIAL_TOP)
-    geometry.addGroup(topIndices.length, sideIndices.length, MATERIAL_SIDE)
+    // One index buffer, the four lists laid end to end, and one group per list.
+    // A group is a (start, count) RANGE into that buffer, so the lists have to be
+    // contiguous and the running offset is what makes them so.
+    // Appended one at a time rather than spread: the lists run to tens of
+    // thousands of entries and `push(...list)` passes each as an argument.
+    let index: number[] = []
+    let start = 0
+    for (const surface of GROUND_SURFACES) {
+      const list = topIndices[surface]
+      index = index.concat(list)
+      // A surface with no tiles on this map still gets a zero-length group, so
+      // the slot numbering matches `materials` on every level.
+      geometry.addGroup(start, list.length, GROUND_SURFACES.indexOf(surface))
+      start += list.length
+    }
+    index = index.concat(sideIndices)
+    geometry.addGroup(start, sideIndices.length, MATERIAL_SIDE)
+    geometry.setIndex(index)
     geometry.computeBoundingSphere()
     this.geometry = geometry
 
-    this.materials = TerrainRenderer.buildMaterials(floor)
+    this.materials = TerrainRenderer.buildMaterials(ground)
 
     this.mesh = new THREE.Mesh(geometry, [...this.materials])
     this.mesh.name = `terrain:${level.name}`
@@ -339,12 +270,15 @@ export class TerrainRenderer {
   dispose(): void {
     this.geometry.dispose()
     for (const material of this.materials) material.dispose()
-    // The floor texture is NOT disposed here: it is loaded once at boot and
-    // owned by the caller, which may build a second level from it (ticket 020).
+    // The ground textures are NOT disposed here: they are loaded once at boot
+    // and owned by the caller, which may build a second level from them
+    // (ticket 020, and ticket 024 fixing exactly this ownership bug for the
+    // sprite atlas).
   }
 
   /**
-   * The two terrain materials, in `MATERIAL_TOP` / `MATERIAL_SIDE` order.
+   * The terrain materials: one per ground texture in `GROUND_SURFACES` order,
+   * then `MATERIAL_SIDE`.
    *
    * SIDE_MATERIAL_NOTE — WHY THE SKIRTS ARE NOT TEXTURED. A skirt is a vertical
    * face. Sampling a top-down floor on it means either stretching one row of the
@@ -360,11 +294,20 @@ export class TerrainRenderer {
    * construction.
    *
    * The cost is one extra draw call for the whole terrain, which is not a cost.
+   *
+   * The skirts keep ONE flat material across every surface, water included. A
+   * vertical face of the river is the bank it is cut into, not the water, and it
+   * is what makes the river read as sunk below the ground rather than painted on
+   * it.
    */
-  private static buildMaterials(floor: THREE.Texture): readonly THREE.MeshStandardMaterial[] {
+  private static buildMaterials(
+    ground: Record<GroundSurface, THREE.Texture>,
+  ): readonly THREE.MeshStandardMaterial[] {
     const common = { vertexColors: true, roughness: 0.95, metalness: 0 } as const
     const materials: THREE.MeshStandardMaterial[] = []
-    materials[MATERIAL_TOP] = new THREE.MeshStandardMaterial({ ...common, map: floor })
+    for (const [slot, surface] of GROUND_SURFACES.entries()) {
+      materials[slot] = new THREE.MeshStandardMaterial({ ...common, map: ground[surface] })
+    }
     materials[MATERIAL_SIDE] = new THREE.MeshStandardMaterial({ ...common })
     return materials
   }
