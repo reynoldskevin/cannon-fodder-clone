@@ -1375,24 +1375,15 @@ async function boot(): Promise<void> {
           // flash says who fired it, and a miss fires both — see `ShotFired.hit`.
           effects.add({ kind: 'muzzle', x: event.originX, z: event.originZ, scale: 1 }, elapsed)
         }
-        // A BURST AND A KICK, both from the one event and neither asking the
-        // world anything: `Explosion` already carries the position it actually
-        // went off at and the radius it went off with (ticket 015). There was a
-        // scar between them until ticket 047 — a dark quad stamped on the ground
-        // for 45 s, which read as a coloured square rather than as scorched
-        // earth.
+        // A KICK, AND NOTHING DRAWN AT ALL (ticket 054).
+        //
+        // THREE THINGS USED TO HANG OFF THIS ONE EVENT and all three were
+        // coloured quads. A scar stamped on the ground for 45 s went in 047; the
+        // burst — an orange rectangle drawn at the blast's own radius, which read
+        // as a debug overlay because that is literally what it was — goes here.
+        // What a detonation now does is shake the camera, play its sound, and
+        // leave the men it killed lying where they fell (ticket 049).
         else if (onMission && event.type === 'Explosion') {
-          // SCALED BY THE BLAST'S OWN RADIUS, so a rocket and a grenade are
-          // visibly different sizes and the effect covers the ground the
-          // ordnance actually damaged rather than a number chosen here.
-          // AND AT THE HEIGHT IT WENT OFF AT. A grenade whose fuse expires before
-          // impact detonates in mid-air, and `ExplosionEvent` says in capitals
-          // that an airburst reported on the ground hides the whole mechanic —
-          // so the one thing the event goes out of its way to carry is drawn.
-          effects.add(
-            { kind: 'burst', x: event.x, y: event.y, z: event.z, scale: event.radiusTiles },
-            elapsed,
-          )
           // THE CALL `camera-rig.ts` HAS BEEN WAITING FOR SINCE TICKET 013. The
           // distance is measured from where the camera is looking NOW rather
           // than from the level's centre: a blast under the squad the player is

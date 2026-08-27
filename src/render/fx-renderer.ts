@@ -101,11 +101,12 @@ interface FxStyle {
   /**
    * Half the quad's edge, in world units, at `scale` 1. A tile is 1.
    *
-   * HALF, because `Fx.scale` on a burst is the blast RADIUS the `Explosion`
-   * reported — so at a base of 1 the quad's half-edge is the radius itself and
-   * the effect covers the circle the ordnance actually damaged. Getting this the
-   * other way round would draw every blast at half the size it killed at, which
-   * teaches the player the wrong distance to stand at.
+   * HALF rather than the full edge, which mattered most for the burst ticket 054
+   * removed: `Fx.scale` on one was the blast RADIUS the `Explosion` reported, so
+   * at a base of 1 the quad's half-edge was the radius itself and the effect
+   * covered the circle the ordnance actually damaged. Getting it the other way
+   * round drew every blast at half the size it killed at, which taught the player
+   * the wrong distance to stand at. The convention stays for whatever is next.
    */
   readonly halfSize: number
   /**
@@ -124,8 +125,6 @@ interface FxStyle {
 const FX_STYLES: Record<FxKind, FxStyle> = {
   /** Hot white-yellow, roughly the muzzle of a standing man, and small. */
   muzzle: { r: 1, g: 0.92, b: 0.62, halfSize: 0.22, lift: 0.9, peakAlpha: 0.9 },
-  /** Fire. Sized from the blast radius itself — see `FxStyle.halfSize`. */
-  burst: { r: 1, g: 0.55, b: 0.18, halfSize: 1, lift: 0.35, peakAlpha: 1 },
 }
 
 /** Vertices one effect costs: two triangles, unindexed. */

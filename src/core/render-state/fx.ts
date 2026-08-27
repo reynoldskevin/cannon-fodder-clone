@@ -46,19 +46,21 @@
  * without being handed a list that has drifted from the type. Adding a kind here
  * is a compile error everywhere it has to be handled, which is the point.
  */
-export const FX_KINDS = ['muzzle', 'burst'] as const
+export const FX_KINDS = ['muzzle'] as const
 
 export type FxKind = (typeof FX_KINDS)[number]
 
 /**
  * How long each kind stays on screen, in real seconds.
  *
- * PER KIND, NOT ONE SHARED NUMBER. A muzzle flash is a blink at 0.05 s and a
- * detonation hangs for 0.4; one lifetime tuned for either makes the other look
- * broken, and it reads as "the effects are bad" rather than as a number somebody
- * chose. The spread was wider while the 45-second scorch mark (ticket 047) and
- * the 1.2-second death puff (051) were here, and the argument does not depend on
- * how many kinds there are — eight times is still more than one number serves.
+ * PER KIND, AND CURRENTLY ONE KIND. The `Record` is kept over a bare constant
+ * because the argument for it survives having emptied out: a muzzle flash is a
+ * blink at 0.05 s, and every longer-lived effect this game has had — the
+ * 45-second scorch mark (ticket 047), the 1.2-second death puff (051), the
+ * 0.4-second detonation (054) — wanted its own number rather than that one. A
+ * constant here would have to become a table again the moment a second kind
+ * arrives, and the shape is what makes adding one a compile error until it is
+ * given a lifetime.
  */
 export const FX_LIFETIME_SECONDS: Record<FxKind, number> = {
   /**
@@ -71,14 +73,6 @@ export const FX_LIFETIME_SECONDS: Record<FxKind, number> = {
    * fall between two flashes and miss them entirely.
    */
   muzzle: 0.05,
-  /**
-   * The detonation itself.
-   *
-   * RAISE IT and the blast lingers over the bodies it made, which hides the very
-   * thing the player threw it to see; LOWER IT and a grenade at the edge of the
-   * screen is over before the eye reaches it.
-   */
-  burst: 0.4,
 }
 
 /**
@@ -106,12 +100,18 @@ export interface FxSpawn {
    * HEIGHT ABOVE THE GROUND, in world units. Defaults to nothing, which is
    * "wherever the terrain is under it" — the right answer for almost everything.
    *
-   * IT EXISTS FOR AIRBURSTS. `ExplosionEvent` carries a `y` and says why in
-   * capitals: a fuse that expires before impact detonates the round in mid-air,
-   * and an airburst reported on the ground would hide the whole mechanic. The
-   * grenade's fuse makes that reachable in ordinary play, so an FX layer that
-   * dropped this would draw the one thing the event goes out of its way to
-   * report as if it had never happened.
+   * IT EXISTS FOR AIRBURSTS, AND HAS NO PRODUCER SINCE TICKET 054 removed the
+   * burst — the only effect that ever set it. Kept rather than deleted: the
+   * plumbing is one addition per effect per frame, it is covered, and the day
+   * anything airborne is drawn again the alternative is re-fixing the defect it
+   * was added for.
+   *
+   * `ExplosionEvent` carries a `y` and says why in capitals: a fuse that expires
+   * before impact detonates the round in mid-air, and an airburst reported on
+   * the ground would hide the whole mechanic. The grenade's fuse makes that
+   * reachable in ordinary play, so an FX layer that dropped this would draw the
+   * one thing the event goes out of its way to report as if it had never
+   * happened.
    *
    * RELATIVE, NOT ABSOLUTE. The renderer samples the terrain under the effect
    * and adds this to it, so a burst over a hillside sits above the hillside
@@ -216,7 +216,7 @@ export function createFxBuffer(options: FxBufferOptions = {}): FxBuffer {
   // never `undefined` for `noUncheckedIndexedAccess` to make everybody prove.
   const ring: Entry[] = []
   for (let i = 0; i < capacity; i += 1) {
-    ring.push({ id: 0, kind: 'burst', x: 0, z: 0, y: 0, scale: 1, spawnedAt: 0 })
+    ring.push({ id: 0, kind: 'muzzle', x: 0, z: 0, y: 0, scale: 1, spawnedAt: 0 })
   }
 
   /** Total effects ever added. Doubles as the id source, so ids never repeat. */
