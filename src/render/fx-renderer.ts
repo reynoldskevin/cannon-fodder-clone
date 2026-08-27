@@ -126,12 +126,6 @@ const FX_STYLES: Record<FxKind, FxStyle> = {
   muzzle: { r: 1, g: 0.92, b: 0.62, halfSize: 0.22, lift: 0.9, peakAlpha: 0.9 },
   /** Fire. Sized from the blast radius itself — see `FxStyle.halfSize`. */
   burst: { r: 1, g: 0.55, b: 0.18, halfSize: 1, lift: 0.35, peakAlpha: 1 },
-  /**
-   * A dull red puff at chest height. Deliberately not bright: it has to be
-   * findable by an eye that was looking elsewhere without competing with the
-   * detonation that may have caused it.
-   */
-  death: { r: 0.72, g: 0.12, b: 0.1, halfSize: 0.45, lift: 0.55, peakAlpha: 0.75 },
 }
 
 /** Vertices one effect costs: two triangles, unindexed. */

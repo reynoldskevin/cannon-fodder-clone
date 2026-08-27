@@ -1336,7 +1336,7 @@ async function boot(): Promise<void> {
             : null
         if (cue !== null) {
           /**
-           * A DEATH IS PLACED FROM THE CORPSE, exactly as its FX is.
+           * A DEATH IS PLACED FROM THE CORPSE.
            *
            * `UnitDiedEvent` reports `id`, `team` and the killer and NOT where he
            * fell, so `cueFor` cannot give the cue a position and correctly does
@@ -1344,9 +1344,13 @@ async function boot(): Promise<void> {
            * tile map played dead centre at full gain — louder than a rifle at
            * the player's feet, with the distance falloff never consulted at all.
            *
-           * The answer was already two branches below, where the FX layer looks
-           * the body up among this frame's drawables (ticket 025). The two now
-           * read the same lookup rather than one of them quietly doing without.
+           * THIS IS NOW THE ONLY READER OF THAT LOOKUP. The FX layer did the same
+           * thing two branches below to place its red puff (ticket 025), and the
+           * two deliberately shared the technique; ticket 051 deleted the puff,
+           * and the sound kept the lookup because the sound was always the half
+           * that needed it. A frame that ran no step produces no drawables, so an
+           * unplaceable death still falls back to an unpositioned cue rather than
+           * to the origin of the map.
            */
           const placed =
             cue.cue === 'death'
@@ -1401,16 +1405,6 @@ async function boot(): Promise<void> {
           stage.rig.addShake(
             shakeFor(Math.hypot(event.x - focus.x, event.z - focus.z), event.radiusTiles),
           )
-        }
-        // WHERE HE IS BEING DRAWN, not where the sim last had him. A death that
-        // cannot be placed — no corpse among the drawables, which a frame that
-        // ran no step cannot produce one of — draws nothing rather than putting a
-        // puff at the origin of the map.
-        else if (onMission && event.type === 'UnitDied') {
-          const body = drawables.find((entity) => entity.id === event.id)
-          if (body !== undefined) {
-            effects.add({ kind: 'death', x: body.x, z: body.z, scale: 1 }, elapsed)
-          }
         }
       }
       /**
