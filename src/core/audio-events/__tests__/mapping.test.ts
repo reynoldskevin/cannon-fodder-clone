@@ -82,6 +82,40 @@ describe('the cues a firefight actually makes', () => {
     expect(of('ShotFired')?.cue).toBe('rifle')
   })
 
+  it('and it is heard at the MUZZLE, not at the far end of its own tracer', () => {
+    /**
+     * `ShotFired` carries both endpoints. Panning from `targetX/targetZ` puts the
+     * report where the round LANDED — up to eight tiles from the man who pulled
+     * the trigger, and on the wrong side of the screen whenever he is shooting
+     * across it. A player locating a shooter by ear would be sent to the wrong
+     * place, which is worse than no panning at all. Swapping them survived the
+     * suite.
+     */
+    const request = of('ShotFired')
+    expect({ x: request?.x, z: request?.z }).toEqual({ x: 0, z: 0 })
+  })
+
+  it('and a weapon nobody has heard of still makes a sound', () => {
+    // `Weapon` is an open enum — ticket 036 added `enemy-rifle` without touching
+    // any union. A table that returned nothing for an unknown weapon would make
+    // the next weapon added silently mute, which is the failure the exhaustive
+    // `switch` above exists to prevent one level up.
+    const request = cueFor({
+      ...stamp,
+      type: 'ShotFired',
+      shooterId: 1,
+      targetId: null,
+      weapon: 'something-new',
+      originX: 2,
+      originZ: 3,
+      targetX: 4,
+      targetZ: 5,
+      hit: false,
+    })
+    expect(request).not.toBeNull()
+    expect(CUES.includes(request!.cue)).toBe(true)
+  })
+
   it('a detonation is the explosion, wherever it went off', () => {
     const request = of('Explosion')
     expect(request?.cue).toBe('explosion')

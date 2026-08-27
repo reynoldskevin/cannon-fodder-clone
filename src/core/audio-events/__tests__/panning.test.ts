@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { panFor, gainFor, AUDIO_REACH_TILES } from '../index'
+import { panFor, gainFor, AUDIO_REACH_TILES, CUE_IS_POSITIONAL, CUES } from '../index'
 
 /**
  * Ticket 027 — where a sound sits in the stereo field, and how loud it is.
@@ -103,5 +103,37 @@ describe('gain falls off with distance', () => {
     // the wrong answer to it — a cue that vanished would look like a missing
     // asset rather than a bad argument.
     expect(gainFor(-3)).toBe(gainFor(0))
+  })
+})
+
+describe('which cues are placed in the world at all', () => {
+  /**
+   * `CUE_IS_POSITIONAL` IS THE ENTIRE MECHANISM OF ACCEPTANCE CRITERION 6 — it
+   * decides both the pan and, in `src/audio`, whether a sample is downmixed to
+   * mono at decode. Nothing imported it, so flipping `victory` and `defeat` to
+   * positional left the suite green while putting the end of the mission in one
+   * ear and throwing away the stereo image of the only two cues that have one
+   * worth keeping.
+   */
+  it('a shot, a blast, a death and a chest happen somewhere', () => {
+    for (const cue of ['rifle', 'explosion', 'death', 'chest'] as const) {
+      expect({ cue, positional: CUE_IS_POSITIONAL[cue] }).toEqual({ cue, positional: true })
+    }
+  })
+
+  it('and winning and losing do not', () => {
+    // These are the only stereo files that keep their image. They are also the
+    // only cues that are about the MISSION rather than about a place in it.
+    expect(CUE_IS_POSITIONAL.victory).toBe(false)
+    expect(CUE_IS_POSITIONAL.defeat).toBe(false)
+  })
+
+  it('and every cue has an answer, so a new one cannot default silently', () => {
+    for (const cue of CUES) {
+      expect({ cue, decided: typeof CUE_IS_POSITIONAL[cue] === 'boolean' }).toEqual({
+        cue,
+        decided: true,
+      })
+    }
   })
 })

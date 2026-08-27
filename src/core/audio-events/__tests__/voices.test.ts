@@ -79,12 +79,69 @@ describe('past the cap the OLDEST is stolen, not the newest dropped', () => {
   })
 })
 
+describe('which voice is stolen, not merely that one was', () => {
+  it('the OLDEST goes, so the round that just went off is the one still playing', () => {
+    /**
+     * ACCEPTANCE CRITERION 5 NAMES THE OLDEST, and nothing was checking it:
+     * inverting the comparison so the NEWEST is stolen left the whole suite
+     * green. The existing cases only assert that a steal happened.
+     *
+     * Told apart by DURATION: the first voice is given a long one and the second
+     * a short one, so if the oldest really went, the survivor is still live at a
+     * time the first would also have been — and if the newest went, it is not.
+     */
+    const limiter = createVoiceLimiter({ globalCap: 1, perCueCap: 1 })
+    limiter.start('rifle', 0, 100)
+    limiter.start('rifle', 1, 2)
+    // Only the short second voice should be alive, and it ends at t = 3.
+    expect(limiter.liveCount(2.5)).toBe(1)
+    expect(limiter.liveCount(3.5)).toBe(0)
+  })
+
+  it('and the slot it hands back is the slot it claimed', () => {
+    /**
+     * `src/audio` stops the node in the returned slot. A limiter that always
+     * answered 0 would have it stop the wrong voice — cutting a live explosion
+     * short while the rifle it meant to steal played on — and returning a
+     * constant survived the suite.
+     */
+    const limiter = createVoiceLimiter({ globalCap: 3, perCueCap: 3 })
+    const slots = [
+      limiter.start('rifle', 0, 10).slot,
+      limiter.start('rifle', 0, 10).slot,
+      limiter.start('rifle', 0, 10).slot,
+    ]
+    expect(new Set(slots).size).toBe(3)
+    for (const slot of slots) {
+      expect({ slot, ok: Number.isInteger(slot) && slot >= 0 && slot < 3 }).toEqual({
+        slot,
+        ok: true,
+      })
+    }
+    // And a steal reuses the slot the oldest was in, rather than inventing one.
+    expect(slots).toContain(limiter.start('rifle', 1, 10).slot)
+  })
+})
+
 describe('the shipped caps are sane', () => {
   it('a per-cue cap below the global one, or it does nothing', () => {
     // A per-cue cap at or above the global cap can never bind, and the whole
     // measurement above would be unaddressed while looking addressed.
     expect(PER_CUE_VOICE_CAP).toBeLessThan(GLOBAL_VOICE_CAP)
     expect(PER_CUE_VOICE_CAP).toBeGreaterThan(0)
+  })
+
+  it('and a per-cue cap that can actually BIND, not merely be smaller', () => {
+    /**
+     * `< GLOBAL_VOICE_CAP` is satisfied by 15 against 16, which is a per-cue cap
+     * that never binds on any firefight this game can produce — the measurement
+     * at the top of this file would be unaddressed while looking addressed.
+     * Setting it to 15 survived the suite.
+     *
+     * Half the global cap is the loose bound: it has to leave room for several
+     * DIFFERENT cues at once, which is the whole reason it exists.
+     */
+    expect(PER_CUE_VOICE_CAP).toBeLessThanOrEqual(GLOBAL_VOICE_CAP / 2)
   })
 
   it('and enough headroom for a real firefight', () => {

@@ -23,6 +23,8 @@ import { ordnanceForHotkey } from '../core/armoury'
 import { createTracerBuffer } from '../core/render-state/tracers'
 import { createFxBuffer } from '../core/render-state/fx'
 import { shakeFor } from '../core/view/shake'
+import { cueFor } from '../core/audio-events'
+import { createAudioBus } from '../audio'
 import { createCampaignRunner, viewFor } from '../core/flow'
 import type { AdvanceResult, MissionHost, ViewId } from '../core/flow'
 import type { SquadMember } from '../core/campaign'
@@ -590,6 +592,27 @@ async function boot(): Promise<void> {
   const onSelectKey = (event: KeyboardEvent): void => {
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
     if (isEditableTarget(event.target)) return
+    /**
+     * M MUTES, AND IT IS THE ONLY WAY TO (ticket 027).
+     *
+     * `AudioBus` shipped `setMuted` and `setVolume` and a `localStorage` round
+     * trip for both, and NOTHING CALLED EITHER — so acceptance criterion 7
+     * ("master mute/volume persists across sessions") was satisfied by code that
+     * could not be reached. Adversarial review found it by grepping for the call
+     * sites and finding none.
+     *
+     * A key rather than a HUD control because the HUD is ticket 022's surface
+     * and this is not the ticket that redesigns it; M is the near-universal
+     * convention and costs no screen space. It rides `onSelectKey` because that
+     * handler already owns the bare-keydown, not-in-a-text-field contract, and a
+     * second `keydown` listener would be a second thing to remember to remove in
+     * `teardown` — which is exactly the leak the comment there warns about.
+     */
+    if (event.code === 'KeyM') {
+      event.preventDefault()
+      audio.setMuted(!audio.muted)
+      return
+    }
     const digit = /^Digit([1-9])$/.exec(event.code)?.[1]
     if (digit === undefined) return
     const ordnance = ordnanceForHotkey(digit)
@@ -640,6 +663,22 @@ async function boot(): Promise<void> {
   // The mission readout: roster, objectives, timer. It DECIDES nothing — every
   // value it shows is read off the session, which is where they are tested.
   const hud = createHud(mount)
+
+  /**
+   * The audio bus (ticket 027).
+   *
+   * ONE PER PAGE, NOT ONE PER MISSION — unlike the tracer and FX buffers above,
+   * and for the opposite reason. Those are stamped against `elapsed`, which
+   * `startMission` puts back to zero; the bus is stamped against the
+   * `AudioContext`'s own clock, which is monotonic for the life of the page and
+   * has no mission in it. Rebuilding it per mission would tear down and rebuild
+   * the graph — and re-decode 10.4 MB of samples — between every level.
+   *
+   * IT MAKES NO NOISE UNTIL THE PLAYER TOUCHES SOMETHING. The context is not
+   * constructed until the first gesture (see `src/audio/index.ts`), so this line
+   * costs the boot nothing and logs no autoplay warning.
+   */
+  const audio = createAudioBus()
 
   /**
    * The squad as the HUD lists it: every man the mission started with, alive or
@@ -958,6 +997,11 @@ async function boot(): Promise<void> {
     // from outside it.
     debug?.dispose()
     hud.dispose()
+    // Its own window listeners (the gesture it is waiting for), its own live
+    // sources and the audio hardware itself — none of which anything else here
+    // knows about. A leaked bus goes on playing the dead session's last voices
+    // over the fatal-error screen.
+    audio.dispose()
     // Cancels its pending timers as well as removing it, so a torn-down page has
     // nothing left to fire.
     hint?.dismiss()
@@ -1301,11 +1345,66 @@ async function boot(): Promise<void> {
        */
       const onMission = runner.screen() === 'Mission'
       const logging = onMission
+      /**
+       * WHERE THE EAR IS, for this frame's positional cues.
+       *
+       * The rig's yaw is zero, so `camera.right` is exactly half the visible
+       * world width along X and `rig.target` is the point the view is centred
+       * on — which is what `panFor` and `gainFor` want, and why neither needed a
+       * camera passed into `core`. Read ONCE per frame rather than per event: a
+       * volley is a dozen events against one camera position.
+       */
+      const focus = stage.rig.target
+      const listener = { x: focus.x, z: focus.z, halfWidth: stage.rig.camera.right }
       for (const event of session.events()) {
         // KEPT, NOT JUST READ (ticket 022a). The batch is the only channel out
         // of the sim and it is drained once; the campaign needs the whole
         // mission's worth at the end of it. See `missionLog`.
         if (logging) missionLog.push(event)
+        /**
+         * THE SOUND, OFF THE SAME DRAINED BATCH AS THE FX (ticket 027).
+         *
+         * `cueFor` decides which cue and where; `audio.play` decides nothing and
+         * skips a cue with no asset, a cue out of earshot, and everything at all
+         * before the first user gesture. It cannot throw, which matters here —
+         * this runs inside the render loop's `try`, and a sound that took the
+         * frame down would end the mission.
+         *
+         * THE MISSION-END CUES ARE EXEMPT FROM `onMission`, and that exemption is
+         * the point of them. Everything else is gated for the reason the FX above
+         * are: the session keeps stepping behind the Debrief and Boot Hill, and
+         * rifles firing under an end-of-mission screen are a fault. But victory
+         * and defeat are what those screens are FOR — and they land on the very
+         * frame the mission ends, which `endMission` (below this loop) turns into
+         * a screen change a moment later.
+         */
+        const cue =
+          onMission || event.type === 'MissionComplete' || event.type === 'MissionFailed'
+            ? cueFor(event)
+            : null
+        if (cue !== null) {
+          /**
+           * A DEATH IS PLACED FROM THE CORPSE, exactly as its FX is.
+           *
+           * `UnitDiedEvent` reports `id`, `team` and the killer and NOT where he
+           * fell, so `cueFor` cannot give the cue a position and correctly does
+           * not invent one. Left at that, every death anywhere on a ninety-two
+           * tile map played dead centre at full gain — louder than a rifle at
+           * the player's feet, with the distance falloff never consulted at all.
+           *
+           * The answer was already two branches below, where the FX layer looks
+           * the body up among this frame's drawables (ticket 025). The two now
+           * read the same lookup rather than one of them quietly doing without.
+           */
+          const placed =
+            cue.cue === 'death'
+              ? (() => {
+                  const body = drawables.find((entity) => entity.id === (event as { id: number }).id)
+                  return body === undefined ? cue : { ...cue, x: body.x, z: body.z }
+                })()
+              : cue
+          audio.play(placed, listener)
+        }
         if (event.type === 'MissionFailed') failure = event.reason
         // ONE TRACER PER ROUND, from the event's own endpoints. Ticket 011a
         // already clamps the far end to the near face of whatever the round
@@ -1342,7 +1441,8 @@ async function boot(): Promise<void> {
           // must not. `shakeFor` is bounded and never returns NaN, which matters
           // because the rig takes the STRONGEST request and no later check can
           // undo one that got in.
-          const focus = stage.rig.target
+          // `focus` is this frame's camera centre, read once above the loop for
+          // the audio listener — the same point this used to read for itself.
           stage.rig.addShake(
             shakeFor(Math.hypot(event.x - focus.x, event.z - focus.z), event.radiusTiles),
           )
