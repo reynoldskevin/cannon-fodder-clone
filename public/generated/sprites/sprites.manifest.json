@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "origin": "top-left",
   "scale": 0.75,
   "atlas": {
@@ -1807,10 +1807,24 @@
       }
     }
   },
-  "floor": {
-    "file": "floor.png",
-    "width": 512,
-    "height": 512,
-    "tileable": true
+  "ground": {
+    "jungle": {
+      "file": "floor.png",
+      "width": 512,
+      "height": 512,
+      "tileable": true
+    },
+    "water": {
+      "file": "water.png",
+      "width": 512,
+      "height": 512,
+      "tileable": true
+    },
+    "bridge": {
+      "file": "bridge.png",
+      "width": 512,
+      "height": 512,
+      "tileable": true
+    }
   }
 }

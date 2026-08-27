@@ -17,6 +17,7 @@ import type { LevelData } from '../core/level'
 import { ELEVATION } from '../core/view/orientation'
 import { levelWorldBounds } from '../core/view/projection'
 import { TerrainRenderer } from './terrain-renderer'
+import type { GroundSurface } from '../core/view/ground-surface'
 import { EntityRenderer } from './entity-renderer'
 import { canopyRenderEntities } from './scenery-entities'
 import type { RenderEntity } from '../core/render-state/entity'
@@ -59,8 +60,8 @@ export class SceneBuilder {
    * an async network resource and this stays synchronous, so a caller that has
    * not got the art yet is a compile error rather than a half-built scene.
    *
-   * `floor` is the tiling jungle texture, passed in already loaded for the same
-   * reason as `visual`.
+   * `ground` is the three tiling ground textures, passed in already loaded for
+   * the same reason as `visual`.
    *
    * `elevationRad` is the camera's, and the sprite quads are tilted to match —
    * see `EntityRenderer`'s header for why the two must agree.
@@ -74,7 +75,7 @@ export class SceneBuilder {
   static build(
     level: LevelData,
     visual: UnitVisual,
-    floor: THREE.Texture,
+    ground: Record<GroundSurface, THREE.Texture>,
     elevationRad: number = ELEVATION,
     initialEntities?: InitialEntities,
   ): BuiltScene {
@@ -112,7 +113,7 @@ export class SceneBuilder {
     scene.add(sun)
     scene.add(sun.target)
 
-    const terrain = new TerrainRenderer(level, floor)
+    const terrain = new TerrainRenderer(level, ground)
     scene.add(terrain.mesh)
 
     const entities = new EntityRenderer(visual, elevationRad)

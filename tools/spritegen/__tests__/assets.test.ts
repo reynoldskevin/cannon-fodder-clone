@@ -121,8 +121,10 @@ describe('props and floor', () => {
     }
   })
 
-  it('emits the tileable floor texture', () => {
-    expect(out.manifest.floor).toBeDefined()
+  it('emits the tileable ground textures', () => {
+    // `floor` became `ground` in ticket 034 — see `ground.test.ts`, which owns
+    // the detail of what the three entries have to say.
+    expect(out.manifest.ground.jungle).toBeDefined()
   })
 })
 
