@@ -225,12 +225,22 @@ describe('through the real importer', () => {
    * A map cut in two by a river, with a declared deck across it — level 2's
    * shape at a size a test can read.
    */
-  function build(withDeclaration: boolean, w = 12, h = 7): void {
+  /**
+   * THE HEIGHT IS LOAD-BEARING, and the first draft of this got it wrong. At
+   * `h = 7` the deck splits the two-wide river into halves of six tiles each —
+   * under `MAX_ISLAND_TILES` — so on the undeclared import the despeckle
+   * dissolves the entire river into the grass around it, and this file's own
+   * "the river either side of it is still water" and "changed exactly the deck"
+   * assertions could not both hold for ANY implementation. Thirteen rows puts
+   * each half at twelve tiles, comfortably above the cap, so the river is a
+   * river in both imports and the deck is the only difference between them.
+   */
+  function build(withDeclaration: boolean, w = 12, h = 13): void {
     const px = canvas(w * TS, h * TS, GRASS)
     // The river, edge to edge.
     fillRect(px, w * TS, 5 * TS, 0, 2 * TS, h * TS, WATER)
-    // The deck across it.
-    fillRect(px, w * TS, 5 * TS, 3 * TS, 2 * TS, 1 * TS, DECK)
+    // The deck across it, halfway down.
+    fillRect(px, w * TS, 5 * TS, 6 * TS, 2 * TS, 1 * TS, DECK)
     drawCrosshair(px, w * TS, 1 * TS + TS / 2, 1 * TS + TS / 2, BLUE)
     drawCrosshair(px, w * TS, 10 * TS + TS / 2, 1 * TS + TS / 2, RED)
     writeFileSync(join(dir, 'map.png'), encodePng(w * TS, h * TS, px))
@@ -250,7 +260,7 @@ describe('through the real importer', () => {
     build(true)
     const { level } = importLevel({ sourceDir: dir, outDir, name: 'declared' })
     for (const x of [5, 6]) {
-      expect({ x, terrain: level.terrain[3]?.[x], walkable: level.walkable[3]?.[x] }).toEqual({
+      expect({ x, terrain: level.terrain[6]?.[x], walkable: level.walkable[6]?.[x] }).toEqual({
         x,
         terrain: TILE.BRIDGE,
         walkable: true,
@@ -262,7 +272,7 @@ describe('through the real importer', () => {
     build(true)
     const { level } = importLevel({ sourceDir: dir, outDir, name: 'declared' })
     expect(level.terrain[1]?.[5]).toBe(TILE.WATER)
-    expect(level.terrain[5]?.[6]).toBe(TILE.WATER)
+    expect(level.terrain[11]?.[6]).toBe(TILE.WATER)
   })
 
   it('declaring terrain changes the ink mask not at all', () => {
@@ -292,7 +302,7 @@ describe('through the real importer', () => {
       }
     }
     // Exactly the two deck tiles, and nothing else anywhere on the map.
-    expect(changed.sort()).toEqual(['5,3', '6,3'])
+    expect(changed.sort()).toEqual(['5,6', '6,6'])
   })
 
   it('which makes the two banks one map without anybody swimming', () => {
@@ -330,9 +340,34 @@ describe('through the real importer', () => {
       }
     }
     // The far bank is reachable, and the ONLY dry route there is the deck.
-    expect(seen.has(3 * w + 11)).toBe(true)
-    expect(seen.has(3 * w + 5)).toBe(true)
+    expect(seen.has(6 * w + 11)).toBe(true)
+    expect(seen.has(6 * w + 5)).toBe(true)
     expect(seen.has(1 * w + 5)).toBe(false)
+  })
+
+  it('an authored walkable.png still outranks the declaration', () => {
+    /**
+     * THE RANKING, STATED AS A TEST BECAUSE NOTHING WAS STATING IT. A review
+     * mutation that let a declaration force `walkable` true straight through the
+     * mask left all 1953 tests green — so "the mask outranks everything" was a
+     * comment and an acceptance criterion with no mechanism behind it.
+     *
+     * The two rules only look like they conflict until you know which one runs:
+     * a declaration decides walkability where walkability is being GUESSED, and
+     * the mask branch never calls `buildWalkable` at all. An author who paints a
+     * bridge closed has closed it — that is the whole reason the mask exists,
+     * and the alternative is a level whose author cannot shut a crossing without
+     * deleting the artwork for it.
+     */
+    build(true)
+    // Black everywhere: nothing is walkable, including the deck.
+    const px = canvas(12 * TS, 13 * TS, [0, 0, 0])
+    writeFileSync(join(dir, 'walkable.png'), encodePng(12 * TS, 13 * TS, px))
+    const { level } = importLevel({ sourceDir: dir, outDir, name: 'declared' })
+
+    // Still a bridge — the mask decides who may walk, never what a tile IS.
+    expect(level.terrain[6]?.[5]).toBe(TILE.BRIDGE)
+    expect(level.walkable[6]?.[5]).toBe(false)
   })
 
   it('and is idempotent — the same source imports byte-identically twice', () => {
