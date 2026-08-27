@@ -64,9 +64,9 @@ function play(seed: number, withFx: boolean): { hash: number; deaths: number; bo
   let clock = 0
   /**
    * A GRENADE IS THROWN ON PURPOSE. Without it the `Explosion` branch below is
-   * dead code and this suite would report that it covers the burst and the
-   * shake while never once producing either — the vacuous-fixture trap this
-   * project has hit repeatedly. `booms` is asserted, not assumed.
+   * dead code and this suite would report that it covers the shake while never
+   * once producing one — the vacuous-fixture trap this project has hit
+   * repeatedly. `booms` is asserted, not assumed.
    */
   const thrower = s.world.entities.find((e) => e.team === 'player')
   for (let frame = 0; frame < FRAMES; frame += 1) {
@@ -83,10 +83,11 @@ function play(seed: number, withFx: boolean): { hash: number; deaths: number; bo
       if (event.type === 'ShotFired') {
         effects.add({ kind: 'muzzle', x: event.originX, z: event.originZ, scale: 1 }, clock)
       } else if (event.type === 'Explosion') {
-        // A BURST AND NOTHING ELSE since ticket 047. There used to be a second
-        // `scars.add` on this line's heels, feeding a second pool with a decal;
-        // the mark is gone and so is the pool, and `main.ts` matches.
-        effects.add({ kind: 'burst', x: event.x, z: event.z, scale: event.radiusTiles }, clock)
+        // NO EFFECT AT ALL since ticket 054, and two removals got it here: 047
+        // took the decal and its second pool, 054 the burst itself. What an
+        // `Explosion` still asks for is the SHAKE below, which is the one FX
+        // number computed from event data rather than merely stored, and is
+        // therefore the one this suite most needs to see exercised.
         // The shake request too, since that is the one FX number computed from
         // event data rather than merely stored.
         void shakeFor(Math.hypot(event.x, event.z), event.radiusTiles)
@@ -122,8 +123,8 @@ describe('a mission runs identically whether or not anybody is drawing it', () =
      */
     const run = play(1, true)
     expect(run.deaths).toBeGreaterThan(0)
-    // And the grenade really detonated, so the burst/shake path above was
-    // exercised rather than skipped.
+    // And the grenade really detonated, so the shake path above was exercised
+    // rather than skipped.
     expect(run.booms).toBeGreaterThan(0)
   })
 
