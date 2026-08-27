@@ -47,6 +47,28 @@ describe('the measured texture means', () => {
     expect(GROUND_MEAN_LINEAR.jungle).toEqual({ r: 0.0693, g: 0.0642, b: 0.0093 })
   })
 
+  it('pins water and bridge to their measured values, not merely to each other', () => {
+    /**
+     * THIS FILE'S OWN BLIND SPOT, FOUND BY MUTATION. Every other assertion here
+     * computes its expectation as `… / linearLuminance(GROUND_MEAN_LINEAR[surface])`
+     * — reading the same table the production code reads. That proves the gain
+     * formula and proves NOTHING about which mean belongs to which texture.
+     * Swapping the water and bridge entries left all 1980 tests green, rendering
+     * the river 19% dark and the deck 19% hot.
+     *
+     * So the two are pinned literally, exactly as the jungle already was.
+     * Measured off the source art with the one-liner in `GROUND_MEAN_LINEAR`'s
+     * comment.
+     */
+    expect(GROUND_MEAN_LINEAR.water).toEqual({ r: 0.0678, g: 0.1661, b: 0.1155 })
+    expect(GROUND_MEAN_LINEAR.bridge).toEqual({ r: 0.3281, g: 0.1336, b: 0.0433 })
+
+    // And they are genuinely different textures: the bridge is warm, the water
+    // is cool. A swap is caught by the values above; this says why it matters.
+    expect(GROUND_MEAN_LINEAR.bridge.r).toBeGreaterThan(GROUND_MEAN_LINEAR.bridge.b)
+    expect(GROUND_MEAN_LINEAR.water.b).toBeGreaterThan(GROUND_MEAN_LINEAR.water.r)
+  })
+
   it('and the two new textures are much brighter, which is why the mean has to be per texture', () => {
     /**
      * Measured off the source art. If these were close to the jungle's, using
