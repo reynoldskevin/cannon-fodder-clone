@@ -30,6 +30,9 @@ const LAYER_MESSAGE =
 const PRESENTATION_MESSAGE =
   'src/core/render-state/** and src/core/view/** decide what is DRAWN and must not reach the game rules (core/combat, core/ordnance, core/world). That separation is what lets the FX layer be added after the simulation without any visual change altering a mission.'
 
+const DOM_MESSAGE =
+  'src/core/** and tools/** must stay engine-free: the DOM is not available there. A headless replay, the determinism checks and every unit test run this code under Node with no window at all. Put anything that needs a browser in src/render, src/app, src/ui, src/input or src/audio.'
+
 /** Sibling layers that src/core and tools may never reach into. */
 const SIBLING_LAYERS = ['render', 'app', 'ui', 'input', 'audio']
 
@@ -149,6 +152,34 @@ export default tseslint.config(
     rules: {
       'no-restricted-imports': ['error', forbiddenInCore],
       'no-restricted-syntax': ['error', ...forbiddenSyntaxInCore],
+      /**
+       * THE ENGINE-FREE BOUNDARY HAS A HOLE THE IMPORT RULES CANNOT SEE
+       * (ticket 027).
+       *
+       * `window`, `document` and `AudioContext` are AMBIENT — they need no
+       * import, so `no-restricted-imports` never visits them, and `tsconfig`'s
+       * `lib` includes `DOM` for the sake of `src/render` and `src/app`, so the
+       * compiler is happy too. Adversarial review demonstrated it: appending
+       * `new AudioContext()`, `window.innerWidth` and `document.body` to a file
+       * in `src/core` passed both `eslint` and `tsc` completely clean.
+       *
+       * That is the same shape of false confidence ticket 025 found one rule
+       * along — a boundary that was correct in every file and enforced in none.
+       * `core` must run under Node with no DOM at all: it is the layer a
+       * headless replay, a determinism check and every unit test in the project
+       * execute in.
+       */
+      'no-restricted-globals': [
+        'error',
+        { name: 'window', message: DOM_MESSAGE },
+        { name: 'document', message: DOM_MESSAGE },
+        { name: 'navigator', message: DOM_MESSAGE },
+        { name: 'localStorage', message: DOM_MESSAGE },
+        { name: 'AudioContext', message: DOM_MESSAGE },
+        { name: 'requestAnimationFrame', message: DOM_MESSAGE },
+        // NOT `performance`: it is a real Node global and a pathing test times
+        // itself with it. Banning it would be banning the standard library.
+      ],
     },
   },
   {
