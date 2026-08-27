@@ -169,37 +169,42 @@ describe('adding costs no allocation per effect', () => {
   })
 })
 
-describe('scars are a SECOND pool, not more entries in the first', () => {
+describe('nothing an explosion leaves behind outlives the fight', () => {
   /**
-   * An explosion's scar outlives the burst that made it by orders of magnitude.
-   * Sharing one ring means a single busy second evicts every mark on the map,
-   * and the ground goes clean while the player watches.
+   * TICKET 047 DELETED THE `decal` KIND, and with it the second pool that
+   * existed only to hold it.
    *
-   * Two INSTANCES of the same ring rather than a second module: the eviction
-   * argument is about capacity, not about code, and a duplicate implementation
-   * is a second thing to keep correct.
+   * The scar was a dark quad on the ground with a 45-second life, and it read as
+   * a flat coloured square rather than as scorched earth — worse than the clean
+   * ground it covered. What went with it was a whole apparatus: a second
+   * `createFxBuffer` sized in "marks a map can carry" rather than "things
+   * happening at once", a second `FxRenderer` built with `'normal'` blending
+   * because a scar is paint where every other effect is light, and a special
+   * case in the renderer pinning it to the ground while everything else floats.
+   *
+   * THE THREE CASES THAT LIVED HERE WERE ABOUT THAT SECOND POOL — that a decal
+   * outlives a burst, that a storm of bursts cannot evict a scar, and that scars
+   * still recycle. All three named their subject, and their subject is gone;
+   * weakening them into decal-free versions would have left three cases arguing
+   * for a design decision the codebase no longer makes. The capacity argument
+   * they exercised is still a real feature of the ring and is covered by the
+   * bounded-ring cases above, which is where it belonged.
    */
-  it('a decal outlives a burst by a wide margin', () => {
-    expect(FX_LIFETIME_SECONDS.decal).toBeGreaterThan(FX_LIFETIME_SECONDS.burst * 10)
+  it('every kind that remains is short-lived', () => {
+    // The property the deletion actually establishes. A second later, the ground
+    // under a detonation is clean — no kind can now outlast a firefight.
+    const outliving = FX_KINDS.filter((kind) => FX_LIFETIME_SECONDS[kind] > 2)
+    expect(outliving).toEqual([])
   })
 
-  it('and a storm of bursts cannot evict a scar', () => {
-    // THE WHOLE REASON FOR TWO POOLS, asserted rather than asserted-in-a-comment.
-    const scars = createFxBuffer({ capacity: 32 })
-    const bursts = createFxBuffer({ capacity: 8 })
-    scars.add(spawn('decal', 7, 7), 0)
-    for (let i = 0; i < 400; i += 1) bursts.add(spawn('burst', i, 0), 0)
-    const survived = scars.visible(1)
-    expect(survived).toHaveLength(1)
-    expect(survived[0]?.x).toBe(7)
-  })
-
-  it('and scars still recycle rather than growing without bound', () => {
-    // Capped, like everything else fed off an event bus for a whole mission.
-    const scars = createFxBuffer({ capacity: 5 })
-    for (let i = 0; i < 90; i += 1) scars.add(spawn('decal', i, 0), 0)
-    const live = scars.visible(1)
-    expect(live).toHaveLength(5)
-    expect(live.map((e) => e.x)).toEqual([85, 86, 87, 88, 89])
+  it('and there is no decal kind left to spawn', () => {
+    /**
+     * ASSERTED ON THE RUNTIME LIST as well as in the type. `FX_KINDS` is what
+     * `FxKind` is derived from, so a re-added entry is a compile error at every
+     * `Record<FxKind, ...>` — but only for code that is compiled. This is what
+     * fails if the kind comes back through data.
+     */
+    expect([...FX_KINDS]).toEqual(['muzzle', 'burst', 'death'])
+    expect(Object.keys(FX_LIFETIME_SECONDS).sort()).toEqual(['burst', 'death', 'muzzle'])
   })
 })
