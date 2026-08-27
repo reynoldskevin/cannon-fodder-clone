@@ -452,3 +452,84 @@ describe('the Recruitment screen says how many men it will assign for you', () =
     expect(() => recruitmentModel(s, levelWith(3))).not.toThrow()
   })
 })
+
+/**
+ * Ticket 054 — the memorial is the original's screen: a scoreboard, a roster
+ * column and a hillside.
+ *
+ * `assets/mockups/boot-hill.jpg`. The layout is `src/ui`'s and untestable here;
+ * what these pin are the three things the screen was given so that it would not
+ * have to work them out inside a `div`.
+ */
+describe('the scoreboard and the column beside the hill', () => {
+  it('HOME is every enemy this campaign has killed, the dead mens kills included', () => {
+    /**
+     * THE SUM THAT IS EASY TO GET WRONG. A dead man's kills count and he is NOT
+     * on the roster to be counted — a total folded over `state.recruits` alone
+     * would quietly shrink every time somebody died, telling the player his
+     * campaign had killed fewer enemies than it had a mission ago.
+     */
+    const before = createCampaign({ seed: 61, recruits: 3 })
+    const doomed = recruitsAvailable(before)[0]!
+    // `fight` credits the dead man 2 kills and each survivor 1.
+    const after = fight(before, 1, [doomed.id])
+    const model = bootHillModel(after, promotionsBetween(before, after), before)
+    expect(model.enemyKilled).toBe(4)
+  })
+
+  it('AWAY is the men in the ground, which is the hill itself', () => {
+    const before = createCampaign({ seed: 62, recruits: 4 })
+    const men = recruitsAvailable(before)
+    const after = fight(before, 1, [men[0]!.id, men[1]!.id])
+    const model = bootHillModel(after, promotionsBetween(before, after), before)
+    expect(model.casualties).toBe(2)
+    expect(model.casualties).toBe(model.graves.length)
+  })
+
+  it('the SQUAD column is who is still standing, and never a man on the hill', () => {
+    /**
+     * THE ONE ARRANGEMENT WHERE THE TWO COLUMNS CANNOT NAME THE SAME MAN TWICE.
+     * The caller hands over the squad records it can still find on the LIVING
+     * roster, so a man who fell this mission is a cross and a HEROES row and
+     * nothing else.
+     */
+    const before = createCampaign({ seed: 63, recruits: 4 })
+    const men = recruitsAvailable(before)
+    const doomed = men[0]!
+    const after = fight(before, 1, [doomed.id])
+    const survivors = recruitsAvailable(after)
+    const model = bootHillModel(after, promotionsBetween(before, after), before, survivors)
+    expect(model.squad.map((m) => m.name)).not.toContain(doomed.name)
+    expect(model.squad.map((m) => m.name)).toEqual(survivors.map((m) => m.name))
+  })
+
+  it('and each standing man carries his rank and his tally', () => {
+    const before = createCampaign({ seed: 64, recruits: 2 })
+    const after = fight(before, 1, [])
+    const survivors = recruitsAvailable(after)
+    const model = bootHillModel(after, promotionsBetween(before, after), before, survivors)
+    expect(model.squad[0]).toEqual({
+      name: survivors[0]!.name,
+      rank: survivors[0]!.rank,
+      kills: survivors[0]!.kills,
+    })
+  })
+
+  it('a caller with no squad to name gets an empty column, not the whole roster', () => {
+    // A reload, or a memorial reached before anybody deployed. Showing the
+    // living roster instead would put men in the SQUAD column who never left
+    // the beach.
+    const s = createCampaign({ seed: 65, recruits: 5 })
+    expect(bootHillModel(s, []).squad).toEqual([])
+  })
+
+  it('the squad column is a copy, not a window onto the roster', () => {
+    // The same rule every model in this codebase follows: a screen must not be
+    // able to reach into the campaign through the thing it was handed to draw.
+    const s = createCampaign({ seed: 66, recruits: 3 })
+    const roster = recruitsAvailable(s)
+    const model = bootHillModel(s, [], undefined, roster)
+    expect(model.squad).not.toBe(roster)
+    expect(model.squad[0]).not.toBe(roster[0])
+  })
+})
