@@ -236,3 +236,120 @@ describe('a man in the river is drawn down in it (ticket 041)', () => {
     expect(half).toBeCloseTo(quarter * 2, 5)
   })
 })
+
+describe('the living are drawn over the dead', () => {
+  /**
+   * Ticket 050 — a soldier walking across a body was drawn UNDER it.
+   *
+   * WHY IT IS A TIE AND NOT A DEPTH BUG. The quads are vertical, depth-tested
+   * and depth-writing (see `ALPHA_TEST`), so a man genuinely in front of a corpse
+   * already resolves correctly and always did. A man standing ON one is the
+   * problem: his feet and the body occupy the same tile at the same ground
+   * height, so their fragments carry the same depth, and `LessEqualDepth` — the
+   * Three default — lets whichever is drawn LAST overwrite the other.
+   *
+   * WHAT DECIDED "LAST", AND WHY IT WAS ARBITRARY. Every batch is a separate
+   * `InstancedMesh` sharing one material, all at `renderOrder = 1` and all
+   * positioned at the origin (the geometry is a unit quad; real positions live in
+   * the instance matrices). Three's transparent sort has no distance to compare,
+   * so it falls through to material id — identical — and then to OBJECT ID, which
+   * is creation order. Meshes are created lazily on first use, and nobody dies
+   * before somebody walks, so the corpse mesh is always the younger one and
+   * always drew last.
+   *
+   * Ticket 049 is what made it matter: a half-second of bad ordering is a glitch,
+   * and a permanent one is the state of the field.
+   */
+
+  /** A renderer that has drawn a walker and then a corpse, in that order. */
+  function afterAWalkerAndACorpse() {
+    const visual = stubVisual(CLIPS)
+    const renderer = new EntityRenderer(visual, (55 * Math.PI) / 180)
+    renderer.setEntities([entity(1, 'walk')])
+    renderer.update(0, 1)
+    renderer.setEntities([entity(1, 'walk'), entity(2, 'die')])
+    renderer.update(0, 1)
+    const meshes = renderer.group.children.filter(
+      (child): child is THREE.InstancedMesh => (child as THREE.InstancedMesh).isInstancedMesh,
+    )
+    const byAnimation = (name: string) =>
+      meshes.find((m) => m.name.includes(`|${name}|`))
+    return { renderer, meshes, byAnimation }
+  }
+
+  it('a corpse batch is ordered BELOW a living one', () => {
+    // THE TICKET. Lower `renderOrder` draws first, so the living man's fragments
+    // arrive second and win the tie under `LessEqualDepth`.
+    const { renderer, byAnimation } = afterAWalkerAndACorpse()
+    const dead = byAnimation('die')
+    const living = byAnimation('walk')
+    expect({ dead: dead !== undefined, living: living !== undefined }).toEqual({
+      dead: true,
+      living: true,
+    })
+    expect(dead!.renderOrder).toBeLessThan(living!.renderOrder)
+    renderer.dispose()
+  })
+
+  it('and the creation order that used to decide it still runs the wrong way', () => {
+    /**
+     * THE DIAGNOSIS, AS A CHECK RATHER THAN AS A PARAGRAPH. If the corpse mesh
+     * were somehow the older object, the story above would be wrong and the fix
+     * would be aimed at nothing. Asserting it keeps the comment honest — and if a
+     * later change makes meshes eagerly rather than lazily, this fails and says
+     * the reasoning needs revisiting.
+     */
+    const { renderer, byAnimation } = afterAWalkerAndACorpse()
+    expect(byAnimation('die')!.id).toBeGreaterThan(byAnimation('walk')!.id)
+    renderer.dispose()
+  })
+
+  it('whichever appeared first, because order is stated and not inherited', () => {
+    // The same two batches, created the other way round. A fix that merely
+    // happened to work because corpses came second would fail here.
+    const visual = stubVisual(CLIPS)
+    const renderer = new EntityRenderer(visual, (55 * Math.PI) / 180)
+    renderer.setEntities([entity(2, 'die')])
+    renderer.update(0, 1)
+    renderer.setEntities([entity(2, 'die'), entity(1, 'walk')])
+    renderer.update(0, 1)
+    const meshes = renderer.group.children.filter(
+      (child): child is THREE.InstancedMesh => (child as THREE.InstancedMesh).isInstancedMesh,
+    )
+    const dead = meshes.find((m) => m.name.includes('|die|'))
+    const living = meshes.find((m) => m.name.includes('|walk|'))
+    expect(dead!.renderOrder).toBeLessThan(living!.renderOrder)
+    renderer.dispose()
+  })
+
+  it('and the living keep the order that puts them ahead of transparent effects', () => {
+    /**
+     * THE GUARD ON THE OTHER SIDE. `renderOrder = 1` on sprites is what keeps
+     * them ahead of later transparent work — the FX layer's bursts and flashes
+     * sit at the default 0. Fixing this by lowering EVERYTHING would swap one
+     * ordering bug for another, in a layer this suite does not cover.
+     */
+    const { renderer, byAnimation } = afterAWalkerAndACorpse()
+    expect(byAnimation('walk')!.renderOrder).toBe(1)
+    renderer.dispose()
+  })
+
+  it('and nothing about where or how a corpse is drawn moves', () => {
+    // A depth-order fix that nudged the body would be a different change. The
+    // frame, the facing and the instance matrix are all as ticket 049 left them.
+    const visual = stubVisual(CLIPS)
+    const renderer = new EntityRenderer(visual, (55 * Math.PI) / 180)
+    renderer.setEntities([entity(2, 'die', { x: 3, z: 4, y: 2 })])
+    renderer.update(30, 1)
+    const mesh = renderer.group.children.find(
+      (child): child is THREE.InstancedMesh => (child as THREE.InstancedMesh).isInstancedMesh,
+    )
+    const matrix = new THREE.Matrix4()
+    mesh!.getMatrixAt(0, matrix)
+    const at = new THREE.Vector3().setFromMatrixPosition(matrix)
+    expect({ x: at.x, z: at.z }).toEqual({ x: 3, z: 4 })
+    // Still holding the last frame of `die`, which is the whole point of 049.
+    expect(visual.asked.at(-1)).toContain('|3')
+    renderer.dispose()
+  })
+})
