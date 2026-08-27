@@ -18,3 +18,5 @@ test-results/
 playwright-report/
 .last-run.json
 .vercel
+
+assets/mockups
