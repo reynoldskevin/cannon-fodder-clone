@@ -276,3 +276,40 @@ describe('the Debrief', () => {
     expect(debriefModel(before, report).casualties).toHaveLength(2)
   })
 })
+
+describe('the mission card says what the player asked it to say (ticket 040)', () => {
+  /**
+   * "Mission <level num>. With <number of soldiers> soldiers you must:
+   * [objectives]", on black. The copy is the UI's business; the NUMBERS are this
+   * model's, and they are what a screen cannot be trusted to derive for itself.
+   */
+  it('carries a one-based level number', () => {
+    // "Mission 0" is not a thing anybody says, and the campaign's internal index
+    // is zero-based — which is exactly the sort of off-by-one that ships.
+    const model = briefingModel(level(), squadOf(createCampaign(), 3), 0)
+    expect(model.levelNumber).toBe(1)
+    expect(briefingModel(level(), squadOf(createCampaign(), 3), 4).levelNumber).toBe(5)
+  })
+
+  it('and a soldier count that IS the squad, not a second opinion about it', () => {
+    /**
+     * A card reading "with four soldiers" over a three-man deployment is worse
+     * than no card: it is the game lying about the only number on the screen.
+     * Asserted across several sizes so a hardcoded constant cannot pass.
+     */
+    for (const n of [1, 2, 3, 5, 8]) {
+      const model = briefingModel(level(), squadOf(createCampaign(), n), 0)
+      expect({ n, count: model.soldierCount, squad: model.squad.length }).toEqual({
+        n,
+        count: n,
+        squad: n,
+      })
+    }
+  })
+
+  it('and still carries the objectives the card lists', () => {
+    // The third thing the copy needs. Unchanged by this ticket, pinned here
+    // because the card is now the only screen that shows them.
+    expect(briefingModel(level(), squadOf(createCampaign(), 2), 0).objectives.length).toBeGreaterThan(0)
+  })
+})
