@@ -111,17 +111,35 @@ describe('a fresh campaign', () => {
     expect(recruitsAvailable(s).find((r) => r.id === man.id)?.status).toBe('active')
   })
 
-  it('is reproducible from its seed', () => {
+  it('is reproducible', () => {
     // A returning player must get HIS squad back, not a fresh set of strangers
     // wearing the same save file.
     const names = (s: CampaignState): string[] => recruitsAvailable(s).map((r) => r.name)
     expect(names(campaign(7))).toEqual(names(campaign(7)))
   })
 
-  it('and two different seeds give different rosters', () => {
-    // Otherwise "seeded" is indistinguishable from "hardcoded".
+  it('and two different seeds give the SAME roster', () => {
+    /**
+     * INVERTED BY TICKET 052, and the old wording is worth keeping in view: this
+     * read "two different seeds give different rosters", because otherwise
+     * "seeded" was indistinguishable from "hardcoded".
+     *
+     * Names are hardcoded now, deliberately. The pool is the shipped roll and it
+     * has an order — Jools and Jops are the first two men — so a fresh campaign
+     * opens on them whatever the seed. The seed still drives the SIMULATION; it
+     * simply no longer deals the squad.
+     */
     const names = (s: CampaignState): string => recruitsAvailable(s).map((r) => r.name).join()
-    expect(names(campaign(1))).not.toBe(names(campaign(999)))
+    expect(names(campaign(1))).toBe(names(campaign(999)))
+  })
+
+  it('and it opens on the top of the roll', () => {
+    // The ticket, at the level a player sees it: the first two men recruited into
+    // a brand-new campaign.
+    expect(recruitsAvailable(campaign(3)).slice(0, 2).map((r) => r.name)).toEqual([
+      'JOOLS',
+      'JOPS',
+    ])
   })
 
   it('unlocks the first level and nothing beyond it', () => {
