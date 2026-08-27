@@ -103,12 +103,16 @@ const HILL_FALLBACK = 'linear-gradient(#39414d 0%, #39414d 35%, #2c3a24 35%, #1d
 /**
  * How this mission's stones are told from every older one, on the hillside.
  *
- * BOTH CARRY THE SAME CAST SHADOW, so the difference between them is the halo
- * and the weathering and nothing else — a stone that also sat differently on the
- * ground would read as two sprites rather than as one sprite twice.
+ * NO HALO (ticket 063). Ticket 062 ringed the fresh graves in the same warm
+ * colour their HEROES row takes, carrying over what the old `✝` glyph did with
+ * `color`. It was too loud for a memorial: a lit-up cross reads as a thing to be
+ * clicked. This mission's dead are simply the ones that have not weathered yet.
+ *
+ * BOTH CARRY THE SAME CAST SHADOW, so the difference is the weathering and
+ * nothing else — a stone that also sat differently on the ground would read as
+ * two sprites rather than as one sprite twice.
  */
 const DROP = 'drop-shadow(0 2px 3px rgba(0,0,0,0.55))'
-const FRESH_GLOW = `drop-shadow(0 0 7px ${FRESH}) ${DROP}`
 const WEATHERED = `saturate(0.75) brightness(0.86) ${DROP}`
 
 const LIST_STYLE =
@@ -606,12 +610,10 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
       const crossState = fresh ? 'fresh' : 'old'
       if (cross.dataset.state !== crossState) {
         cross.dataset.state = crossState
-        // A FILTER, BECAUSE `color` DOES NOTHING TO A PICTURE. The glyph took
-        // the warm tint directly; the sprite keeps its own paint and is picked
-        // out by a halo in the same colour instead — which is also the stronger
-        // signal of the two, being a change in shape as well as in hue. Older
-        // stones are pulled down and desaturated a little, as weathered wood.
-        cross.style.filter = fresh ? FRESH_GLOW : WEATHERED
+        // A FILTER, BECAUSE `color` DOES NOTHING TO A PICTURE. The sprite keeps
+        // its own paint at full strength this mission and is pulled down and
+        // desaturated once it is old, as weathered wood. See `WEATHERED`.
+        cross.style.filter = fresh ? DROP : WEATHERED
       }
     }
     trim(graveRows, count)
