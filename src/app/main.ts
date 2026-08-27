@@ -21,12 +21,16 @@ import { levelRelief } from '../core/view/relief'
 import { createSession } from '../core/session'
 import { ordnanceForHotkey } from '../core/armoury'
 import { createTracerBuffer } from '../core/render-state/tracers'
+import { createFxBuffer } from '../core/render-state/fx'
+import { shakeFor } from '../core/view/shake'
 import { createCampaignRunner, viewFor } from '../core/flow'
 import type { AdvanceResult, MissionHost, ViewId } from '../core/flow'
 import type { SquadMember } from '../core/campaign'
 import type { SimEvent } from '../core/world'
+import type { RenderEntity } from '../core/render-state/entity'
 import { CameraRig } from '../render/camera-rig'
 import { TracerRenderer } from '../render/tracer-renderer'
+import { createFxRenderer, type FxRenderer } from '../render/fx-renderer'
 import { SceneBuilder, type BuiltScene } from '../render/scene-builder'
 import {
   buildSpriteAtlas,
@@ -71,6 +75,18 @@ const SPRITES_URL = './generated/sprites/sprites.manifest.json'
 
 /** Longest a frame may claim to be, so a backgrounded tab doesn't teleport the camera. */
 const MAX_FRAME_DT = 1 / 15
+
+/**
+ * Scorch marks a level may carry at once (ticket 025).
+ *
+ * BIGGER THAN THE EFFECTS POOL AND FOR A DIFFERENT REASON. A burst pool is sized
+ * for "how much can be going off in the same instant"; a scar lives for 45 s, so
+ * this is sized for how much ordnance a squad can spend crossing a level. Both
+ * grenade and rocket cost ammunition the armoury issues per mission, so this sits
+ * comfortably above what a full loadout can produce — which is what makes
+ * eviction a safety net rather than something the player watches happen.
+ */
+const DECAL_POOL_CAPACITY = 128
 
 function mountPoint(): HTMLElement {
   const existing = document.querySelector<HTMLElement>('#app')
@@ -384,6 +400,31 @@ async function boot(): Promise<void> {
   let tracers = createTracerBuffer()
 
   /**
+   * The live effects (ticket 025): the flashes, bursts and death puffs this
+   * frame's events produced, stamped with the RENDERER's clock.
+   *
+   * EVERYTHING SAID ABOUT `tracers` ABOVE APPLIES HERE WORD FOR WORD — the clock
+   * it is stamped against, why it is a `let`, and why none of it can reach a
+   * mission result. The FX layer reads EVENTS ONLY: it is fed below from
+   * `ShotFired`, `Explosion` and `UnitDied` after the sim has already decided
+   * them, so a mission's `stateHash` over a fixed script is identical whether
+   * these two buffers are fed or left empty.
+   */
+  let effects = createFxBuffer()
+
+  /**
+   * The scorch marks, in a POOL OF THEIR OWN.
+   *
+   * A scar lives for 45 s and a burst for 0.4, so one shared ring would let a
+   * single busy second evict every mark on the map and the ground would go clean
+   * while the player watched. The argument is about capacity, not about code —
+   * see `createFxBuffer` — so this is a second instance of the same ring with a
+   * cap that means "how many marks a map may carry" rather than "how much can be
+   * happening at once".
+   */
+  let scars = createFxBuffer({ capacity: DECAL_POOL_CAPACITY })
+
+  /**
    * EVERYTHING ON SCREEN THAT BELONGS TO ONE LEVEL (ticket 024).
    *
    * A `let`, and rebuilt by `startMission` when the campaign moves to a level
@@ -410,6 +451,8 @@ async function boot(): Promise<void> {
     readonly level: LevelData
     readonly built: BuiltScene
     readonly tracerFx: TracerRenderer
+    readonly effectFx: FxRenderer
+    readonly decalFx: FxRenderer
     readonly rig: CameraRig
     readonly pan: PanController
     readonly zoom: ZoomController
@@ -429,6 +472,32 @@ async function boot(): Promise<void> {
       capacity: tracers.capacity,
     })
     built.scene.add(tracerFx.object)
+
+    // THE SCARS FIRST AND THE FLASHES SECOND, which is the order they are added
+    // to the scene and — both meshes writing no depth at the same `renderOrder`
+    // — the order they are composited in. A burst over its own scorch mark is
+    // right; the mark over the burst is a hole in the explosion.
+    //
+    // Two renderers rather than one fed both pools, because the two differ in
+    // the one thing a material cannot vary per effect: a scar is PAINT and a
+    // flash is LIGHT. Additively blending something almost black draws nothing
+    // at all. Each is sized from its own buffer's capacity, which is what lets
+    // both geometries be allocated once and never grown.
+    //
+    // `built.terrain` directly and not `groundHeightAt`, which reads `stage` —
+    // still the OLD stage while this runs.
+    const fxGround = {
+      size: level.size,
+      heightAt: (tileX: number, tileY: number) => built.terrain.heightAt(tileX, tileY),
+    }
+    const decalFx = createFxRenderer({
+      capacity: scars.capacity,
+      ground: fxGround,
+      blending: 'normal',
+    })
+    const effectFx = createFxRenderer({ capacity: effects.capacity, ground: fxGround })
+    built.scene.add(decalFx.object)
+    built.scene.add(effectFx.object)
 
     // The rig reasons about the level's SILHOUETTE, not its footprint: the
     // terrain is extruded, so the zoom cap has to know how far this particular
@@ -450,7 +519,7 @@ async function boot(): Promise<void> {
     // step for the rest of the page's life.
     const pan = new PanController(rig)
     const zoom = new ZoomController(rig, window, renderer.domElement)
-    return { level, built, tracerFx, rig, pan, zoom }
+    return { level, built, tracerFx, effectFx, decalFx, rig, pan, zoom }
   }
 
   /**
@@ -465,6 +534,8 @@ async function boot(): Promise<void> {
     // Its own geometry and material, added to the scene from out here — so
     // `built.dispose()` does not know about them.
     old.tracerFx.dispose()
+    old.effectFx.dispose()
+    old.decalFx.dispose()
     old.built.dispose()
   }
 
@@ -823,6 +894,13 @@ async function boot(): Promise<void> {
     // "brand new". The new mission would open under the last one's fire, and it
     // would never fade.
     tracers = createTracerBuffer()
+    // AND THE EFFECTS WITH THEM, for exactly the reason above: an effect's age is
+    // `elapsed - spawnedAt`, so a scar from the mission that just ended would sit
+    // at a `spawnedAt` in the future of a clock that has just gone back to zero —
+    // an age the buffer floors to "brand new" and which therefore never fades.
+    // The new level would open under the last one's explosions.
+    effects = createFxBuffer()
+    scars = createFxBuffer({ capacity: DECAL_POOL_CAPACITY })
     // THE STAGE, IF THE LEVEL CHANGED (ticket 024). Compared by identity, which
     // is exact here: `levels` holds one object per published level and the
     // runner hands back an element of it, so "the same level" is the same
@@ -839,6 +917,11 @@ async function boot(): Promise<void> {
       attachDebugOverlay()
     }
     stage.tracerFx.update(tracers.visible(elapsed))
+    // Emptied on the same frame the buffers were, so a stage that was NOT rebuilt
+    // — the campaign replaying the level it is already showing — does not keep
+    // last mission's geometry on screen until the first frame that draws.
+    stage.decalFx.update(scars.visible(elapsed))
+    stage.effectFx.update(effects.visible(elapsed))
     previous = performance.now()
     roster = playerIds()
     pointer.dispose()
@@ -1180,8 +1263,17 @@ async function boot(): Promise<void> {
       // that ran several steps still hands over a state 2+ ticks after the last
       // one it saw, so its blend spans more than one tick; that is inherent to
       // catching up after a hitch and is not smoothed away here.
+      // KEPT, NOT JUST HANDED OVER (ticket 025). `UnitDied` names an id and no
+      // position — the entity is already out of the world by the time the event
+      // is read — so the death effect is placed from this frame's drawables,
+      // which still contain the man as a CORPSE for as long as his death clip
+      // runs (see `Session.renderEntities`). Reading the drawables rather than
+      // the world is the FX layer staying on the presentation side of the
+      // boundary: it asks what is being drawn, never what is true.
+      let drawables: readonly RenderEntity[] = []
       if (session.stepsLastAdvance > 0) {
-        stage.built.entities.setEntities(session.renderEntities(groundHeightAt))
+        drawables = session.renderEntities(groundHeightAt)
+        stage.built.entities.setEntities(drawables)
       }
       // Drained every frame whether or not anything is listening yet: the batch
       // is the only channel out of the sim, and left undrained it would grow
@@ -1194,7 +1286,21 @@ async function boot(): Promise<void> {
       // was written is an array with no bound and no reader — the pre-022a loop
       // discarded those events. `endMission` runs after this drain, so the final
       // frame's `MissionComplete` is still logged on the frame it lands.
-      const logging = runner.screen() === 'Mission'
+      /**
+       * ON SCREEN AT ALL, which gates the FX below as well as the log.
+       *
+       * The session keeps stepping behind the Debrief and Boot Hill — that is
+       * deliberate and the HUD already skips its update for it. The FX layer did
+       * not, so `addShake` went on kicking the camera under an end-of-mission
+       * panel and effects burned through their lifetimes where nobody could see
+       * them. Both are invisible bugs in the literal sense: the only symptom is a
+       * view that will not sit still behind a screen that is supposed to be calm.
+       *
+       * The LOG is a separate question and keeps its own name: it is about which
+       * events belong to the mission being summarised, not about what is drawn.
+       */
+      const onMission = runner.screen() === 'Mission'
+      const logging = onMission
       for (const event of session.events()) {
         // KEPT, NOT JUST READ (ticket 022a). The batch is the only channel out
         // of the sim and it is drained once; the campaign needs the whole
@@ -1205,7 +1311,52 @@ async function boot(): Promise<void> {
         // already clamps the far end to the near face of whatever the round
         // meets, so a tracer drawn to `targetX`/`targetZ` stops at the wall
         // without a line of geometry code asking whether it should.
-        else if (event.type === 'ShotFired') tracers.add(event, elapsed)
+        else if (onMission && event.type === 'ShotFired') {
+          tracers.add(event, elapsed)
+          // AND A FLASH AT THE BARREL. The tracer says where the round went; the
+          // flash says who fired it, and a miss fires both — see `ShotFired.hit`.
+          effects.add({ kind: 'muzzle', x: event.originX, z: event.originZ, scale: 1 }, elapsed)
+        }
+        // A BURST, A SCAR AND A KICK, all from the one event and none of them
+        // asking the world anything: `Explosion` already carries the position it
+        // actually went off at and the radius it went off with (ticket 015).
+        else if (onMission && event.type === 'Explosion') {
+          // SCALED BY THE BLAST'S OWN RADIUS, so a rocket and a grenade are
+          // visibly different sizes and the effect covers the ground the
+          // ordnance actually damaged rather than a number chosen here.
+          // AND AT THE HEIGHT IT WENT OFF AT. A grenade whose fuse expires before
+          // impact detonates in mid-air, and `ExplosionEvent` says in capitals
+          // that an airburst reported on the ground hides the whole mechanic —
+          // so the one thing the event goes out of its way to carry is drawn.
+          // The scar stays on the terrain regardless; a scorch mark hanging in
+          // the sky is over ground nothing burned.
+          effects.add(
+            { kind: 'burst', x: event.x, y: event.y, z: event.z, scale: event.radiusTiles },
+            elapsed,
+          )
+          scars.add({ kind: 'decal', x: event.x, z: event.z, scale: event.radiusTiles }, elapsed)
+          // THE CALL `camera-rig.ts` HAS BEEN WAITING FOR SINCE TICKET 013. The
+          // distance is measured from where the camera is looking NOW rather
+          // than from the level's centre: a blast under the squad the player is
+          // watching should shake, and the identical blast four screens away
+          // must not. `shakeFor` is bounded and never returns NaN, which matters
+          // because the rig takes the STRONGEST request and no later check can
+          // undo one that got in.
+          const focus = stage.rig.target
+          stage.rig.addShake(
+            shakeFor(Math.hypot(event.x - focus.x, event.z - focus.z), event.radiusTiles),
+          )
+        }
+        // WHERE HE IS BEING DRAWN, not where the sim last had him. A death that
+        // cannot be placed — no corpse among the drawables, which a frame that
+        // ran no step cannot produce one of — draws nothing rather than putting a
+        // puff at the origin of the map.
+        else if (onMission && event.type === 'UnitDied') {
+          const body = drawables.find((entity) => entity.id === event.id)
+          if (body !== undefined) {
+            effects.add({ kind: 'death', x: body.x, z: body.z, scale: 1 }, elapsed)
+          }
+        }
       }
       // NOT UPDATED WHILE HIDDEN. The session keeps stepping behind the Debrief
       // and Boot Hill, so this would go on writing a clock and a roster nobody
@@ -1238,6 +1389,11 @@ async function boot(): Promise<void> {
       // clock, so a frame that ran no simulation step still has to redraw the
       // streaks a little dimmer than it found them.
       stage.tracerFx.update(tracers.visible(elapsed))
+      // AND THE EFFECTS, on the same clock and for the same reason: a burst
+      // fades on the display's clock, so a frame that ran no simulation step
+      // still has to redraw it a little dimmer than it found it.
+      stage.decalFx.update(scars.visible(elapsed))
+      stage.effectFx.update(effects.visible(elapsed))
       // BEFORE the render, so this frame draws what this frame decided. Absent
       // `?debug=1` this is one optional-call check per frame and no debug module
       // was ever fetched, let alone evaluated.

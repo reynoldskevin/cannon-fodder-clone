@@ -109,6 +109,18 @@ describe('effects expire on the RENDER clock', () => {
     expect(FX_LIFETIME_SECONDS.muzzle).toBeLessThan(FX_LIFETIME_SECONDS.death)
   })
 
+  it('and an effect asked about BEFORE it happened is at the start, not brighter', () => {
+    /**
+     * A hitching frame can ask about a time it has already run past — and the
+     * renderer draws alpha as `peak * (1 - fade)`, so a negative fade comes out
+     * BRIGHTER than a live effect. `fx.ts` guards it and says so; nothing was
+     * checking, and removing the guard left the whole suite green.
+     */
+    const fx = createFxBuffer()
+    fx.add(spawn('burst'), 10)
+    expect(fx.visible(5)[0]?.fade).toBe(0)
+  })
+
   it('an expired effect frees nothing and destroys no earlier answer', () => {
     /**
      * `visible` IS A QUERY. Expiring entries inside it — the obvious spelling —

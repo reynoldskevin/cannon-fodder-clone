@@ -27,6 +27,9 @@ const THREE_MESSAGE =
 const LAYER_MESSAGE =
   'src/core/** and tools/** must not depend on any other source layer (render/app/ui/input/audio): those layers may import three, so depending on them breaks the engine-free boundary.'
 
+const PRESENTATION_MESSAGE =
+  'src/core/render-state/** and src/core/view/** decide what is DRAWN and must not reach the game rules (core/combat, core/ordnance, core/world). That separation is what lets the FX layer be added after the simulation without any visual change altering a mission.'
+
 /** Sibling layers that src/core and tools may never reach into. */
 const SIBLING_LAYERS = ['render', 'app', 'ui', 'input', 'audio']
 
@@ -146,6 +149,56 @@ export default tseslint.config(
     rules: {
       'no-restricted-imports': ['error', forbiddenInCore],
       'no-restricted-syntax': ['error', ...forbiddenSyntaxInCore],
+    },
+  },
+  {
+    /**
+     * THE PRESENTATION MODULES INSIDE `core` MAY NOT REACH THE GAME'S RULES
+     * (ticket 025).
+     *
+     * `core/render-state` and `core/view` decide what is DRAWN — which streaks
+     * are on screen, which effects are alive, how hard a blast shakes the
+     * camera. That is what lets the whole FX layer be added in milestone 4,
+     * after the simulation and after every balance decision: a purely visual
+     * system cannot change a mission. The moment one of them imports a weapon
+     * table or an ordnance spec, an FX tuning change becomes a balance change
+     * and that property is gone.
+     *
+     * ADDED BECAUSE A COMMENT CLAIMED IT WAS ALREADY TRUE AND IT WAS NOT. Ticket
+     * 025's own determinism test asserted in prose that this was "a compile-time
+     * fact"; adversarial review checked, added `import { ORDNANCE }` to
+     * `core/render-state/fx.ts`, and got a clean lint and a green suite. The
+     * rule above only ever restricted the SIBLING layers. Nothing in the tree
+     * violated the boundary — but nothing enforced it either, which is precisely
+     * the false-confidence this project keeps finding.
+     */
+    files: ['src/core/render-state/**/*.{ts,tsx}', 'src/core/view/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            ...forbiddenInCore.patterns,
+            {
+              group: [
+                '**/core/combat',
+                '**/core/combat/**',
+                '**/core/ordnance',
+                '**/core/ordnance/**',
+                '**/core/world',
+                '**/core/world/**',
+                '../combat',
+                '../combat/**',
+                '../ordnance',
+                '../ordnance/**',
+                '../world',
+                '../world/**',
+              ],
+              message: PRESENTATION_MESSAGE,
+            },
+          ],
+        },
+      ],
     },
   },
 )
