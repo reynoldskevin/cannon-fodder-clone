@@ -64,6 +64,24 @@ describe('the panel is the same column Boot Hill draws', () => {
     // And the literal is gone from it, which is the half that actually rots.
     expect(bootHill).not.toContain('clamp(11rem, 22vw, 16rem)')
   })
+
+  it('and the HUD is pushed clear of the rail by that same width', () => {
+    /**
+     * THE OVERLAP IS NOT AN EDGE CASE — IT IS EVERY MISSION. The HUD is a fixed
+     * card that sat at `left:0.75rem`, which is INSIDE a full-height rail flush
+     * to the left edge, and the two are shown on exactly the same screens. The
+     * HUD is the higher `z-index`, so the roster would read through it.
+     *
+     * PINNED HERE BECAUSE NOTHING ELSE CAN. `hud.ts` reaches for `document` in
+     * `createHud` but not at module scope, so its `PANEL_STYLE` is out of reach
+     * of an import under `environment: 'node'` only because it is not exported —
+     * hence a source read. Without this assertion the offset is a line anybody
+     * could tidy away, and the symptom would be a HUD over the names.
+     */
+    const hud = source('hud.ts')
+    expect(hud).toMatch(/from '\.\/roster-column'/)
+    expect(hud).toMatch(/left:calc\(\$\{ROSTER_COLUMN_WIDTH\}/)
+  })
 })
 
 describe('a row is a badge, a name, and the same badge again', () => {

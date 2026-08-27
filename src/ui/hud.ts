@@ -21,6 +21,7 @@
  */
 
 import { selectorLine } from '../core/armoury'
+import { ROSTER_COLUMN_WIDTH } from './roster-column'
 import { FIXED_TIMESTEP } from '../core/world'
 import type { ArmourySlot } from '../core/armoury'
 import type { ObjectiveProgress } from '../core/objectives'
@@ -92,7 +93,18 @@ const PANEL_DISPLAY = 'flex'
 const PANEL_STYLE = [
   'position:fixed',
   'top:0.75rem',
-  'left:0.75rem',
+  /**
+   * CLEAR OF THE SQUAD RAIL (ticket 065). The rail is a fixed, full-height
+   * column flush to the left edge and the HUD is a fixed card that used to sit
+   * at `0.75rem` — which is INSIDE it. Both are shown on exactly the same
+   * screens, so the overlap would not be an edge case: it would be every
+   * mission, with the roster reading through the panel.
+   *
+   * BUILT FROM THE SHARED WIDTH rather than from a number that happens to clear
+   * it today. A second spelling would put the HUD back over the rail the day
+   * either column was resized, and nothing would fail.
+   */
+  `left:calc(${ROSTER_COLUMN_WIDTH} + 0.75rem)`,
   'z-index:40',
   `display:${PANEL_DISPLAY}`,
   'flex-direction:column',
