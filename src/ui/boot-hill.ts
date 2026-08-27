@@ -296,17 +296,12 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
 
   const heroesHeading = sectionHeading('HEROES')
   /**
-   * The only line an empty hill shows.
-   *
-   * NO COUNT ANYWHERE (ticket 058). "5 men lie here" was a number the column was
-   * already holding five rows of, and a second place to keep it is a second place
-   * to get it wrong. This says nothing at all once the first man has fallen; it
-   * exists so a first-mission player is not shown a gold heading over a void.
+   * NO EMPTY-STATE LINE AND NO COUNT (tickets 058 and 060). "5 men lie here" was
+   * a number the column was already holding five rows of; "No one has fallen yet"
+   * was a sentence under a gold bar announcing a section with nothing in it. A
+   * player who has lost nobody is told so by a hill with no crosses on it, which
+   * is the whole picture and does not need a caption.
    */
-  const gravesEmpty = document.createElement('p')
-  gravesEmpty.textContent = 'No one has fallen yet.'
-  gravesEmpty.style.cssText = `margin:0;font-size:0.8rem;color:${MUTED}`
-
   const graves = document.createElement('ul')
   graves.style.cssText = LIST_STYLE
 
@@ -331,7 +326,6 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
 
   roster.append(
     heroesHeading,
-    gravesEmpty,
     graves,
     squadHeading,
     squad,
@@ -497,8 +491,23 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
     setText(score, `${String(model.enemyKilled)} : ${String(model.casualties)}`)
 
     const count = model.graves.length
-    const noGraves = count === 0 ? 'block' : 'none'
-    if (gravesEmpty.style.display !== noGraves) gravesEmpty.style.display = noGraves
+    /**
+     * THE WHOLE HEROES SECTION GOES WHEN THE HILL IS EMPTY (ticket 060), heading
+     * and all — the same bargain PROMOTIONS has always made below. A gold bar
+     * over nothing reads as a panel that failed to load its own contents, and on
+     * a first mission it is the first thing on the screen.
+     *
+     * Restored to the EXPLICIT `display` each element was built with rather than
+     * to `''`: clearing the property drops the inline `display:flex` the list's
+     * `cssText` set, and the column silently loses its gap. Same trap as the
+     * promotions block.
+     */
+    const heroesShown = count === 0 ? 'none' : 'flex'
+    if (graves.style.display !== heroesShown) graves.style.display = heroesShown
+    const heroesHeadingShown = count === 0 ? 'none' : 'block'
+    if (heroesHeading.style.display !== heroesHeadingShown) {
+      heroesHeading.style.display = heroesHeadingShown
+    }
 
     // `fallenThisMission` is a subset of `graves` by position at the END of the
     // list — the dead list is append-only — so the fresh stones are the last
