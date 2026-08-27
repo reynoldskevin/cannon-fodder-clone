@@ -187,6 +187,30 @@ const CELL_WORLD_HEIGHT: Readonly<Record<string, number>> = {
   palmtree2: 2.85,
   palmtree3: 2.85,
   bush: 1.9,
+  /**
+   * ORDNANCE IN FLIGHT (ticket 053), and both are MEASURED off the art rather
+   * than guessed at.
+   *
+   * The number is the whole 1024px CELL, and neither sprite fills its cell: the
+   * grenade's painted bbox is 502x791 and the rocket's 929x884. So the figures
+   * that matter — what a player actually sees against a soldier, whose painted
+   * height is 1.54 world units — are:
+   *
+   *   grenade  0.58 x 791/1024 = 0.45 world, 29% of a soldier
+   *   rocket   0.81 x 884/1024 = 0.70 world, 45% of a soldier
+   *
+   * NOT TO SCALE, DELIBERATELY. A real grenade beside a real man is a couple of
+   * pixels at this zoom; the point of drawing the round at all is that the player
+   * can follow the arc and see where it is going to land, and a faithful one
+   * would be invisible. These are the Cannon Fodder proportions — a readable icon
+   * that still reads as smaller than the man who threw it.
+   *
+   * The rocket is the bigger of the two because it is the bigger weapon, and
+   * because its art is nearly square where the grenade's is tall: matching their
+   * painted HEIGHTS would have drawn a rocket narrower than a grenade.
+   */
+  grenade: 0.58,
+  rocket: 0.81,
 }
 
 /** Fallback for a source the table above does not name, so new art still draws. */

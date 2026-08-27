@@ -355,6 +355,29 @@ const FIRE_TICKS = Math.ceil(FIRE_FRAME_COUNT / FIRE_FPS / FIXED_TIMESTEP)
  */
 const PROP_ID_BASE = 2_000_000
 
+/**
+ * Where the ids of ROUNDS IN THE AIR start (ticket 053), on exactly the argument
+ * `PROP_ID_BASE` makes above, and against a sharper collision than props ever
+ * faced.
+ *
+ * `ordnance/system.ts` issues a projectile id from its own counter starting at
+ * ONE — the same numbers `World` hands to soldiers — because until now nothing
+ * drew a projectile and the two spaces never met. Drawn unoffset, a grenade with
+ * id 3 and soldier 3 would share the renderer's facing memory and animation
+ * phase, so the man would inherit the grenade's heading and the grenade his.
+ */
+const ORDNANCE_ID_BASE = 3_000_000
+
+/**
+ * The synthetic animation a round in the air answers to.
+ *
+ * The same string `session/props.ts` uses and for the same reason: `UnitVisual`
+ * resolves an animation it does not know to the source's single held frame, so a
+ * one-frame sprite needs no clip in the manifest. Spelled here rather than
+ * imported from `src/render`, like every other clip name in this file.
+ */
+const STATIC_ANIMATION = 'static'
+
 /** A unit's position at the start of the step just run — the facing baseline. */
 interface Track {
   x: number
@@ -1230,6 +1253,45 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
     }
 
     for (const prop of propRenderEntities(level, groundHeightAt, PROP_ID_BASE)) out.push(prop)
+
+    /**
+     * EVERY ROUND IN THE AIR (ticket 053).
+     *
+     * `inFlight()` has existed since ticket 015 and its header says it exists FOR
+     * THE RENDERER; nothing had ever called it, so a thrown grenade was invisible
+     * between the hand and the detonation and the whole arc happened off screen.
+     *
+     * THE UNIT IS THE ORDNANCE'S OWN NAME, so nothing here has to know what
+     * ordnance exists: a round is drawn if `tools/spritegen` packed a prop of
+     * that name, and new ordnance needs art rather than a table entry. A name
+     * with no art draws nothing, exactly as an unknown prop does.
+     *
+     * AND `y` IS THE GROUND PLUS THE ROUND'S OWN HEIGHT. `RenderEntity.y` is
+     * where the sprite's feet sit, so a projectile handed the bare terrain height
+     * would slide along the floor to its target — which on screen is
+     * indistinguishable from ordnance that does not arc at all, and would waste
+     * the ballistics the sim is already solving.
+     */
+    for (const round of ordnance.inFlight()) {
+      const tile = tileOf(round.x, round.z)
+      out.push({
+        id: ORDNANCE_ID_BASE + round.id,
+        unit: round.ordnance,
+        animation: STATIC_ANIMATION,
+        x: round.x,
+        z: round.z,
+        y: groundHeightAt(tile.x, tile.y) + round.y,
+        // No facing. A round has no eight-way art, and a zero vector leaves the
+        // renderer's facing memory alone rather than fighting it.
+        dx: 0,
+        dz: 0,
+        animationStart: 0,
+        // NOT SUBMERGED, whatever it is over. A grenade in the air above a river
+        // is not in the river, and the tile lookup that decides submersion for a
+        // man standing on it says nothing about a round eight units above it.
+        submersion: 0,
+      })
+    }
 
     return out
   }
