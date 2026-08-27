@@ -66,18 +66,18 @@ export interface BriefingModel {
   /** In assignment order. */
   readonly squad: readonly FlowSoldier[]
   /**
-   * The men who are NOT going: living recruits left on the hill (ticket 053).
+   * EVERY LIVING MAN IN THE CAMPAIGN, the landing party included (ticket 061).
    *
-   * THE RESERVE, NOT THE ROSTER. The card already says how many are going one
-   * line above, so counting the living would count the landing party twice and
-   * tell a player with eight men and two in the boat that he has eight in
-   * reserve. It is the number the original's "13 RECRUITS REMAINING" meant: what
-   * is left if this lot do not come home.
+   * TICKET 053 SHIPPED THIS AS THE RESERVE — the roster minus whoever was in the
+   * boat — on the reading that a card already saying how many are going should
+   * not count them twice. That is not what the number is for. "n RECRUITS
+   * REMAINING" is the campaign's manpower, the figure that only ever falls and
+   * that tells the player how close he is to running out of men; a count that
+   * excluded the men on this mission would DROP by the size of the landing party
+   * on the way into a briefing and climb back afterwards, which reads as losses
+   * that never happened.
    *
-   * BY IDENTITY AND NOT BY SUBTRACTION. `roster.length - squad.length` is the
-   * obvious spelling and it goes wrong quietly the first time a squad carries a
-   * man the roster does not — a stale assignment, a dead man deployed — reporting
-   * a reserve larger than the campaign has.
+   * SO THE SQUAD IS NO LONGER SUBTRACTED, and the roster is counted whole.
    */
   readonly recruitsRemaining: number
 }
@@ -112,12 +112,12 @@ const soldier = (man: Recruit): FlowSoldier => ({ id: man.id, name: man.name, ra
  * required argument that every caller with nothing to say fills in with 0
  * anyway.
  *
- * `roster` DEFAULTS TO THE SQUAD, WHICH IS "NOBODY IS LEFT BEHIND" (ticket 053).
- * The card names a reserve, and a caller that has not said who is alive cannot
- * have one computed for it — the honest answer for "everyone I know about is in
- * the boat" is zero, and it is the same shape of default as `levelIndex`'s. The
- * runner passes the real living roster, so the only callers taking the default
- * are tests about the other fields.
+ * `roster` DEFAULTS TO THE SQUAD, which since ticket 061 is "the only men I have
+ * been told about are the ones going". A caller that has not said who else is
+ * alive cannot have that invented for it, and the squad is the one list it has
+ * certainly named — the same shape of default as `levelIndex`'s. The runner
+ * passes the real living roster, so the only callers taking the default are
+ * tests about the other fields.
  */
 export function briefingModel(
   level: LevelData,
@@ -126,7 +126,6 @@ export function briefingModel(
   roster: readonly Recruit[] = squad,
 ): BriefingModel {
   const men = squad.map(soldier)
-  const deployed = new Set(men.map((man) => man.id))
   return {
     levelNumber: levelIndex + 1,
     // READ OFF THE LIST THIS MODEL IS ABOUT TO RETURN, not off `squad`: the two
@@ -136,7 +135,7 @@ export function briefingModel(
     levelName: level.name,
     objectives: level.objectives.map((objective) => objective.type),
     squad: men,
-    recruitsRemaining: roster.filter((man) => !deployed.has(man.id)).length,
+    recruitsRemaining: roster.length,
   }
 }
 
