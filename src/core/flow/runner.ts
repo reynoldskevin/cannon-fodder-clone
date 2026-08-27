@@ -353,7 +353,12 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
     // card reads "Mission 3"; `levelIndex()` is the 0-based position in the
     // level array, and converting it in two places is how one of them ends up
     // saying "Mission 2" over level 3.
-    briefing: () => briefingModel(currentLevel(), squadRecords(), levelIndex()),
+    // THE LIVING ROSTER GOES IN TOO (ticket 053), because the card names a
+    // reserve: `recruitsAvailable` is the same list Recruitment draws from, so
+    // "13 recruits remaining" is the men the campaign actually has left rather
+    // than a number this screen keeps for itself.
+    briefing: () =>
+      briefingModel(currentLevel(), squadRecords(), levelIndex(), recruitsAvailable(state)),
 
     bootHill: () =>
       // NO BEFORE-STATE MEANS NO PROMOTIONS AND NO FRESH STONES, which is the

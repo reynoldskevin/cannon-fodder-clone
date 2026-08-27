@@ -65,6 +65,21 @@ export interface BriefingModel {
   readonly objectives: readonly string[]
   /** In assignment order. */
   readonly squad: readonly FlowSoldier[]
+  /**
+   * The men who are NOT going: living recruits left on the hill (ticket 053).
+   *
+   * THE RESERVE, NOT THE ROSTER. The card already says how many are going one
+   * line above, so counting the living would count the landing party twice and
+   * tell a player with eight men and two in the boat that he has eight in
+   * reserve. It is the number the original's "13 RECRUITS REMAINING" meant: what
+   * is left if this lot do not come home.
+   *
+   * BY IDENTITY AND NOT BY SUBTRACTION. `roster.length - squad.length` is the
+   * obvious spelling and it goes wrong quietly the first time a squad carries a
+   * man the roster does not — a stale assignment, a dead man deployed — reporting
+   * a reserve larger than the campaign has.
+   */
+  readonly recruitsRemaining: number
 }
 
 /** The post-mission summary, awaiting the Boot Hill screen that will show it. */
@@ -96,13 +111,22 @@ const soldier = (man: Recruit): FlowSoldier => ({ id: man.id, name: man.name, ra
  * position can honestly give — the alternatives are `NaN` on the card, or a
  * required argument that every caller with nothing to say fills in with 0
  * anyway.
+ *
+ * `roster` DEFAULTS TO THE SQUAD, WHICH IS "NOBODY IS LEFT BEHIND" (ticket 053).
+ * The card names a reserve, and a caller that has not said who is alive cannot
+ * have one computed for it — the honest answer for "everyone I know about is in
+ * the boat" is zero, and it is the same shape of default as `levelIndex`'s. The
+ * runner passes the real living roster, so the only callers taking the default
+ * are tests about the other fields.
  */
 export function briefingModel(
   level: LevelData,
   squad: readonly Recruit[],
   levelIndex = 0,
+  roster: readonly Recruit[] = squad,
 ): BriefingModel {
   const men = squad.map(soldier)
+  const deployed = new Set(men.map((man) => man.id))
   return {
     levelNumber: levelIndex + 1,
     // READ OFF THE LIST THIS MODEL IS ABOUT TO RETURN, not off `squad`: the two
@@ -112,6 +136,7 @@ export function briefingModel(
     levelName: level.name,
     objectives: level.objectives.map((objective) => objective.type),
     squad: men,
+    recruitsRemaining: roster.filter((man) => !deployed.has(man.id)).length,
   }
 }
 
