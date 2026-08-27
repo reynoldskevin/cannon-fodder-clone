@@ -131,6 +131,15 @@ describe('the cues a firefight actually makes', () => {
   })
 
   it('a man falling is a death', () => {
+    /**
+     * AND THIS SURVIVED TICKET 051, WHICH DELETED THE FX KIND OF THE SAME NAME.
+     *
+     * The red quad a falling man left at chest height is gone; the SOUND is not,
+     * and the two were never the same thing — `cueFor` answers the event and
+     * `main.ts` places the cue on the body. A deletion that took both would be a
+     * silent firefight, and it would have been an easy one to make: the strings
+     * match, and no compile error connects them.
+     */
     expect(of('UnitDied')?.cue).toBe('death')
   })
 

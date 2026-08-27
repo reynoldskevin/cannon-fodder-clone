@@ -26,9 +26,9 @@ describe('the buffer is a bounded ring', () => {
   it('holds what it is given, oldest first', () => {
     const fx = createFxBuffer({ capacity: 4 })
     fx.add(spawn('burst', 1, 1), 0)
-    fx.add(spawn('death', 2, 2), 0)
+    fx.add(spawn('muzzle', 2, 2), 0)
     const live = fx.visible(0)
-    expect(live.map((e) => e.kind)).toEqual(['burst', 'death'])
+    expect(live.map((e) => e.kind)).toEqual(['burst', 'muzzle'])
     expect(live.map((e) => e.x)).toEqual([1, 2])
   })
 
@@ -84,8 +84,8 @@ describe('effects expire on the RENDER clock', () => {
 
   it('fading monotonically in [0, 1) on the way', () => {
     const fx = createFxBuffer()
-    const life = FX_LIFETIME_SECONDS.death
-    fx.add(spawn('death'), 0)
+    const life = FX_LIFETIME_SECONDS.burst
+    fx.add(spawn('burst'), 0)
     let previous = -1
     for (let t = 0; t < life; t += life / 20) {
       const fade = fx.visible(t)[0]?.fade
@@ -98,15 +98,15 @@ describe('effects expire on the RENDER clock', () => {
 
   it('and each kind lives for its own span, not one shared number', () => {
     /**
-     * A muzzle flash is a blink; a death effect hangs. One lifetime for all
-     * three would make whichever it was tuned for look right and the other two
-     * look broken — and it is the kind of thing that reads as "the FX are bad"
-     * rather than as a number somebody chose.
+     * A muzzle flash is a blink; a detonation hangs. One lifetime for both would
+     * make whichever it was tuned for look right and the other look broken — and
+     * it is the kind of thing that reads as "the FX are bad" rather than as a
+     * number somebody chose.
      */
     const spans = FX_KINDS.map((k) => FX_LIFETIME_SECONDS[k])
     expect(new Set(spans).size).toBeGreaterThan(1)
     for (const k of FX_KINDS) expect(FX_LIFETIME_SECONDS[k]).toBeGreaterThan(0)
-    expect(FX_LIFETIME_SECONDS.muzzle).toBeLessThan(FX_LIFETIME_SECONDS.death)
+    expect(FX_LIFETIME_SECONDS.muzzle).toBeLessThan(FX_LIFETIME_SECONDS.burst)
   })
 
   it('and an effect asked about BEFORE it happened is at the start, not brighter', () => {
@@ -197,14 +197,20 @@ describe('nothing an explosion leaves behind outlives the fight', () => {
     expect(outliving).toEqual([])
   })
 
-  it('and there is no decal kind left to spawn', () => {
+  it('and neither the decal nor the death puff is left to spawn', () => {
     /**
      * ASSERTED ON THE RUNTIME LIST as well as in the type. `FX_KINDS` is what
      * `FxKind` is derived from, so a re-added entry is a compile error at every
      * `Record<FxKind, ...>` — but only for code that is compiled. This is what
-     * fails if the kind comes back through data.
+     * fails if a kind comes back through data.
+     *
+     * TWO KINDS HAVE NOW GONE THIS WAY. Ticket 047 removed the scorch mark and
+     * ticket 051 the dull red puff a falling man left at chest height — both
+     * coloured quads standing in for an effect, and the second had nothing left
+     * to say once ticket 049 kept the body itself on the field. What remains is
+     * the muzzle flash and the detonation, which are both LIGHT.
      */
-    expect([...FX_KINDS]).toEqual(['muzzle', 'burst', 'death'])
-    expect(Object.keys(FX_LIFETIME_SECONDS).sort()).toEqual(['burst', 'death', 'muzzle'])
+    expect([...FX_KINDS]).toEqual(['muzzle', 'burst'])
+    expect(Object.keys(FX_LIFETIME_SECONDS).sort()).toEqual(['burst', 'muzzle'])
   })
 })
