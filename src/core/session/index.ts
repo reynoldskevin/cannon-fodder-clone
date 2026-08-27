@@ -959,26 +959,40 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
    * and therefore no soldier who was ever NOT standing still.
    */
   function animationFor(entity: Entity): string {
-    // A MAN WHO CANNOT FIRE IS NOT DRAWN FIRING (ticket 042).
-    //
-    // Both fire arms answer to this, not just the first. `isFiring` is the
-    // standing ORDER and `firingTicksAgo` is the tail of a real shot, and a man
-    // who fires on the bank and steps into the river would otherwise flash the
-    // rest of that clip while chest-deep.
-    //
-    // `isFiring` ITSELF IS LEFT ALONE, deliberately. It is a truthful answer to
-    // its own question — does he hold an order — which ticket 007b keeps across
-    // the crossing on purpose so he resumes the instant he lands. It also drives
-    // the firing man's FACING a few branches below, and a wading man should
-    // still turn toward the point he is trying to shoot at: aiming and unable to
-    // fire is the readable version of this rule. Narrowing it here would have
-    // taken that away silently.
-    if (canFireFromHere(entity)) {
-      if (combat.isFiring(entity.id)) return FIRE_ANIMATION
-      if (firingTicksAgo(entity.id) !== null) return FIRE_ANIMATION
-    }
+    // READS `isDischarging`, WHICH THE SOUND ALSO READS (ticket 044). The
+    // condition used to be spelled out here; it is one predicate now so the
+    // picture and the audio cannot answer differently. See `isDischarging`.
+    if (isDischarging(entity)) return FIRE_ANIMATION
     if (entity.state === STATE_MOVING) return WALK_ANIMATION
     return IDLE_ANIMATION
+  }
+
+  /**
+   * Whether this unit is putting rounds down THIS INSTANT.
+   *
+   * THE ONE FACT BEHIND BOTH THE FIRE ANIMATION AND THE GUNFIRE VOICE. Ticket
+   * 042 fixed a man being drawn firing while the water gate refused every round,
+   * and ticket 044 gave the sound the same gate — but through this function
+   * rather than a second copy of the condition, because two functions that agree
+   * today is the shape this project has shipped a defect from three times.
+   *
+   * NOT `combat.isFiring`, WHICH ANSWERS A DIFFERENT QUESTION. That is "does he
+   * hold a standing order", which ticket 007b keeps across a river crossing on
+   * purpose so he resumes the instant he lands, and which also turns him to face
+   * his aim point. A wading man should still AIM; he is simply not firing, and
+   * this is the function that says so.
+   *
+   * TWO WAYS TO BE FIRING, and both answer to the terrain. The standing order is
+   * the player's held button. `firingTicksAgo` is the tail of a round actually
+   * fired, and it is how an AUTO-ENGAGING enemy registers at all — nobody issues
+   * him an order, so without it every enemy in the game would be silent and
+   * still while shooting. Gating only the first arm would let a man who fired on
+   * the bank and stepped into the river flash the rest of that clip chest-deep.
+   */
+  function isDischarging(entity: Entity): boolean {
+    if (!canFireFromHere(entity)) return false
+    if (combat.isFiring(entity.id)) return true
+    return firingTicksAgo(entity.id) !== null
   }
 
   /**
@@ -1183,6 +1197,12 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
         // "when he arrives" would leave the squad waist-deep in the jungle for
         // the rest of the mission the first time a crossing was interrupted.
         submersion: submersionAt(tile),
+        // THE SAME ANSWER THE ANIMATION ABOVE WAS CHOSEN FROM (ticket 044), not
+        // a second reading of it. `animationFor` is a string and the audio needs
+        // a fact, and deriving one from the other — `animation === 'fire'` — is
+        // the coupling this field exists to avoid: it would break silently the
+        // day a second clip counted as firing.
+        firing: isDischarging(entity),
         tint: entity.team === 'enemy' ? ENEMY_TINT : undefined,
       })
     }

@@ -78,28 +78,37 @@ const of = (type: SimEvent['type']): ReturnType<typeof cueFor> => {
 }
 
 describe('the cues a firefight actually makes', () => {
-  it('a round fired is the rifle', () => {
-    expect(of('ShotFired')?.cue).toBe('rifle')
+  /**
+   * A ROUND ASKS FOR NOTHING SINCE TICKET 044, and the three cases that used to
+   * live here are gone with their subject rather than weakened.
+   *
+   * `gunfire.wav` was measured and is a continuous automatic burst — a shot every
+   * ~0.1 s across the whole 1.492 s with no decay. Fired as a one-shot per round
+   * it gave 1.5 s of automatic fire per trigger pull, overlapped a single man
+   * three deep against his own 0.53 s cooldown, and went on sounding after the
+   * player released. Rifle fire is now one sustained voice driven per frame by
+   * `firingCue`; this arm must stay silent or every round plays twice.
+   *
+   * TWO THINGS THOSE CASES PROTECTED, AND WHERE THEY WENT:
+   *
+   * The MUZZLE, not the target. `ShotFired` carries both endpoints and panning
+   * from `targetX/targetZ` put the report where the round landed — up to eight
+   * tiles from the man who pulled the trigger and on the wrong side of the screen
+   * whenever he shot across it. The sustained voice sits on the FIRING MAN, so
+   * the property survives; what is lost is per-round placement, which one mono
+   * sample could never have given.
+   *
+   * An unknown WEAPON still being heard. `Weapon` is an open enum — ticket 036
+   * added `enemy-rifle` without touching any union — and a table returning
+   * nothing for an unrecognised one would ship the next weapon mute. That is now
+   * structural rather than a table's fallback: `firingCue` is driven by whether a
+   * man is DISCHARGING, and never asks what he is holding.
+   */
+  it('a round asks for no cue of its own', () => {
+    expect(of('ShotFired')).toBeNull()
   })
 
-  it('and it is heard at the MUZZLE, not at the far end of its own tracer', () => {
-    /**
-     * `ShotFired` carries both endpoints. Panning from `targetX/targetZ` puts the
-     * report where the round LANDED — up to eight tiles from the man who pulled
-     * the trigger, and on the wrong side of the screen whenever he is shooting
-     * across it. A player locating a shooter by ear would be sent to the wrong
-     * place, which is worse than no panning at all. Swapping them survived the
-     * suite.
-     */
-    const request = of('ShotFired')
-    expect({ x: request?.x, z: request?.z }).toEqual({ x: 0, z: 0 })
-  })
-
-  it('and a weapon nobody has heard of still makes a sound', () => {
-    // `Weapon` is an open enum — ticket 036 added `enemy-rifle` without touching
-    // any union. A table that returned nothing for an unknown weapon would make
-    // the next weapon added silently mute, which is the failure the exhaustive
-    // `switch` above exists to prevent one level up.
+  it('and neither does one from a weapon nobody has heard of', () => {
     const request = cueFor({
       ...stamp,
       type: 'ShotFired',
@@ -112,8 +121,7 @@ describe('the cues a firefight actually makes', () => {
       targetZ: 5,
       hit: false,
     })
-    expect(request).not.toBeNull()
-    expect(CUES.includes(request!.cue)).toBe(true)
+    expect(request).toBeNull()
   })
 
   it('a detonation is the explosion, wherever it went off', () => {

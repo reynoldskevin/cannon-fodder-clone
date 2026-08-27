@@ -111,24 +111,22 @@ export interface CueRequest {
 }
 
 /**
- * The cue each weapon identifier asks for, keyed by `ShotFired.weapon`.
+ * THE WEAPON TABLE IS GONE (ticket 044), and it is worth saying why rather than
+ * leaving the next reader to wonder where the grenade's cue went.
  *
- * `Weapon` IS AN OPEN ENUM — `combat/weapons.ts` says so in as many words — so
- * this is a lookup with a fallback rather than an exhaustive switch. A weapon
- * the table does not name still makes a rifle's noise: `FireRejectedEvent`'s
- * header puts the principle exactly, that silence reads as a broken control, and
- * a new weapon that fired silently would look like a bug in the weapon rather
- * than a missing row here.
+ * It mapped `ShotFired.weapon` to a cue with a rifle fallback, so an open enum
+ * could not ship a weapon mute. `ShotFired` now asks for no cue at all — rifle
+ * fire is one sustained voice — and the two other rows it held,
+ * `grenade-throw` and `rocket-launch`, were NEVER REACHABLE THROUGH IT:
+ * `ordnance/system.ts` has exactly one `world.emit`, the `Explosion` at
+ * detonation, and emits no launch event of any kind. Those two cues are still in
+ * `CUES` and their samples are still shipped and still unreachable, waiting for
+ * an `OrdnanceLaunched` event that has been outstanding since ticket 027.
+ *
+ * The protection the fallback gave is now structural: `firingCue` is driven by
+ * whether a man is DISCHARGING and never asks what he is holding, so a new
+ * weapon cannot be silent for want of a row.
  */
-const CUE_BY_WEAPON: Readonly<Record<string, Cue>> = {
-  rifle: 'rifle',
-  grenade: 'grenade-throw',
-  rocket: 'rocket-launch',
-}
-
-/** What an unrecognised weapon sounds like. See `CUE_BY_WEAPON`. */
-const DEFAULT_SHOT_CUE: Cue = 'rifle'
-
 /**
  * The sound `event` asks for, or `null` if it deliberately makes none.
  *
@@ -164,25 +162,31 @@ export function cueFor(event: SimEvent): CueRequest | null {
       return { cue: 'death', variant: variantForId(event.id) }
 
     /**
-     * THE ROUND LEAVING THE BARREL, at the shooter's end of it.
+     * SILENT SINCE TICKET 044, AND THIS IS THE ONE ARM WORTH READING TWICE.
      *
-     * `originX`/`originZ` and not the target: the report is made where the
-     * weapon is, and a rifle heard at the far end of its own tracer would put
-     * the shooter's position in the wrong ear — which is the one thing the pan
-     * exists to get right.
+     * A round used to ask for a whole `rifle` cue here. `gunfire.wav` was then
+     * MEASURED: its RMS envelope is a shot every ~0.1 s held flat across the
+     * whole 1.492 s at full amplitude to 1.45 s with no decay — a continuous
+     * automatic burst, which is to say a LOOP that was being fired as a one-shot.
      *
-     * A MISS STILL SOUNDS. `ShotFired.hit` is the accuracy roll's verdict and
-     * says in capitals that a miss is an event rather than a nothing; a firefight
-     * that went quiet the moment the rounds started going wide would read as the
-     * audio having broken.
+     * So one round bought 1.5 s of automatic fire. Against a 32-tick (0.53 s)
+     * rifle cooldown one man overlapped himself about three deep and a squad
+     * about twelve, which is what `PER_CUE_VOICE_CAP` was quietly absorbing. And
+     * releasing the trigger did nothing whatever: the voice ran to the end of its
+     * buffer, so the shooting stayed audible for up to a second and a half after
+     * the player let go.
+     *
+     * Rifle fire is now ONE SUSTAINED VOICE, started and stopped per frame from
+     * `firingCue` below. This arm must stay silent or the two paths double up and
+     * every round plays twice.
+     *
+     * WHAT WAS LOST, SAID PLAINLY: the shot's own origin. The sustained voice is
+     * placed at the nearest firing man rather than at each barrel, so a single
+     * round from across the map no longer pans to exactly where it came from. It
+     * is the honest limit of one mono sample, not an oversight.
      */
     case 'ShotFired':
-      return {
-        cue: CUE_BY_WEAPON[event.weapon] ?? DEFAULT_SHOT_CUE,
-        variant: 0,
-        x: event.originX,
-        z: event.originZ,
-      }
+      return null
 
     /**
      * WHERE IT ACTUALLY WENT OFF. `ExplosionEvent` carries the detonation point
@@ -340,6 +344,98 @@ export function gainFor(distanceTiles: number): number {
   const t = distanceTiles / AUDIO_REACH_TILES
   const remaining = 1 - t
   return remaining * remaining
+}
+
+// ---------------------------------------------------------------------------
+// The sustained voice (ticket 044)
+// ---------------------------------------------------------------------------
+
+/** A man currently discharging his weapon, as the sustained voice needs him. */
+export interface FiringSource {
+  readonly id: number
+  readonly x: number
+  readonly z: number
+}
+
+/** Where the camera is looking. Matches `src/audio`'s `AudioListener`. */
+interface ListenerAt {
+  readonly x: number
+  readonly z: number
+  readonly halfWidth: number
+}
+
+/**
+ * The one sustained rifle voice for this frame, or `null` for silence.
+ *
+ * CALLED EVERY FRAME WITH THE WHOLE LIST, not driven by events. That is the
+ * point of it: a sound that starts and stops with the trigger cannot be built
+ * out of `ShotFired`, which is a discrete thing that has already happened. The
+ * caller passes who is firing NOW and gets back what should be sounding NOW, and
+ * `null` genuinely means stop — see `cueFor`'s `ShotFired` arm for the
+ * measurement that forced this shape.
+ *
+ * THE NEAREST MAN WINS, AND THAT IS A HONEST LIMIT RATHER THAN A COMPROMISE.
+ * One `gunfire.wav` shipped, mono after the positional downmix, so a single
+ * voice can represent exactly one place; the loudest source is the only
+ * defensible choice of which. Fifteen enemies firing is not fifteen voices, and
+ * it was never going to be — the per-cue cap would have stolen them anyway, but
+ * arbitrarily rather than by distance.
+ *
+ * TIES BREAK ON THE LOWER ID, like every other ordering decision in this
+ * codebase, so two equidistant men cannot make a replay diverge on which one the
+ * voice followed. `>` and not `>=` in the comparison below is what does it.
+ *
+ * NON-FINITE POSITIONS ARE SKIPPED, NOT CLAMPED. This request goes straight to
+ * `StereoPanner.pan` and `AudioParam.value`, and both THROW on a NaN — inside
+ * the render loop, where a throw takes the frame and the mission with it. A man
+ * whose position is not a number is not a man who can be placed, so he is not
+ * heard; if he is the only one firing, the answer is silence.
+ *
+ * THE EXPLICIT GUARD IS BELT AND BRACES, AND DELETING IT CHANGES NOTHING TODAY —
+ * checked by deleting it and watching the suite stay green. `Math.hypot` of a
+ * non-finite coordinate is `NaN` or `Infinity`, and the `distance < bestDistance`
+ * comparison below is written positively, so neither can ever win: `NaN < x` is
+ * false, and `Infinity < Infinity` is false against the initial best. The guard
+ * is kept because that is a property of a comparison three lines away rather
+ * than of this rule, and the cost of restating the rule locally is one call to
+ * `Number.isFinite`. It is NOT independently covered by a test, and this note
+ * exists so nobody records a passing suite as proof that it does something.
+ *
+ * OUT OF EARSHOT IS SILENCE, not a quiet voice. A voice claimed for a sound at
+ * zero gain is still a voice, and a firefight the player cannot hear must not
+ * hold the sustained slot open while somebody beside him shoots. Measured with
+ * the same `AUDIO_REACH_TILES` `gainFor` uses, so the two cannot disagree about
+ * where earshot ends.
+ */
+export function firingCue(
+  sources: readonly FiringSource[],
+  listener: ListenerAt,
+): CueRequest | null {
+  let best: FiringSource | undefined
+  let bestDistance = Number.POSITIVE_INFINITY
+  for (const source of sources) {
+    if (!Number.isFinite(source.x) || !Number.isFinite(source.z)) continue
+    const distance = Math.hypot(source.x - listener.x, source.z - listener.z)
+    // Nearer wins; an exact tie goes to the LOWER ID. Written as two explicit
+    // comparisons rather than left to the order `sources` happens to arrive in:
+    // that order is the caller's iteration order, and a rule that depended on it
+    // would make the voice's choice a property of how the frame was assembled.
+    //
+    // The positive `distance < bestDistance` form means a NaN distance — which
+    // the finiteness guard above should already have excluded — loses rather
+    // than winning by failing a comparison.
+    const nearer = distance < bestDistance
+    const tied = distance === bestDistance && best !== undefined && source.id < best.id
+    if (!nearer && !tied) continue
+    bestDistance = distance
+    best = source
+  }
+  if (best === undefined) return null
+  // The same reach `gainFor` falls to zero at. Asked here as well as there so a
+  // voice is never STARTED for something inaudible, rather than started and then
+  // found to be silent.
+  if (!(bestDistance < AUDIO_REACH_TILES)) return null
+  return { cue: 'rifle', variant: 0, x: best.x, z: best.z }
 }
 
 // ---------------------------------------------------------------------------

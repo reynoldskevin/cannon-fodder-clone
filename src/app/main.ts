@@ -23,7 +23,7 @@ import { ordnanceForHotkey } from '../core/armoury'
 import { createTracerBuffer } from '../core/render-state/tracers'
 import { createFxBuffer } from '../core/render-state/fx'
 import { shakeFor } from '../core/view/shake'
-import { cueFor } from '../core/audio-events'
+import { cueFor, firingCue, type CueRequest } from '../core/audio-events'
 import { createAudioBus } from '../audio'
 import { createCampaignRunner, viewFor } from '../core/flow'
 import type { AdvanceResult, MissionHost, ViewId } from '../core/flow'
@@ -848,6 +848,26 @@ async function boot(): Promise<void> {
   let missionLog: SimEvent[] = []
 
   /**
+   * Who the sustained gunfire voice is following, held ACROSS frames (ticket 044).
+   *
+   * IT HAS TO OUTLIVE A FRAME, and that is not an optimisation. `drawables` is
+   * rebuilt only on a frame that actually stepped the simulation — above 60 Hz
+   * most frames step nothing at all — so recomputing this from `drawables`
+   * inline would hand `firingCue` an EMPTY list on most frames and answer
+   * `null`, which is the instruction to stop. On a 120 Hz display that is the
+   * gunfire cut off and restarted every other frame: a stutter that would read
+   * as a broken sample rather than as a wiring bug.
+   *
+   * So it is recomputed only when there is fresh state to compute it FROM, and
+   * replayed against a fresh listener every frame — which is also what keeps the
+   * pan tracking a camera the player is panning while nobody is shooting anew.
+   *
+   * CLEARED WITH `missionLog`, so one mission's firefight cannot follow the
+   * player into the next one's opening frame.
+   */
+  let firingVoice: CueRequest | null = null
+
+  /**
    * The browser's half of a mission (ticket 022a): the old `restart()`, given
    * the level and the men it always implied.
    *
@@ -912,6 +932,9 @@ async function boot(): Promise<void> {
     // placement — this function is synchronous, so no frame can run between here
     // and the `createSession` below; it sits next to its session for reading.
     missionLog = []
+    // With the log, and for the same reason: the last mission's shooting must
+    // not be what the next one's first frame is still following.
+    firingVoice = null
     // WITH THE MEN THE PLAYER CHOSE. `Session.assignment` is built from this and
     // is the map `missionReport` takes verbatim — it is the only place the sim's
     // entity ids and the campaign's recruit ids ever meet.
@@ -1264,10 +1287,32 @@ async function boot(): Promise<void> {
       // runs (see `Session.renderEntities`). Reading the drawables rather than
       // the world is the FX layer staying on the presentation side of the
       // boundary: it asks what is being drawn, never what is true.
+      /**
+       * WHERE THE EAR IS, for this frame's positional cues.
+       *
+       * The rig's yaw is zero, so `camera.right` is exactly half the visible
+       * world width along X and `rig.target` is the point the view is centred
+       * on — which is what `panFor` and `gainFor` want, and why neither needed a
+       * camera passed into `core`. Read ONCE per frame rather than per event: a
+       * volley is a dozen events against one camera position.
+       *
+       * READ BEFORE THE DRAWABLES ARE BUILT since ticket 044, because choosing
+       * which firing man the sustained voice follows is a question about
+       * distance from the ear, and that choice is made in the same block.
+       */
+      const focus = stage.rig.target
+      const listener = { x: focus.x, z: focus.z, halfWidth: stage.rig.camera.right }
       let drawables: readonly RenderEntity[] = []
       if (session.stepsLastAdvance > 0) {
         drawables = session.renderEntities(groundHeightAt)
         stage.built.entities.setEntities(drawables)
+        // RECOMPUTED ONLY HERE, where there is fresh state to compute it from.
+        // See `firingVoice`: `drawables` is empty on a frame that ran no steps,
+        // and asking `firingCue` about an empty list answers "stop".
+        firingVoice = firingCue(
+          drawables.filter((entity) => entity.firing === true),
+          listener,
+        )
       }
       // Drained every frame whether or not anything is listening yet: the batch
       // is the only channel out of the sim, and left undrained it would grow
@@ -1295,17 +1340,6 @@ async function boot(): Promise<void> {
        */
       const onMission = runner.screen() === 'Mission'
       const logging = onMission
-      /**
-       * WHERE THE EAR IS, for this frame's positional cues.
-       *
-       * The rig's yaw is zero, so `camera.right` is exactly half the visible
-       * world width along X and `rig.target` is the point the view is centred
-       * on — which is what `panFor` and `gainFor` want, and why neither needed a
-       * camera passed into `core`. Read ONCE per frame rather than per event: a
-       * volley is a dozen events against one camera position.
-       */
-      const focus = stage.rig.target
-      const listener = { x: focus.x, z: focus.z, halfWidth: stage.rig.camera.right }
       for (const event of session.events()) {
         // KEPT, NOT JUST READ (ticket 022a). The batch is the only channel out
         // of the sim and it is drained once; the campaign needs the whole
@@ -1411,6 +1445,29 @@ async function boot(): Promise<void> {
           }
         }
       }
+      /**
+       * THE GUNFIRE, WHICH IS A STATE AND NOT AN EVENT (ticket 044).
+       *
+       * OUTSIDE THE EVENT LOOP AND RUN ON EVERY FRAME, INCLUDING QUIET ONES.
+       * That is the whole shape of the fix: a sound that stops when the trigger
+       * is released cannot be driven by `ShotFired`, which is a discrete thing
+       * that has already happened. `firingCue` is handed everybody who is firing
+       * NOW and answers with what should be sounding NOW — and `null`, which
+       * only arrives if this is called on the frames when nobody is shooting, is
+       * the instruction to stop.
+       *
+       * OFF `drawables`, so the sound and the picture are the same fact. The
+       * `firing` flag is decided once in `core/session` and drives the fire
+       * animation as well; reading `animation === 'fire'` here instead would be
+       * a second rule that agreed until somebody added a clip.
+       *
+       * GATED ON `onMission` like the FX and the rest of the cues: the session
+       * keeps stepping behind Boot Hill and the mission card, and a firefight
+       * audible under an end-of-mission screen is the same fault there as a
+       * tracer would be. It also means the loop is stopped by the screen change
+       * itself, rather than running on under it.
+       */
+      audio.sustain(onMission ? firingVoice : null, listener)
       // NOT UPDATED WHILE HIDDEN. The session keeps stepping behind Boot Hill
       // and the mission card, so this would go on writing a clock and a roster nobody
       // can see. Nothing is lost by skipping: the router shows the panel from

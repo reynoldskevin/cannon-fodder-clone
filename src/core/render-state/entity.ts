@@ -56,6 +56,26 @@ export interface RenderEntity {
    * a reason to bury it.
    */
   readonly submersion?: number | undefined
+  /**
+   * Whether this unit is DISCHARGING HIS WEAPON right now (ticket 044).
+   *
+   * ONE FACT, READ BY THE PICTURE AND BY THE SOUND. The fire animation is chosen
+   * from it and the sustained gunfire voice is gated on it, so a man cannot be
+   * drawn firing while silent or heard firing while still. That is not tidiness:
+   * ticket 042 shipped precisely that split — a wading man played the fire clip
+   * while the water gate refused every round — because the animation asked
+   * `isFiring` ("holds an order") and the rule asked the terrain. Two functions
+   * that agree today is the shape this project has now paid for three times
+   * (025, 041, 042), so there is deliberately only one.
+   *
+   * NOT "HOLDS A FIRE ORDER". A man in the river holds his order and resumes the
+   * instant he lands; he is not firing while he is in it, and this says so.
+   *
+   * Optional, and absent means false, on the same bargain as `submersion` above:
+   * trees and props do not fire, and a producer that says nothing draws what it
+   * drew before the field existed.
+   */
+  readonly firing?: boolean | undefined
   /** Optional multiply tint, `0xrrggbb`. Absent means untinted. */
   readonly tint?: number | undefined
 }
