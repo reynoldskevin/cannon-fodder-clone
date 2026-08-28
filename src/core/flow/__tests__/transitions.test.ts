@@ -102,7 +102,11 @@ describe('the table itself', () => {
 
 describe('every transition the chart promises', () => {
   const valid: readonly [Screen, FlowEvent, Screen][] = [
-    ['Menu', 'startCampaign', 'BootHill'],
+    // Ticket 074. Start no longer reaches the hill in one move: the controls
+    // card sits between them, and `Menu -> BootHill` is GONE rather than
+    // shadowed by the new row.
+    ['Menu', 'startCampaign', 'Controls'],
+    ['Controls', 'controlsAcknowledged', 'BootHill'],
     ['BootHill', 'squadAssigned', 'Briefing'],
     ['Briefing', 'deploy', 'Mission'],
     ['Mission', 'missionComplete', 'BootHill'],
@@ -149,7 +153,13 @@ describe('every transition the chart promises', () => {
     // The cycle a player actually walks, end to end, rather than isolated hops
     // that happen to join up on paper.
     expect(
-      walk(INITIAL_SCREEN, ['startCampaign', 'squadAssigned', 'deploy', 'missionComplete']),
+      walk(INITIAL_SCREEN, [
+        'startCampaign',
+        'controlsAcknowledged',
+        'squadAssigned',
+        'deploy',
+        'missionComplete',
+      ]),
     ).toBe('BootHill')
   })
 
@@ -157,6 +167,7 @@ describe('every transition the chart promises', () => {
     expect(
       walk(INITIAL_SCREEN, [
         'startCampaign',
+        'controlsAcknowledged',
         'squadAssigned',
         'deploy',
         'missionComplete',
@@ -186,7 +197,9 @@ describe('every transition the chart promises', () => {
   })
 
   it('and Boot Hill is still the way out of the campaign', () => {
-    expect(walk(INITIAL_SCREEN, ['startCampaign', 'campaignComplete'])).toBe('Menu')
+    expect(
+      walk(INITIAL_SCREEN, ['startCampaign', 'controlsAcknowledged', 'campaignComplete']),
+    ).toBe('Menu')
   })
 })
 
@@ -211,7 +224,7 @@ describe('the way back off the briefing (ticket 059)', () => {
      * but it would go on passing if this row were widened by mistake — so the
      * three refusals are named.
      */
-    for (const from of ['Menu', 'BootHill', 'Mission'] as const) {
+    for (const from of ['Menu', 'Controls', 'BootHill', 'Mission'] as const) {
       const result = advance(from, 'backToBase')
       expect({ from, ok: result.ok }).toEqual({ from, ok: false })
     }

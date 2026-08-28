@@ -139,6 +139,16 @@ export interface CampaignRunner {
 
   startCampaign(): AdvanceResult
   /**
+   * Leave the controls card for Boot Hill (ticket 074).
+   *
+   * ITS OWN VERB RATHER THAN A SECOND `startCampaign`. Reusing the Menu's event
+   * would have made one command mean two different moves depending on where the
+   * player happened to be, and `advance`'s refusals — the thing that stops a
+   * double-clicked button skipping a screen — would have stopped saying which
+   * move was refused.
+   */
+  acknowledgeControls(): AdvanceResult
+  /**
    * Throw the campaign away and begin a new one. NOT `startCampaign`.
    *
    * TWO VERBS, BECAUSE ONE OF THEM IS DESTRUCTIVE. A player who meant "play
@@ -401,6 +411,16 @@ export function createCampaignRunner(options: RunnerOptions): CampaignRunner {
      * Boot Hill, which is the one screen the campaign exists to fill.
      */
     startCampaign: () => settle(advance(screen, 'startCampaign')),
+
+    /**
+     * On to the hill (ticket 074).
+     *
+     * `settle(advance(...))` AND NOTHING ELSE, like `backToBase` above and for
+     * the same reason: the card decides nothing, records nothing and reads
+     * nothing. It is a screen the player looks at, and the campaign on the far
+     * side of it is exactly the campaign that was there before.
+     */
+    acknowledgeControls: () => settle(advance(screen, 'controlsAcknowledged')),
 
     /**
      * THE ONLY THING IN THIS FILE THAT EVER CLEARS THE SAVE (ticket 024).

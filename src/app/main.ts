@@ -58,6 +58,7 @@ import { createMissionBanner } from '../ui/mission-banner'
 import { createBootHill } from '../ui/boot-hill'
 import { createMenu } from '../ui/menu'
 import { createBriefing } from '../ui/briefing'
+import { createControlsCard } from '../ui/controls-card'
 import { createLocalStoragePort } from './local-storage-port'
 import { CORE_VERSION } from '../core/version'
 
@@ -1306,6 +1307,15 @@ async function boot(): Promise<void> {
         })
         return menu
       }
+      // Ticket 074. The same shape as every other arm: call a command, then ask
+      // `reconcile` — never mount a screen from a handler.
+      case 'controls':
+        return createControlsCard(mount, {
+          onContinue: () => {
+            announce(runner.acknowledgeControls(), 'reading the controls')
+            reconcile()
+          },
+        })
       case 'briefing':
         return createBriefing(mount, {
           model: runner.briefing(),
