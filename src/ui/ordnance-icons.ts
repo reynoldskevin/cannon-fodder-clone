@@ -160,6 +160,13 @@ export const ORDNANCE_ICON_BAR_STYLE = [
  */
 export const ORDNANCE_ICON_STYLE = [
   'flex:none',
+  /**
+   * THE POSITIONING CONTEXT THE COUNT SITS IN (ticket 069). `position:absolute`
+   * resolves against the nearest POSITIONED ancestor, and without this that is
+   * the page: both badges would stack in the bottom-right of the viewport, on
+   * top of each other, and neither icon would carry a number.
+   */
+  'position:relative',
   // 50% UP ON WHAT 067 SHIPPED (ticket 068). At 2.6rem the art was a thumbnail
   // of a grenade rather than a grenade, and it is a click target as well as a
   // picture — a button the size of a favicon is one the player has to aim at.
@@ -174,7 +181,16 @@ export const ORDNANCE_ICON_STYLE = [
   'background-size:contain',
   'border:1px solid rgba(242,193,78,0.22)',
   'border-radius:0',
-  'opacity:0.55',
+  /**
+   * DIMMED, BUT NOT SO FAR THAT THE COUNT GOES WITH IT. `opacity` composites the
+   * whole subtree, so whatever this says the badge in the corner says too — and
+   * the count that matters most is the one on the weapon the player is NOT
+   * holding, which is the only way he learns it is empty before he reaches for
+   * it. 0.55 took the number down with the picture; the armed state is carried
+   * by the border and the ring either way, so the dimming can afford to be a
+   * hint rather than the whole signal.
+   */
+  'opacity:0.78',
   'cursor:pointer',
 ].join(';')
 
@@ -194,4 +210,53 @@ export const ORDNANCE_ICON_ARMED_STYLE = [
   'opacity:1',
   `border-color:${HIGHLIGHT}`,
   `box-shadow:0 0 0 2px rgba(242,193,78,0.45)`,
+].join(';')
+
+/**
+ * How many rounds are left, as the corner of an icon prints it (ticket 069).
+ *
+ * A ZERO IS PRINTED AND NOT HIDDEN. An empty pouch is the thing the player most
+ * needs to read: a badge that went blank at zero would leave an icon that looks
+ * exactly like a loaded weapon, and the only difference would be that firing
+ * does nothing.
+ *
+ * PURE AND SEPARATE FROM THE ELEMENT that shows it, the split the rest of this
+ * file runs on — Vitest has no DOM, so the rule is only checkable out here.
+ */
+export function ordnanceCountLabel(count: number): string {
+  return String(count)
+}
+
+/**
+ * The count, tucked into the bottom-right of the square.
+ *
+ * `bottom`/`right` AND NEITHER OF THE OTHER TWO EDGES. Pinned to all four the
+ * badge stretches across the icon and centres the number over the art, which
+ * hides the picture the button is identified by.
+ *
+ * `pointer-events:none` IS NOT COSMETIC. The badge is a child of the button, so
+ * a click on the number is a click on the button only if the badge never becomes
+ * the event's target — and the corner is exactly where a player aiming at a
+ * small icon tends to land.
+ *
+ * LEGIBLE OVER ART OF ANY BRIGHTNESS: a dark plate under it, not a text-shadow
+ * alone, because the pale side of the grenade sprite is close enough to the
+ * highlight colour that a shadowed number on it is a smudge.
+ */
+export const ORDNANCE_COUNT_STYLE = [
+  'position:absolute',
+  'bottom:0',
+  'right:0',
+  'min-width:1em',
+  'padding:0 0.15em',
+  'background-color:rgba(10,13,11,0.85)',
+  `color:${HIGHLIGHT}`,
+  'font-family:monospace',
+  // Small enough to stay a marginal note on a 3.9rem button, bold because at
+  // this size a hairline digit is the first thing a busy background eats.
+  'font-size:0.85rem',
+  'font-weight:700',
+  'line-height:1.1',
+  'text-align:center',
+  'pointer-events:none',
 ].join(';')

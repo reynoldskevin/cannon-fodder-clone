@@ -39,6 +39,12 @@
  * digit" is decided and tested. A second list hand-written here would be a
  * second answer to all three, and the tested one would not be the one on screen.
  *
+ * AND HOW MANY OF EACH ARE LEFT (ticket 069). The icons said what could be
+ * thrown and never how much of it remained — that number was in the HUD's
+ * selector, on the far side of the screen from the button the player is aiming
+ * at. Each icon now carries its own count in the corner, read from the armoury
+ * every frame so it cannot disagree with the selector about one pouch.
+ *
  * THE PANEL REPORTS THE WEAPON AND DECIDES NOTHING. It does not touch the
  * command queue and does not know what arming means; it says which ordnance was
  * asked for and `app/main.ts` does with that exactly what it does with a digit.
@@ -54,10 +60,12 @@
 
 import { DISPLAY_FONT, loadDisplayFont } from './display-font'
 import {
+  ORDNANCE_COUNT_STYLE,
   ORDNANCE_ICONS,
   ORDNANCE_ICON_ARMED_STYLE,
   ORDNANCE_ICON_BAR_STYLE,
   ORDNANCE_ICON_STYLE,
+  ordnanceCountLabel,
 } from './ordnance-icons'
 import type { OrdnanceIcon } from './ordnance-icons'
 import { INSIGNIA_STYLE, insigniaPosition } from './rank-insignia'
@@ -110,6 +118,19 @@ export interface SquadPanelModel {
    * see `ORDNANCE_ICONS` for why the rifle has no button.
    */
   readonly armed: string
+  /**
+   * Rounds left, keyed by ordnance name, as `session.armoury.count` answers it
+   * (ticket 069) — the number in the corner of each icon.
+   *
+   * READ FROM THE ARMOURY EVERY FRAME, LIKE `armed`, AND FOR THE SAME REASON. A
+   * count the panel decremented on its own would drift the moment a chest, a
+   * replayed command or a mission restart moved it, and the icon would then
+   * disagree with the HUD's selector about the same pouch.
+   *
+   * A MISSING KEY IS AN EMPTY POUCH AND STILL PRINTS `0`, not a blank corner —
+   * see `ordnanceCountLabel`.
+   */
+  readonly counts: Readonly<Record<string, number>>
 }
 
 /** What the rail needs from the game around it. */
@@ -333,6 +354,13 @@ interface Row {
 /** One weapon's button, and what it is currently showing. */
 interface IconButton {
   readonly element: HTMLButtonElement
+  /**
+   * The count in its corner (ticket 069). Built once with the button and kept,
+   * because a badge re-created per frame would be a new element on every one of
+   * them — and `setArmed` below rewrites the button's `cssText`, which would
+   * otherwise be the thing that removed it.
+   */
+  readonly count: HTMLElement
   /** The last state written, so the style is rewritten only when it changes. */
   armed: boolean
 }
@@ -395,8 +423,25 @@ export function createSquadPanel(mount: HTMLElement, options: SquadPanelOptions)
     element.addEventListener('click', () => {
       options.onSelectOrdnance(icon.ordnance)
     })
+    /**
+     * The rounds left, in the corner of the square (ticket 069).
+     *
+     * A CHILD OF THE BUTTON AND NOT A SIBLING, so it moves with the icon and is
+     * positioned against it — `ORDNANCE_ICON_STYLE` carries the `position:
+     * relative` that makes that resolution work. Its own `cssText` is written
+     * here and never again: `setArmed` rewrites the BUTTON's, which does not
+     * reach a child's inline style.
+     *
+     * DECORATIVE TO A READER. The button's `aria-label` is its whole accessible
+     * name and already overrides this text; marking it hidden says so rather
+     * than leaving a stray digit in the subtree for anything that walks it.
+     */
+    const count = document.createElement('span')
+    count.style.cssText = ORDNANCE_COUNT_STYLE
+    count.setAttribute('aria-hidden', 'true')
+    element.append(count)
     bar.append(element)
-    return { element, armed: false }
+    return { element, count, armed: false }
   })
 
   panel.append(bar)
@@ -521,6 +566,10 @@ export function createSquadPanel(mount: HTMLElement, options: SquadPanelOptions)
       // `noUncheckedIndexedAccess` concession every loop in this codebase makes.
       if (button === undefined || icon === undefined) continue
       setArmed(button, icon, icon.ordnance === model.armed)
+      // `?? 0` because a pouch that was never stocked has no key at all, and an
+      // icon with nothing in its corner reads as a weapon whose count is
+      // unknown rather than as one that is empty.
+      setText(button.count, ordnanceCountLabel(model.counts[icon.ordnance] ?? 0))
     }
   }
 

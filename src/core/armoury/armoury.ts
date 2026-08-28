@@ -35,7 +35,22 @@ export interface Armoury {
   readonly selected: string
   /** Rounds left, `Infinity` for the rifle, 0 for anything unstocked or unknown. */
   count(ordnance: string): number
-  /** Spend one round. False — and nothing spent — when there is none to spend. */
+  /**
+   * Spend one round. False — and nothing spent — when there is none to spend.
+   *
+   * SPENDING THE LAST ROUND OF WHAT YOU ARE HOLDING PUTS THE RIFLE BACK
+   * (ticket 069), because the pouch must never HOLD what it has none of.
+   * Otherwise every right-click after the last grenade is a refusal the player
+   * can only diagnose by reading the count in the HUD's selector. Enforced by a
+   * caller — `command/apply.ts`, say — it would hold for the fire command and be
+   * forgotten by the next thing that ever spends a round; here it holds for all
+   * of them, because this is the only place a count goes down.
+   *
+   * ONLY THE SELECTED WEAPON'S EXHAUSTION DISARMS. Emptying something the squad
+   * is not holding leaves the selection alone: taking a weapon out of the
+   * player's hands over something that did not happen to it is worse than the
+   * bug this fixes.
+   */
   consume(ordnance: string): boolean
   /** Add rounds. Ticket 017's chests call exactly this. Non-positive is ignored. */
   grant(ordnance: string, rounds: number): void
@@ -102,7 +117,22 @@ export function createArmoury(options: ArmouryOptions = {}): Armoury {
     // does nothing reads as a broken button, which is why the caller emits
     // `FireRejected` on a false.
     if (have <= 0) return false
-    rounds.set(ordnance, have - 1)
+    const left = have - 1
+    rounds.set(ordnance, left)
+    /**
+     * THE POUCH NEVER HOLDS WHAT IT HAS NONE OF (ticket 069).
+     *
+     * Guarded on the TRANSITION and on the SELECTION, not on "is it empty now":
+     * a refused `consume` above never reaches here, so a player standing there
+     * holding an already-empty weapon keeps holding it — being told "no
+     * grenades" at the moment of firing is how he learns he is empty, and
+     * re-selecting the rifle under him every click would take that message away.
+     * And the rifle returns early above, so its absent count can never be read
+     * as a zero that disarms it from itself.
+     */
+    if (left === 0 && ORDNANCE_ORDER[selectedIndex] === ordnance) {
+      selectedIndex = ORDNANCE_ORDER.indexOf(RIFLE_ORDNANCE)
+    }
     return true
   }
 
