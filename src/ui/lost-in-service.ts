@@ -98,7 +98,7 @@ export const MEMORIAL_TITLE_STYLE = [
 export const MISSION_HEADING_STYLE = [
   'margin:0.9rem 0 0.35rem',
   `font-family:${DISPLAY_FONT}`,
-  'font-size:clamp(0.95rem, 2.2vw, 1.25rem)',
+  'font-size:clamp(1.9rem, 4.4vw, 2.5rem)',
   'font-weight:400',
   'letter-spacing:0.14em',
   `color:${ASH}`,
@@ -125,8 +125,18 @@ export const FALLEN_ROW_STYLE = [
   'gap:1rem',
   'padding:0.3rem 0.75rem',
   `font-family:${DISPLAY_FONT}`,
-  'font-size:clamp(0.9rem, 2vw, 1.1rem)',
+  'font-size:clamp(1.8rem, 4vw, 2.2rem)',
   'letter-spacing:0.06em',
+  /**
+   * DOUBLED IN TICKET 089, and it takes the badge with it. `INSIGNIA_STYLE` is
+   * `1.05em x 1.4em`, so the insignia is sized off THIS number — which is why
+   * making the roll bigger is a change here and not in `rank-insignia.ts`, where
+   * it would also have grown the squad panel and Boot Hill.
+   *
+   * ALL THREE CLAMP STOPS, because a phone sits on the floor or the `vw` term:
+   * doubling the ceiling alone would have changed nothing on the narrow screens
+   * this is hardest to read on.
+   */
   `color:${BONE}`,
   // The faintest of plaques, so a long roll reads as stacked rows rather than a
   // wall of text, without drawing a box around every man.
