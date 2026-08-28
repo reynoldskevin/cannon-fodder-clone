@@ -114,9 +114,46 @@ describe('what it says and where it goes', () => {
 describe('and the menu actually draws it', () => {
   const menu = (): string => readFileSync(new URL('../menu.ts', import.meta.url), 'utf8')
 
+  /**
+   * `menu.ts` with its comments removed.
+   *
+   * A BLUNT `toContain` CANNOT TELL CODE FROM PROSE, and the first draft of the
+   * `window.location` case below failed on the doc comment EXPLAINING why the
+   * difficulty is handed in — a guard that forbids describing the rule it
+   * enforces. Stripping first keeps the assertion about what the file DOES.
+   */
+  const menuCode = (): string =>
+    menu()
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '')
+
   it('asks the function rather than deciding inline', () => {
     // Nothing in a node environment can mount this screen, so the wiring is read.
     expect(menu()).toContain('difficultyLink')
+  })
+
+  it('and CALLS it with the buttons, rather than calling it and dropping the answer', () => {
+    /**
+     * THE GAP MUTATION TESTING FOUND, and it is the failure this project has
+     * shipped before: `?demo=1&level=N` is parsed by code nothing calls. Every
+     * other case here passes against a `menu.ts` that computes the link and then
+     * assigns `null` over it — the function is imported, an anchor is built, the
+     * assignments are all present, and the link simply never appears.
+     *
+     * So the CALL is asserted, with its real arguments. `offered` is the button
+     * list, which is also the ticket's central design claim: the "only one
+     * button" rule is asked of the buttons rather than restated from the
+     * campaign state, and a call passing the model instead fails here.
+     */
+    expect(menuCode()).toMatch(/difficultyLink\(\s*offered\s*,\s*next\.difficulty\s*\)/)
+  })
+
+  it('and puts BOTH halves of the answer on the element', () => {
+    // A label written without an href is a link to nowhere; an href without a
+    // label is an empty one. Both assignments must read from what it returned.
+    const code = menuCode()
+    expect(code).toMatch(/\.href\s*=\s*\w+\.href/)
+    expect(code).toMatch(/setText\(\w+,\s*\w+\.label\)/)
   })
 
   it('and builds an ANCHOR, because the difficulty needs a page load', () => {
@@ -138,6 +175,9 @@ describe('and the menu actually draws it', () => {
      * disagree with the one `main.ts` handed the session. One value, resolved at
      * boot, passed down.
      */
-    expect(menu()).not.toContain('window.location')
+    expect(menuCode()).not.toContain('window.location')
+    // And the guard is not vacuous: the phrase IS present, in the comment that
+    // explains the rule.
+    expect(menu()).toContain('window.location')
   })
 })

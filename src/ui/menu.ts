@@ -52,6 +52,8 @@ import {
 import { INSIGNIA_STYLE, insigniaPosition } from './rank-insignia'
 import { loadDisplayFont } from './display-font'
 import { menuButtons } from './menu-buttons'
+import { difficultyLink } from './difficulty-link'
+import type { Difficulty } from '../core/combat'
 import { rollOfHonour } from '../core/campaign'
 import type { CampaignSummary } from '../core/campaign'
 import jungleUrl from '../../assets/source/jungle-background.png?url'
@@ -91,6 +93,18 @@ export interface MenuModel {
    * campaign records something the summary does not add up.
    */
   readonly campaignUnderway: boolean
+  /**
+   * Which difficulty this page is running (ticket 095).
+   *
+   * HANDED IN, NOT READ OFF THE ADDRESS BAR. `main.ts` resolves it once at boot
+   * and gives the same value to the session; a screen that asked
+   * `window.location` for its own copy could disagree with the game actually
+   * being played — and `src/ui` is the layer the node suite can only read, so
+   * that disagreement would be invisible here. It is also the reason this is a
+   * field rather than a default: a caller that forgot to ask would silently
+   * offer a hard-mode player the way INTO hard mode.
+   */
+  readonly difficulty: Difficulty
 }
 
 export interface MenuOptions extends MenuModel {
@@ -626,6 +640,47 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
   controls.append(start, restart)
 
   /**
+   * THE WAY INTO HARD MODE, AND BACK (ticket 095).
+   *
+   * AN ANCHOR, AND THAT IS THE MECHANISM RATHER THAN THE STYLING. `main.ts`
+   * resolves the difficulty ONCE at boot — deliberately, so it cannot change
+   * between missions of one campaign — so a click handler flipping a variable
+   * here would change precisely nothing. The page has to reload, `href` is what
+   * reloads it, and the link still works on a build whose JavaScript has already
+   * failed, which is the one state a player most wants the other mode.
+   *
+   * UNDER the row rather than in it: `controls` is a centred flex row, and a
+   * third child would sit BESIDE the button. Its own line, quieter than the
+   * button, is what "a text link under it" means.
+   */
+  const difficulty = document.createElement('a')
+  difficulty.style.cssText = [
+    'position:relative',
+    'z-index:2',
+    'display:none',
+    'margin-top:0.75rem',
+    'font-size:0.95rem',
+    'letter-spacing:0.04em',
+    `color:${MUTED}`,
+    'text-decoration:underline',
+    'text-underline-offset:0.25em',
+    'text-shadow:0 2px 6px rgba(0,0,0,0.85)',
+    'pointer-events:auto',
+  ].join(';')
+
+  /** The buttons with the link beneath them, so the two stay a unit. */
+  const footer = document.createElement('div')
+  footer.style.cssText = [
+    'position:relative',
+    'z-index:2',
+    'display:flex',
+    'flex-direction:column',
+    'align-items:center',
+    'pointer-events:none',
+  ].join(';')
+  footer.append(controls, difficulty)
+
+  /**
    * The three of them, built from `CAST` and started off-screen.
    *
    * DRAGGING IS OFF and they take no clicks: they are scenery over a button
@@ -659,7 +714,7 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
 
   // The flowers go in BEFORE the masthead so they are behind it in DOM order as
   // well as by `z-index` — the roll scrolls over them, never under.
-  panel.append(scrim, cast, ...poppies, masthead, controls)
+  panel.append(scrim, cast, ...poppies, masthead, footer)
   mount.append(backdrop)
   // Focused, so the keyboard alone can start the game — and so the player's next
   // click does not go to the canvas underneath by accident. Start, never
@@ -845,6 +900,26 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
     restart.style.borderColor = next.campaignOver ? 'rgba(159,179,189,0.55)' : 'rgba(255,143,107,0.55)'
     restart.style.color = next.campaignOver ? TEXT : BAD
     resetConfirms = offered.find((candidate) => candidate.action === 'reset')?.confirms ?? true
+
+    /**
+     * THE DIFFICULTY TOGGLE (ticket 095), decided from the SAME `offered` list
+     * the buttons were just drawn from.
+     *
+     * Passing the list rather than the model is what keeps the "only one button"
+     * rule from becoming two rules. Re-deriving it here as `!campaignUnderway`
+     * would pick out the same screens today and part company from
+     * `menu-buttons.ts` the first time a button is added to either of them.
+     *
+     * `display` AND NOT `visibility`, matching the buttons above: an invisible
+     * link is still in the tab order, and Enter reaching an offer the screen is
+     * not making is the bug `display:none` is used for four lines up.
+     */
+    const toggle = difficultyLink(offered, next.difficulty)
+    difficulty.style.display = toggle === null ? 'none' : ''
+    if (toggle !== null) {
+      setText(difficulty, toggle.label)
+      difficulty.href = toggle.href
+    }
 
     summary.style.display = next.campaignOver ? 'flex' : 'none'
 

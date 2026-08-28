@@ -1389,6 +1389,10 @@ async function boot(): Promise<void> {
           // TICKET 046. Whether the button reads "Start" or "Continue" — asked
           // of the runner beside the other two, for the same reason.
           campaignUnderway: runner.isCampaignUnderway(),
+          // TICKET 095. The same value the session is built with, resolved once
+          // at boot — see `difficulty` above. The Menu offers the way into the
+          // other mode, so it has to know which one it is already in.
+          difficulty,
           onStart: () => {
             announce(runner.startCampaign(), 'starting the campaign')
             reconcile()
@@ -1412,6 +1416,11 @@ async function boot(): Promise<void> {
               // A wipe puts the player back in front of a campaign with no
               // history, so the button has to go back to saying "Start".
               campaignUnderway: runner.isCampaignUnderway(),
+              // UNCHANGED BY A WIPE. The difficulty belongs to the page, not to
+              // the campaign — erasing Boot Hill does not take a player out of
+              // hard mode, and re-reading it here would be a second source for a
+              // value resolved once at boot.
+              difficulty,
             })
             reconcile()
           },
