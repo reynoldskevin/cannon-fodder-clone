@@ -279,18 +279,32 @@ export const WEAPONS: Readonly<Record<Weapon, WeaponSpec>> = {
     // one careless step still ends a man on either side, and dropping it below
     // `INFANTRY_HEALTH` would make enemy fire something the player can stand in.
     damage: INFANTRY_HEALTH,
-    // ~1.15 rounds a second against the squad's ~1.9, a 38% reduction, and the
-    // larger half of this ticket's difficulty swing. RAISE IT further and the
-    // enemy becomes a target rather than a threat; LOWER IT back toward 32 and
-    // three converging enemies again kill a four-man squad faster than the
-    // player can react to the first shot.
+    // ~1.30 rounds a second against the squad's ~1.88, and still the larger half
+    // of the difficulty swing ticket 036 introduced. RAISE IT and the enemy
+    // becomes a target rather than a threat; LOWER IT toward 32 and three
+    // converging enemies again kill a four-man squad faster than the player can
+    // react to the first shot, which is the report that produced this row.
     //
-    // 52 AND NOT 48 OR 50, and that is not a style point. See
+    // 46, DOWN FROM 52 (ticket 075). A deliberate step back toward the squad's
+    // rate, taken together with the reaction beat in `ai/tuning.ts`, because the
+    // enemy was too easy. 13% more fire, not a different weapon.
+    //
+    // AND IT IS AS FAR AS THE GUARDRAILS GO, which is what they are for. Two
+    // tests bound this number and 46 clears both by a hair:
+    //   - `enemy-weapon.test.ts` wants his rate under 0.7 of the squad's:
+    //     3600/46 = 78.3 against 0.7 × 112.5 = 78.75.
+    //   - `standoff.test.ts` wants him under 0.75 of the squad's rounds over 600
+    //     ticks: 14 against 19, where the bound is 14.25.
+    // Anything faster fails both, and should. They encode the CLAIM that the
+    // enemy is meaningfully slower than the squad, so going below 46 means
+    // deciding that claim no longer holds and editing them to say so — not
+    // loosening a number that got in the way.
+    //
+    // AND NOT 48 OR 50, which is not a style point. See
     // `WeaponSpec.cooldownTicks`: the rate assertion in `resolution.test.ts` is
     // `floor(3600 / cooldownTicks) + 1`, which overcounts by one for any value
-    // dividing 3600 exactly. Both 48 and 50 — the obvious choices either side —
-    // divide it. 52 does not.
-    cooldownTicks: 52,
+    // dividing 3600 exactly. Both 48 and 50 divide it; 46 and 52 do not.
+    cooldownTicks: 46,
     // 6.4 tiles, DERIVED and never typed: 8 × 0.8. The 1.6 tiles this leaves
     // between the two reaches is the standoff band — the distance at which the
     // squad can fire and the enemy cannot — and it exists only because the two
