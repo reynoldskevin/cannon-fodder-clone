@@ -8,6 +8,7 @@ import {
   FALLEN_ROW_STYLE,
   FALLEN_NAME_STYLE,
   MEMORIAL_TITLE_STYLE as TITLE_FOR_SCALE,
+  MEMORIAL_INSIGNIA_STYLE,
   POPPY_LEFT_STYLE,
   POPPY_RIGHT_STYLE,
   ROLL_Z_INDEX,
@@ -257,9 +258,14 @@ describe('a man wears his insignia rather than being labelled with it (ticket 08
 describe('the roll is set large enough to be the subject (ticket 089)', () => {
   /**
    * THE NAMES WERE THE SMALLEST THING ON A SCREEN ABOUT THE NAMES — a row at
-   * `clamp(0.9rem, 2vw, 1.1rem)` under a title reaching 3.4rem. Both roll sizes
-   * double; the title does not, because it is already the largest element and
-   * 6.8rem would overflow a narrow viewport.
+   * `clamp(0.9rem, 2vw, 1.1rem)` under a title reaching 3.4rem. Ticket 089
+   * doubled both roll sizes; ticket 090 then took them back down a quarter, so
+   * the numbers below are 089's doubling times 0.75. The title has never moved:
+   * it is already the largest element and would overflow a narrow viewport.
+   *
+   * THE STOPS ARE PINNED AS WRITTEN so a retune is a deliberate edit here rather
+   * than a drift nobody notices. What the ROW is worth in itself is checked in
+   * ticket 090's group below, against the badge that hangs off it.
    */
 
   /** The three stops of a `clamp(min, preferred, max)`, as written. */
@@ -269,21 +275,21 @@ describe('the roll is set large enough to be the subject (ticket 089)', () => {
     return (found[1] as string).split(',').map((s) => s.trim())
   }
 
-  it('a fallen row is twice the size it was, at every stop', () => {
+  it('a fallen row is set at the roll scale, at every stop', () => {
     /**
-     * ALL THREE STOPS, NOT JUST THE CEILING. A `clamp` is a floor, a
+     * ALL THREE STOPS, NEVER JUST THE CEILING. A `clamp` is a floor, a
      * viewport-relative preference and a ceiling, and a phone sits on the floor
-     * or the `vw` term — so doubling only the maximum would change nothing at
-     * all on the narrow screens where the roll is hardest to read, while looking
-     * like a fix on a desktop.
+     * or the `vw` term — so resizing only the maximum changes nothing at all on
+     * the narrow screens the roll is hardest to read on, while looking like a
+     * change on a desktop. True of 089's doubling and of 090's reduction alike.
      */
-    expect(clampStops(FALLEN_ROW_STYLE)).toEqual(['1.8rem', '4vw', '2.2rem'])
+    expect(clampStops(FALLEN_ROW_STYLE)).toEqual(['1.35rem', '3vw', '1.65rem'])
   })
 
-  it('and a mission heading with it, so the roll keeps its hierarchy', () => {
-    // Was clamp(0.95rem, 2.2vw, 1.25rem). Doubling one and not the other would
-    // leave the headings smaller than the names they introduce.
-    expect(clampStops(MISSION_HEADING_STYLE)).toEqual(['1.9rem', '4.4vw', '2.5rem'])
+  it('and a mission heading tracks it, so the roll keeps its hierarchy', () => {
+    // Doubled in 089, then brought down a quarter in 090 — always together with
+    // the row, or the headings end up smaller than the names they introduce.
+    expect(clampStops(MISSION_HEADING_STYLE)).toEqual(['1.425rem', '3.3vw', '1.875rem'])
   })
 
   it('and the heading still outranks the row it heads', () => {
@@ -319,5 +325,77 @@ describe('and the insignia doubles with the row rather than separately', () => {
     expect(INSIGNIA_STYLE).toContain('width:1.05em')
     expect(INSIGNIA_STYLE).toContain('height:1.4em')
     expect(INSIGNIA_STYLE).not.toMatch(/width:[\d.]+px|height:[\d.]+px/)
+  })
+})
+
+describe('the text comes down a quarter without moving the badge (ticket 090)', () => {
+  /**
+   * THE TWO ASKS FIGHT EACH OTHER, WHICH IS WHY THIS IS TESTED AS ARITHMETIC.
+   * `INSIGNIA_STYLE` is `1.05em x 1.4em`, sized off the row — the coupling that
+   * let ticket 089 double the type and take the insignia with it for free.
+   * Shrinking the text by a quarter would shrink the badge by a quarter too, so
+   * holding it still means widening its `em` box by exactly `1 / 0.75`.
+   */
+
+  /** The three stops of a `clamp(min, preferred, max)`, as written. */
+  const clampStops = (style: string): readonly string[] => {
+    const found = /font-size:clamp\(([^)]*)\)/.exec(style)
+    if (found === null) throw new Error(`no clamped font-size in: ${style}`)
+    return (found[1] as string).split(',').map((s) => s.trim())
+  }
+
+  /** The `em` box the memorial's badge actually ends up with, last-wins. */
+  const emBox = (style: string): { width: number; height: number } => {
+    const all = [...style.matchAll(/(width|height):([\d.]+)em/g)]
+    const last = (which: string): number => {
+      const hits = all.filter((m) => m[1] === which)
+      const found = hits[hits.length - 1]
+      if (found === undefined) throw new Error(`no ${which} in em: ${style}`)
+      return Number(found[2])
+    }
+    return { width: last('width'), height: last('height') }
+  }
+
+  const remOf = (stop: string): number => Number(stop.replace('rem', ''))
+
+  it('the row text is three quarters of what ticket 089 set', () => {
+    expect(clampStops(FALLEN_ROW_STYLE)).toEqual(['1.35rem', '3vw', '1.65rem'])
+  })
+
+  it('and the badge renders at the size it did before, not the size the row implies', () => {
+    /**
+     * ASSERTED AS A PRODUCT, NOT AS A NUMBER COPIED OUT OF THE TICKET. `em`
+     * times `font-size` is the rendered box, so multiplying the two is the only
+     * check that actually says "unchanged" — a test pinning `1.4em` would pass
+     * just as happily if the row size moved again underneath it and the badge
+     * quietly changed size with it.
+     *
+     * 089's row ran clamp(1.8rem, 4vw, 2.2rem) against a 1.05 x 1.4 box.
+     */
+    const box = emBox(MEMORIAL_INSIGNIA_STYLE)
+    const row = clampStops(FALLEN_ROW_STYLE)
+    const beforeMin = 1.05 * 1.8
+    const beforeMax = 1.4 * 2.2
+    expect(box.width * remOf(row[0] as string)).toBeCloseTo(beforeMin, 6)
+    expect(box.height * remOf(row[2] as string)).toBeCloseTo(beforeMax, 6)
+  })
+
+  it('and the shared constant is untouched, so two other screens do not move', () => {
+    /**
+     * THE LEAK THIS TICKET COULD EASILY HAVE SPRUNG. `squad-panel.ts` and
+     * `boot-hill.ts` draw the same badge from `INSIGNIA_STYLE`; widening the box
+     * THERE would have held the memorial's insignia and grown the roster
+     * chevrons and the Boot Hill stones as a side effect nobody asked for.
+     */
+    expect(INSIGNIA_STYLE).toContain('width:1.05em')
+    expect(INSIGNIA_STYLE).toContain('height:1.4em')
+  })
+
+  it('and the memorial override comes after it, so the later rule wins', () => {
+    // Composed, not rewritten: the sheet URL, background-size and `flex:none`
+    // all still come from the shared constant.
+    expect(MEMORIAL_INSIGNIA_STYLE.indexOf('background-image')).toBeLessThan(
+      MEMORIAL_INSIGNIA_STYLE.lastIndexOf('width:'),
+    )
   })
 })
