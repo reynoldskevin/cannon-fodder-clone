@@ -7,12 +7,14 @@ import {
   MISSION_HEADING_STYLE,
   FALLEN_ROW_STYLE,
   FALLEN_NAME_STYLE,
+  MEMORIAL_TITLE_STYLE as TITLE_FOR_SCALE,
   POPPY_LEFT_STYLE,
   POPPY_RIGHT_STYLE,
   ROLL_Z_INDEX,
   missionHeading,
 } from '../lost-in-service'
 import { DISPLAY_FONT } from '../display-font'
+import { INSIGNIA_STYLE } from '../rank-insignia'
 import { readFileSync } from 'node:fs'
 
 /**
@@ -249,5 +251,73 @@ describe('a man wears his insignia rather than being labelled with it (ticket 08
      */
     expect(menu).toMatch(/insignia\.setAttribute\('aria-hidden'/)
     expect(menu).toMatch(/title\s*=\s*`\$\{man\.rankAtDeath\} \$\{man\.name\}`/)
+  })
+})
+
+describe('the roll is set large enough to be the subject (ticket 089)', () => {
+  /**
+   * THE NAMES WERE THE SMALLEST THING ON A SCREEN ABOUT THE NAMES — a row at
+   * `clamp(0.9rem, 2vw, 1.1rem)` under a title reaching 3.4rem. Both roll sizes
+   * double; the title does not, because it is already the largest element and
+   * 6.8rem would overflow a narrow viewport.
+   */
+
+  /** The three stops of a `clamp(min, preferred, max)`, as written. */
+  const clampStops = (style: string): readonly string[] => {
+    const found = /font-size:clamp\(([^)]*)\)/.exec(style)
+    if (found === null) throw new Error(`no clamped font-size in: ${style}`)
+    return (found[1] as string).split(',').map((s) => s.trim())
+  }
+
+  it('a fallen row is twice the size it was, at every stop', () => {
+    /**
+     * ALL THREE STOPS, NOT JUST THE CEILING. A `clamp` is a floor, a
+     * viewport-relative preference and a ceiling, and a phone sits on the floor
+     * or the `vw` term — so doubling only the maximum would change nothing at
+     * all on the narrow screens where the roll is hardest to read, while looking
+     * like a fix on a desktop.
+     */
+    expect(clampStops(FALLEN_ROW_STYLE)).toEqual(['1.8rem', '4vw', '2.2rem'])
+  })
+
+  it('and a mission heading with it, so the roll keeps its hierarchy', () => {
+    // Was clamp(0.95rem, 2.2vw, 1.25rem). Doubling one and not the other would
+    // leave the headings smaller than the names they introduce.
+    expect(clampStops(MISSION_HEADING_STYLE)).toEqual(['1.9rem', '4.4vw', '2.5rem'])
+  })
+
+  it('and the heading still outranks the row it heads', () => {
+    /**
+     * THE RELATIONSHIP, NOT THE NUMBERS. Stated separately because the two cases
+     * above would both pass if the pair were doubled into the wrong order — and
+     * a heading set smaller than its list is the one outcome that would look
+     * like a bug rather than a resize.
+     */
+    const rem = (stop: string): number => Number(stop.replace('rem', ''))
+    const row = clampStops(FALLEN_ROW_STYLE)
+    const heading = clampStops(MISSION_HEADING_STYLE)
+    expect(rem(heading[2] as string)).toBeGreaterThan(rem(row[2] as string))
+  })
+
+  it('but the title is untouched — the roll rises toward it, not everything away', () => {
+    expect(clampStops(TITLE_FOR_SCALE)).toEqual(['1.9rem', '6vw', '3.4rem'])
+  })
+})
+
+describe('and the insignia doubles with the row rather than separately', () => {
+  it('because the badge is sized in `em`, which is what makes this two numbers', () => {
+    /**
+     * THE MECHANISM, PINNED. `INSIGNIA_STYLE` is `1.05em x 1.4em` and therefore
+     * tracks whatever `font-size` its row carries — so the doubling above
+     * reaches the badge for free.
+     *
+     * AND IT MUST STAY THAT WAY FOR A SECOND REASON. `squad-panel.ts` and
+     * `boot-hill.ts` draw from this same constant: sizing the memorial's badge
+     * HERE would grow the roster chevrons and the Boot Hill stones as a side
+     * effect. A `px` value would break the scaling and leak the change at once.
+     */
+    expect(INSIGNIA_STYLE).toContain('width:1.05em')
+    expect(INSIGNIA_STYLE).toContain('height:1.4em')
+    expect(INSIGNIA_STYLE).not.toMatch(/width:[\d.]+px|height:[\d.]+px/)
   })
 })
