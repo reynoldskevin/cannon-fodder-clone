@@ -106,17 +106,22 @@ export const MISSION_HEADING_STYLE = [
 ].join(';')
 
 /**
- * One man: his name at one end, what he killed at the other.
+ * One man: his badge, his name, and what he killed at the far end.
  *
  * THE NUMBER GOES TO THE FAR END so a column of them lines up and can be read
  * down. The mockup centres the name between two decorative marks, which is the
  * right shape for a plaque carrying no data and the wrong one for a row that
  * has a figure in it.
+ *
+ * `center`, NOT `baseline` (ticket 088). Baseline was right while both children
+ * were text. The badge is a background on an EMPTY span and has no text baseline
+ * to align to, so it would sit wherever the box model happened to leave it —
+ * which is why `squad-panel.ts` and `boot-hill.ts` both centre the same badge.
  */
 export const FALLEN_ROW_STYLE = [
   'display:flex',
   'justify-content:space-between',
-  'align-items:baseline',
+  'align-items:center',
   'gap:1rem',
   'padding:0.3rem 0.75rem',
   `font-family:${DISPLAY_FONT}`,
@@ -127,6 +132,19 @@ export const FALLEN_ROW_STYLE = [
   // wall of text, without drawing a box around every man.
   'background:linear-gradient(rgba(255,255,255,0.07), rgba(255,255,255,0.02))',
 ].join(';')
+
+/**
+ * The man's name, between his badge and his tally (ticket 088).
+ *
+ * `flex:1` IS THE WHOLE STYLE AND IT IS NOT COSMETIC. The row is
+ * `justify-content:space-between`: with two children that pinned the name left
+ * and the count right, but the badge makes THREE, and space-between spreads
+ * three items evenly — badge left, name marooned in the middle, count right.
+ * Letting the name take the free space keeps it against its badge and the
+ * count against the far edge. Ticket 062 fixed exactly this on Boot Hill, which
+ * is why the same line appears there.
+ */
+export const FALLEN_NAME_STYLE = 'flex:1'
 
 /** The kill count at the end of a row — present, but not the loud part. */
 export const KILL_COUNT_STYLE = `color:${ASH};font-variant-numeric:tabular-nums;white-space:nowrap`
