@@ -33,6 +33,7 @@ import {
   BAD,
   LIST_STYLE,
   MUTED,
+  TEXT,
 } from './screen-chrome'
 import {
   FALLEN_ROW_STYLE,
@@ -48,6 +49,7 @@ import {
   missionHeading,
 } from './lost-in-service'
 import { loadDisplayFont } from './display-font'
+import { menuButtons } from './menu-buttons'
 import { rollOfHonour } from '../core/campaign'
 import type { CampaignSummary } from '../core/campaign'
 import jungleUrl from '../../assets/source/jungle-background.png?url'
@@ -741,9 +743,24 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
     })
   })
 
+  /**
+   * Does the reset need a second press on the screen currently shown?
+   *
+   * HELD RATHER THAN RECOMPUTED IN THE HANDLER, so the click reads the same
+   * answer `render` drew the button from — see `menuButtons`.
+   */
+  let resetConfirms = true
+
   const restartLabel = (): string => {
     const graves = model.summary.casualties
-    if (!armed) return graves === 0 ? 'Start over' : `Start over (erases ${String(graves)} graves)`
+    if (!armed) {
+      const spec = menuButtons({
+        campaignOver: model.campaignOver,
+        campaignUnderway: model.campaignUnderway,
+        graves,
+      }).find((candidate) => candidate.action === 'reset')
+      return spec?.label ?? 'Start over'
+    }
     return graves === 0
       ? 'Press again to erase this campaign'
       : `Press again to erase ${String(graves)} graves`
@@ -788,26 +805,44 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
      * one and "Continue" is the wrong word for a campaign with nothing left to
      * do.
      */
-    const startLabel = next.campaignOver
-      ? 'Play again (keeps Boot Hill)'
-      : next.campaignUnderway
-        ? 'Continue campaign'
-        : 'Start campaign'
-    setText(start, startLabel)
-
     /**
-     * THE WIPE IS ONLY OFFERED WHEN THERE IS A CAMPAIGN TO WIPE.
+     * WHAT IS OFFERED IS `menu-buttons.ts`'S ANSWER (ticket 077), not a chain of
+     * conditionals here.
      *
-     * `display` AND NOT `disabled` OR A DIMMED BUTTON: a greyed-out "Start over"
-     * still tells a first-time player that this screen can destroy something of
-     * his, which is a question he does not have yet. The control simply is not
-     * there until he has a campaign, and then it is.
+     * The chain that stood here offered "Play again (keeps Boot Hill)" on a
+     * finished campaign — `startCampaign`, which walks Menu -> Controls ->
+     * BootHill and straight back to the Menu, because `advanceFromBootHill`
+     * fires `campaignComplete` on a campaign with no level left. Three clicks to
+     * the screen it was pressed on. The rule now lives where it can be tested,
+     * and this only draws it.
      *
-     * IT IS REMOVED FROM THE TAB ORDER WITH IT — that is `display:none` rather
-     * than `visibility` or an opacity, so the keyboard cannot reach a button
-     * nobody can see and Enter cannot arm a wipe off screen.
+     * `display` AND NOT `disabled` OR A DIM: a greyed-out wipe still tells a
+     * first-time player this screen can destroy something of his, which is a
+     * question he does not have yet. `display:none` takes it out of the tab
+     * order with it, so Enter cannot reach a button nobody can see.
      */
-    restart.style.display = next.campaignUnderway ? '' : 'none'
+    const offered = menuButtons({
+      campaignOver: next.campaignOver,
+      campaignUnderway: next.campaignUnderway,
+      graves: next.summary.casualties,
+    })
+    for (const [button, action] of [
+      [start, 'start'],
+      [restart, 'reset'],
+    ] as const) {
+      const spec = offered.find((candidate) => candidate.action === action)
+      button.style.display = spec === undefined ? 'none' : ''
+      if (spec !== undefined) setText(button, spec.label)
+    }
+    /**
+     * THE RESET IS THE PRIMARY ACTION ON THE MEMORIAL, so it stops wearing the
+     * warning colour there. It is the only button on the screen and the only
+     * thing to do; `BAD` is for the wipe sitting beside a Continue the player
+     * actually wants.
+     */
+    restart.style.borderColor = next.campaignOver ? 'rgba(159,179,189,0.55)' : 'rgba(255,143,107,0.55)'
+    restart.style.color = next.campaignOver ? TEXT : BAD
+    resetConfirms = offered.find((candidate) => candidate.action === 'reset')?.confirms ?? true
 
     summary.style.display = next.campaignOver ? 'flex' : 'none'
 
@@ -916,7 +951,11 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
 
   restart.addEventListener('click', () => {
     if (done) return
-    if (!armed) {
+    // ON THE MEMORIAL THIS IS THE ONLY BUTTON AND IT IS THE POINT OF THE SCREEN,
+    // so it fires on the first press. See `MenuButton.confirms`: the second
+    // press exists to save a LIVE campaign from a misclick, and there is no live
+    // campaign here to save.
+    if (resetConfirms && !armed) {
       armRestart()
       return
     }
