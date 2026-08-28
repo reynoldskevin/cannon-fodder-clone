@@ -89,9 +89,17 @@ describe('his range is 80% of the squad`s', () => {
 
 describe('and he fires more slowly', () => {
   it('with a strictly longer cooldown than the squad`s rifle', () => {
+    /**
+     * 46, DOWN FROM 52 (ticket 075). The enemy read as too easy; this is one of
+     * the two numbers moved for it, the other being the reaction beat in
+     * `ai/tuning.ts`. The exact value stays pinned on purpose — it makes a
+     * retune something somebody decided rather than something that drifted —
+     * while the assertions below are what actually hold the claim that he is
+     * slower, and they are the ones that stop this going any further.
+     */
     expect(enemy().cooldownTicks).toBeGreaterThan(player().cooldownTicks)
     expect(player().cooldownTicks).toBe(32)
-    expect(enemy().cooldownTicks).toBe(52)
+    expect(enemy().cooldownTicks).toBe(46)
   })
 
   it('and a cooldown that does not divide 3600, which is not a style point', () => {

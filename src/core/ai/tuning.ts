@@ -79,14 +79,24 @@ export const DEFAULT_ALERT_TIMEOUT_TICKS = 300
  * Paid once per unbroken contact rather than on every entry into `engage`; the
  * rule and the reason are in `system.ts`'s `Memory.armedTargetId`.
  *
- * Three quarters of a second (ticket 012a). Without it an enemy issues his fire
- * order on the same tick he enters `engage`, so the first thing the player
- * learns about being spotted is a man falling over: the reaction and the
- * consequence arrive together and there is nothing to react to. This is the beat
- * between the two — he raises his rifle, and the player answers that rather than
- * a casualty. RAISE IT much past a second and the enemy is comic, standing about
- * while a squad walks onto him; LOWER IT toward zero and the complaint above
- * comes straight back.
+ * HALF A SECOND, DOWN FROM THREE QUARTERS (ticket 075). 45 was chosen on
+ * reasoning and measurement rather than on play, and its own comment nominated
+ * 30 as the first neighbour to try if the game read as too slow. It did, and
+ * this is that change: a deliberate difficulty retune, taken together with the
+ * enemy rifle's cooldown in `combat/weapons.ts`, not a fresh measurement.
+ *
+ * Without any beat at all an enemy issues his fire order on the same tick he
+ * enters `engage`, so the first thing the player learns about being spotted is a
+ * man falling over: the reaction and the consequence arrive together and there
+ * is nothing to react to. This is the beat between the two — he raises his
+ * rifle, and the player answers that rather than a casualty. Half a second is
+ * still a beat; it is simply one that has to be answered faster. RAISE IT much
+ * past a second and the enemy is comic, standing about while a squad walks onto
+ * him; LOWER IT toward zero and the complaint above comes straight back.
+ *
+ * THE TESTED BAND IS [20, 75] and the sniper sits at its floor. This must stay
+ * strictly above his 20: a line infantryman as quick off the mark as the
+ * marksman placed to be quick off the mark deletes the difference between them.
  *
  * IT HOLDS FIRE AND NOTHING ELSE. The halt on entering `engage` is unaffected,
  * and so are sight, hearing, the leash and both timeouts — a delay that also
@@ -96,7 +106,7 @@ export const DEFAULT_ALERT_TIMEOUT_TICKS = 300
  * the replay reason at the top: a delay drawn from the rng would make a mission
  * at one seed depend on how many men had engaged before.
  */
-export const DEFAULT_REACTION_TICKS = 45
+export const DEFAULT_REACTION_TICKS = 30
 
 /**
  * How close an enemy walks before he stops and shoots, as a FRACTION OF HIS OWN

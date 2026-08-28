@@ -159,21 +159,23 @@ export const ARCHETYPES: Readonly<Record<string, ArchetypeSpec>> = {
     // a corner, short enough that he goes back to his beat rather than crossing
     // the level. The neutral value, and the one every later row is read against.
     aggression: 1,
-    // Three quarters of a second, and equal to `DEFAULT_REACTION_TICKS` like
-    // every other number in this row — see the note above it.
+    // Half a second, and equal to `DEFAULT_REACTION_TICKS` like every other
+    // number in this row — see the note above it.
     //
-    // CHOSEN ON REASONING AND MEASUREMENT, NOT ON PLAY. Measured end to end over
-    // forty seeds with ticket 011b's accuracy in place: an enemy who starts two
-    // tiles away now takes 0.75s to fire his first round and 0.95s to land a
-    // killing one, where before both were frame zero; at nine tiles it is 1.08s
-    // and 2.51s against a third of a second. That is a beat a player can act
-    // inside, which is what this number is for.
+    // 30, DOWN FROM 45 (ticket 075). The original value was chosen on reasoning
+    // and measurement rather than on play — measured over forty seeds, an enemy
+    // starting two tiles away took 0.75s to fire his first round and 0.95s to
+    // land a killing one; at nine tiles, 1.08s and 2.51s. That comment named 30
+    // as the neighbour to try "for a game that feels too slow", and this is that
+    // call being made: the enemy was too easy, and this is one of the two
+    // numbers moved for it. The other is the enemy rifle's cooldown.
     //
-    // What has NOT happened is somebody sitting down and playing it. The band
-    // the tests hold this to is [20, 75], and 30 and 60 are the neighbours worth
-    // trying first — 30 for a game that feels too slow, 60 if enemies read as
-    // standing about. Say which was played, in this comment, when one is.
-    reactionTicks: 45,
+    // It is still a change made from the outside rather than from play data. The
+    // measurements above have NOT been retaken at this value; expect roughly a
+    // quarter-second off each of those first-round figures and rather less off
+    // the killing ones, which are dominated by the accuracy curve and the
+    // cooldown rather than by this.
+    reactionTicks: 30,
     // Three fifths of his own rifle: about 3.8 tiles of the 6.4 ticket 036 gave
     // him. Equal to `DEFAULT_CLOSE_TO_FRACTION` like every other number in this
     // row — see the note at the top of it.
