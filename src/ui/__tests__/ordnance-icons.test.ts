@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import {
+  ORDNANCE_COUNT_STYLE,
   ORDNANCE_ICONS,
   ORDNANCE_ICON_ARMED_STYLE,
   ORDNANCE_ICON_BAR_STYLE,
   ORDNANCE_ICON_STYLE,
+  ordnanceCountLabel,
 } from '../ordnance-icons'
 import { ORDNANCE_ORDER, RIFLE_ORDNANCE, ordnanceForHotkey } from '../../core/armoury'
 import { ORDNANCE } from '../../core/ordnance'
@@ -134,6 +136,16 @@ describe('the bar, and the buttons on it', () => {
     expect(button.get('cursor')).toBe('pointer')
   })
 
+  it('and the square is a positioning context, so the count can sit in its corner', () => {
+    /**
+     * `position:absolute` RESOLVES AGAINST THE NEAREST POSITIONED ANCESTOR, and
+     * without this that is the page: the counts would stack in the corner of the
+     * VIEWPORT, both of them, on top of each other. The symptom is two numbers
+     * in the bottom-right of the screen and none on the icons.
+     */
+    expect(button.get('position')).toBe('relative')
+  })
+
   it('and the armed one differs by more than its colour', () => {
     /**
      * WHICH WEAPON AM I HOLDING is the question this bar exists to answer, and a
@@ -144,5 +156,45 @@ describe('the bar, and the buttons on it', () => {
      */
     const structural = ['border', 'border-color', 'outline', 'opacity', 'box-shadow', 'filter']
     expect(structural.some((property) => armed.has(property))).toBe(true)
+  })
+
+  describe('the count in the corner (ticket 069)', () => {
+    const count = declarations(ORDNANCE_COUNT_STYLE)
+
+    it('sits in the bottom-right of the square', () => {
+      expect(count.get('position')).toBe('absolute')
+      expect(count.get('bottom')).toBeDefined()
+      expect(count.get('right')).toBeDefined()
+      // And NOT pinned to the other two edges, which would stretch it across the
+      // icon and centre the number over the art instead of tucking it in.
+      expect(count.get('top')).toBeUndefined()
+      expect(count.get('left')).toBeUndefined()
+    })
+
+    it('and does not swallow the click meant for the button under it', () => {
+      /**
+       * The badge is inside the button, so a click on the number IS a click on
+       * the button — but only if the badge does not become the event's target
+       * and stop there. `pointer-events:none` makes the corner as clickable as
+       * the rest of the square, which matters because the corner is exactly
+       * where a player aiming at a small icon tends to land.
+       */
+      expect(count.get('pointer-events')).toBe('none')
+    })
+
+    it('and prints the number of rounds', () => {
+      expect(ordnanceCountLabel(4)).toBe('4')
+      expect(ordnanceCountLabel(1)).toBe('1')
+    })
+
+    it('and prints a zero rather than going blank', () => {
+      /**
+       * AN EMPTY POUCH IS THE THING THE PLAYER MOST NEEDS TO READ. A badge that
+       * hid itself at zero would leave an icon that looks exactly like a weapon
+       * with rounds in it, and the only difference would be that firing does
+       * nothing.
+       */
+      expect(ordnanceCountLabel(0)).toBe('0')
+    })
   })
 })
