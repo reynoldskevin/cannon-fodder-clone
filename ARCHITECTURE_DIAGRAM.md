@@ -166,7 +166,8 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
   [*] --> Menu
-  Menu --> BootHill: new / continue campaign
+  Menu --> Controls: new / continue campaign
+  Controls --> BootHill: controls read
   BootHill --> Briefing: squad assigned (no picking)
   Briefing --> Mission: deploy
   Mission --> BootHill: MissionComplete
@@ -176,8 +177,17 @@ stateDiagram-v2
   Briefing --> BootHill: back to base
 ```
 
-Four screens: the title, Boot Hill with the squad assigned FOR the player, the
-mission card on black, and the level itself.
+Five screens: the title, the controls card, Boot Hill with the squad assigned FOR
+the player, the mission card on black, and the level itself.
+
+`Menu --> Controls --> BootHill` replaced a direct `Menu --> BootHill`, and the
+**old edge had to be deleted rather than left beside the new one**: `advance`
+returns the first row matching a screen and an event, so a table holding both
+would go on sending Start straight to the hill and the card would be unreachable.
+The card is shown on every start, including a continue — remembering that it had
+already been seen would mean a new field in the campaign save for `parseState` to
+defend. `Menu --> Mission` still bypasses it, because the demo shortcut exists
+precisely to skip clicks.
 
 A win returns to Boot Hill for the next mission; **a loss returns to the
 Briefing, and that is the one asymmetry in the chart**. The level was not

@@ -182,6 +182,8 @@ const assignmentFor = (squad: readonly SquadMember[]): ReadonlyMap<number, strin
 /** Walk Menu -> Mission the way a player does, and return what was deployed. */
 function deploy(runner: CampaignRunner): readonly SquadMember[] {
   expect(runner.startCampaign().ok).toBe(true)
+  // Ticket 074: the controls card sits between the Menu and the hill.
+  expect(runner.acknowledgeControls().ok).toBe(true)
   expect(runner.advanceFromBootHill().ok).toBe(true)
   expect(runner.deploy().ok).toBe(true)
   return runner.squad()
@@ -220,19 +222,31 @@ describe('the runner walks the chart', () => {
     expect(runner.screen()).toBe('Menu')
   })
 
-  it('Menu -> BootHill -> Briefing -> Mission -> BootHill -> Briefing', () => {
+  it('Menu -> Controls -> BootHill -> Briefing -> Mission -> BootHill -> Briefing', () => {
     // The whole loop in one test, because the value of the runner is that the
     // path exists end to end — each step passing in isolation is what the
     // previous tickets already had.
     const { runner } = runnerFor(THREE_LEVELS)
     const seen = trace(runner, [
       () => runner.startCampaign(),
+      () => runner.acknowledgeControls(),
       () => runner.advanceFromBootHill(),
       () => runner.deploy(),
       () => runner.finishMission(missionEvents([], 'complete'), assignmentFor(runner.squad())),
       () => runner.advanceFromBootHill(),
     ])
-    expect(seen).toEqual(['Menu', 'BootHill', 'Briefing', 'Mission', 'BootHill', 'Briefing'])
+    expect(seen).toEqual([
+      'Menu',
+      // Ticket 074. The card is a screen the runner passes THROUGH, and naming
+      // it here is what stops a later edit quietly restoring `Menu -> BootHill`
+      // and leaving this walk still green one step shorter.
+      'Controls',
+      'BootHill',
+      'Briefing',
+      'Mission',
+      'BootHill',
+      'Briefing',
+    ])
   })
 
   it('routes a LOST mission back to the Briefing, not to Boot Hill', () => {
@@ -408,6 +422,8 @@ describe('assigning a squad', () => {
     // (no picking)."
     const { runner } = runnerFor(ONE_LEVEL)
     expect(runner.startCampaign().ok).toBe(true)
+    // Ticket 074: the controls card sits between the Menu and the hill.
+    expect(runner.acknowledgeControls().ok).toBe(true)
     expect(runner.advanceFromBootHill().ok).toBe(true)
     expect(runner.squad().length).toBeGreaterThan(0)
   })
@@ -417,6 +433,7 @@ describe('assigning a squad', () => {
     // has nowhere to put the extra men.
     const { runner } = runnerFor([makeLevel('Two Up', 2)])
     runner.startCampaign()
+    runner.acknowledgeControls()
     runner.advanceFromBootHill()
     expect(runner.squad().length).toBeLessThanOrEqual(2)
   })
@@ -430,8 +447,10 @@ describe('assigning a squad', () => {
     const a = runnerFor(THREE_LEVELS).runner
     const b = runnerFor(THREE_LEVELS).runner
     a.startCampaign()
+    a.acknowledgeControls()
     a.advanceFromBootHill()
     b.startCampaign()
+    b.acknowledgeControls()
     b.advanceFromBootHill()
     expect(a.squad().map((m) => m.id)).toEqual(b.squad().map((m) => m.id))
   })
@@ -553,6 +572,7 @@ describe('the models the shell draws come from core, unchanged', () => {
   it('the briefing names the level and its objectives', () => {
     const { runner } = runnerFor(THREE_LEVELS)
     runner.startCampaign()
+    runner.acknowledgeControls()
     runner.advanceFromBootHill()
     const briefing = runner.briefing()
     expect(briefing.levelName).toBe('Jungle Approach')
@@ -563,6 +583,7 @@ describe('the models the shell draws come from core, unchanged', () => {
     // "Mission <level num>. With <number of soldiers> soldiers you must:"
     const { runner } = runnerFor(THREE_LEVELS)
     runner.startCampaign()
+    runner.acknowledgeControls()
     runner.advanceFromBootHill()
     expect(runner.briefing().levelNumber).toBe(1)
     expect(runner.briefing().soldierCount).toBe(runner.squad().length)
@@ -579,6 +600,7 @@ describe('the models the shell draws come from core, unchanged', () => {
   it('and Boot Hill has a model to draw', () => {
     const { runner } = runnerFor(ONE_LEVEL)
     runner.startCampaign()
+    runner.acknowledgeControls()
     expect(runner.bootHill()).toBeDefined()
   })
 })
@@ -606,6 +628,8 @@ describe('the runner is a value the shell can trust', () => {
     const seen = new Set<string>()
     seen.add(runner.screen())
     runner.startCampaign()
+    seen.add(runner.screen())
+    runner.acknowledgeControls()
     seen.add(runner.screen())
     runner.advanceFromBootHill()
     seen.add(runner.screen())
@@ -673,6 +697,8 @@ describe('BACK TO BASE — the Briefing is no longer a one-way door (ticket 059)
   /** Get to the Briefing the ordinary way, with a squad assigned. */
   function toBriefing(runner: CampaignRunner): void {
     expect(runner.startCampaign().ok).toBe(true)
+    // Ticket 074: the controls card sits between the Menu and the hill.
+    expect(runner.acknowledgeControls().ok).toBe(true)
     expect(runner.advanceFromBootHill().ok).toBe(true)
     expect(runner.screen()).toBe('Briefing')
   }
@@ -856,6 +882,7 @@ describe('the memorial the runner hands over (ticket 063)', () => {
     // and that is the right answer rather than a degraded one.
     const { runner } = runnerFor(THREE_LEVELS)
     expect(runner.startCampaign().ok).toBe(true)
+    runner.acknowledgeControls()
     expect(runner.bootHill().fallenThisMission).toEqual([])
   })
 
@@ -883,6 +910,7 @@ describe('sorting Boot Hill does not change who deploys (ticket 065)', () => {
      */
     const { runner, host } = runnerFor(THREE_LEVELS)
     expect(runner.startCampaign().ok).toBe(true)
+    runner.acknowledgeControls()
     const rosterOrder = recruitsAvailable(runner.campaign()).map((m) => m.id)
 
     // Look at the memorial first — if reading it sorted anything in place, the

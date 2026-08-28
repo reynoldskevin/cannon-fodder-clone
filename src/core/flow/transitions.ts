@@ -22,7 +22,7 @@
  * a screen added as a loose string would compile into a machine with no rows
  * that can reach or leave it, which is a softlock that type-checks.
  */
-export type Screen = 'Menu' | 'BootHill' | 'Briefing' | 'Mission'
+export type Screen = 'Menu' | 'Controls' | 'BootHill' | 'Briefing' | 'Mission'
 
 /** Everything the player (or `main.ts`) can do to move between screens. */
 export type FlowEvent =
@@ -34,6 +34,7 @@ export type FlowEvent =
   | 'campaignComplete'
   | 'demoShortcut'
   | 'backToBase'
+  | 'controlsAcknowledged'
 
 /** One row of the chart: pressing `event` on `from` lands on `to`. */
 export interface Transition {
@@ -56,7 +57,7 @@ export type AdvanceResult = { readonly ok: true; readonly state: Screen } | { re
 /** Where a launch with no valid entry state begins. */
 export const INITIAL_SCREEN: Screen = 'Menu'
 
-export const SCREENS: readonly Screen[] = ['Menu', 'BootHill', 'Briefing', 'Mission']
+export const SCREENS: readonly Screen[] = ['Menu', 'Controls', 'BootHill', 'Briefing', 'Mission']
 
 export const EVENTS: readonly FlowEvent[] = [
   'startCampaign',
@@ -67,6 +68,7 @@ export const EVENTS: readonly FlowEvent[] = [
   'campaignComplete',
   'demoShortcut',
   'backToBase',
+  'controlsAcknowledged',
 ]
 
 /**
@@ -88,7 +90,17 @@ export const EVENTS: readonly FlowEvent[] = [
  * precisely why it is written down in both places.
  */
 export const TRANSITIONS: readonly Transition[] = [
-  { from: 'Menu', event: 'startCampaign', to: 'BootHill' },
+  /**
+   * THE CONTROLS CARD SITS BETWEEN THE TITLE AND THE HILL (ticket 074).
+   *
+   * `Menu -> BootHill` USED TO BE THIS ROW AND IS DELIBERATELY GONE. Leaving it
+   * in beside the new one would not be a harmless duplicate: `advance` returns
+   * the FIRST row matching a screen and an event, so the old row would win and
+   * the card would be unreachable — with every test about the new screen still
+   * passing, because each of them asks about a hop rather than about the route.
+   */
+  { from: 'Menu', event: 'startCampaign', to: 'Controls' },
+  { from: 'Controls', event: 'controlsAcknowledged', to: 'BootHill' },
   { from: 'BootHill', event: 'squadAssigned', to: 'Briefing' },
   { from: 'Briefing', event: 'deploy', to: 'Mission' },
   { from: 'Mission', event: 'missionComplete', to: 'BootHill' },
