@@ -236,6 +236,27 @@ describe('the ordnance bar under the roster (ticket 067)', () => {
      */
     expect(panelSource).toMatch(/onSelectOrdnance/)
   })
+
+  it('and an empty count hides its badge rather than drawing a blank plate (ticket 073)', () => {
+    /**
+     * THE RIFLE HAS NO NUMBER TO SHOW. `ordnanceCountLabel` answers `''` for a
+     * count that is not finite, and the badge is not a bare text node: it
+     * carries a dark plate, a border-width of padding and a minimum width, all
+     * so a digit stays legible over the art. Written empty it keeps every one of
+     * those and becomes a small blank tile sitting in the corner of the rifle,
+     * which reads as a readout that has failed rather than as one that does not
+     * apply.
+     *
+     * DRIVEN BY THE LABEL, NOT BY THE WEAPON. Whatever `ordnanceCountLabel`
+     * calls empty is what has no badge, so the two rules cannot disagree — and
+     * the one place that decides which weapons are countable stays the armoury.
+     */
+    expect(panelSource).toMatch(/ordnanceCountLabel/)
+    // The label is put in a variable and asked about, rather than passed
+    // straight into `setText` — which is what the display toggle needs.
+    expect(panelSource).toMatch(/label === ''|label !== ''|=== ''|!== ''/)
+    expect(panelSource).toMatch(/count\.style\.display/)
+  })
 })
 
 describe('the panel is a rail, and it is not in the way', () => {

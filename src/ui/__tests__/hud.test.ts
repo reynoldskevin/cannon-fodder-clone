@@ -10,6 +10,7 @@ import {
   type HudSection,
 } from '../hud'
 import { ORDNANCE_ICONS } from '../ordnance-icons'
+import { ORDNANCE_ORDER } from '../../core/armoury'
 import { ORDNANCE } from '../../core/ordnance'
 
 /**
@@ -140,12 +141,17 @@ describe('nothing is hidden that the rail does not really replace', () => {
     expect(panel).toContain('squadRowCells')
   })
 
-  it('and an icon for every weapon that is not the rifle', () => {
+  it('and an icon for every weapon there is, the rifle included (ticket 073)', () => {
     /**
-     * The selector listed every slot. The icons must cover the same ground, or
-     * hiding it would leave a weapon the player can arm and cannot see.
+     * The selector listed every slot, rifle row and all. The icons must cover
+     * the same ground or hiding it would leave a weapon the player can arm and
+     * cannot see — which was true of the rifle for exactly one ticket, between
+     * the card going quiet and its icon arriving.
      */
-    expect(ORDNANCE_ICONS.map((icon) => icon.ordnance).sort()).toEqual(Object.keys(ORDNANCE).sort())
+    expect(ORDNANCE_ICONS.map((icon) => icon.ordnance).sort()).toEqual([...ORDNANCE_ORDER].sort())
+    for (const ordnance of Object.keys(ORDNANCE)) {
+      expect(ORDNANCE_ICONS.map((icon) => icon.ordnance)).toContain(ordnance)
+    }
   })
 
   it('and the rail is what shows them, not some third thing', () => {

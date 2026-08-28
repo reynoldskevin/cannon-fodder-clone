@@ -790,9 +790,16 @@ async function boot(): Promise<void> {
      * tracked anywhere else would be a second answer, and the two would differ
      * for exactly as long as it took anyone to notice.
      *
-     * ONLY THE ORDNANCE THAT HAS AN ICON is asked for — `ORDNANCE_ICONS` is
-     * where "which weapons have buttons" is decided, and the rifle is not one of
-     * them (its count is `Infinity`, which no corner should ever print).
+     * EVERY ORDNANCE THE BAR SHOWS IS ASKED FOR, and nothing else —
+     * `ORDNANCE_ICONS` is where "which weapons have buttons" is decided, so this
+     * loop cannot fetch a count no icon will read, nor miss one that a button
+     * needs.
+     *
+     * THE RIFLE IS ONE OF THEM SINCE 073, so its `Infinity` lands in `counts`
+     * and is handed on untouched. Dropping it here would put a second answer to
+     * "which weapons are unlimited" in this file; `ordnanceCountLabel` is the
+     * one place that answers it, it returns `''` for `Infinity`, and the panel
+     * hides that badge rather than printing anything in the rifle's corner.
      */
     const counts: Record<string, number> = {}
     for (const icon of ORDNANCE_ICONS) counts[icon.ordnance] = session.armoury.count(icon.ordnance)
