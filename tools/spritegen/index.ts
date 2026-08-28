@@ -9,8 +9,13 @@
  * and cost far more. The `UnitVisual` seam in ARCHITECTURE.md is what makes
  * that swap cheap.
  *
- * The game loads only `atlas.png`, the ground textures named in the manifest
- * and `sprites.manifest.json`; it never slices a sheet at runtime.
+ * The game loads only the atlas, the ground textures and
+ * `sprites.manifest.json`; it never slices a sheet at runtime. ALL THREE ARE
+ * NAMED BY THE MANIFEST — this used to say `atlas.png` and stopped being true in
+ * ticket 084, when the emitted format became an `ImageWriter` parameter and the
+ * shipped atlas became WebP. `sprite-atlas.ts` and `ground-texture.ts` resolve
+ * whatever filename they are given, so the manifest is the only thing tying the
+ * loaders to the files on disk.
  */
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -28,7 +33,14 @@ import {
   type MatteDecision,
 } from './image'
 import { packRects, type PackInput } from './pack'
-import { cellAnchor, DIRECTIONS, sliceGrid, trimFrame, type Direction } from './slice'
+import {
+  cellAnchor,
+  DIRECTIONS,
+  sliceGrid,
+  trimFrame,
+  type Direction,
+  type RgbaImage,
+} from './slice'
 
 export { DIRECTIONS, type Direction } from './slice'
 export { SpritegenError } from './errors'
@@ -351,9 +363,44 @@ export interface SpriteManifest {
   ground: Record<GroundName, GroundEntry>
 }
 
+/**
+ * How the pipeline turns an image into the bytes it writes, and what to call the
+ * file (ticket 084).
+ *
+ * A PARAMETER BECAUSE THE WEBP ENCODER IS A BINARY. `atlas.png` was 6.92 MB —
+ * more than everything else the page loaded put together — and the fix is WebP,
+ * but there is no WebP encoder in this project's dependencies and there is not
+ * going to be one: it is `cwebp` from libwebp. Calling out to it from in here
+ * would mean every test in this directory, and any CI running them, needed
+ * libwebp installed to exercise rect packing.
+ *
+ * So the default stays PNG and `tools/build-models.mjs` — which exists to be the
+ * side-effectful driver — supplies the WebP writer.
+ *
+ * THE EXTENSION AND THE BYTES TRAVEL TOGETHER on purpose. `sprite-atlas.ts` and
+ * `ground-texture.ts` resolve whatever filename the manifest gives them, so the
+ * manifest is the only thing tying the loaders to the files; letting a caller set
+ * one without the other is how you ship a manifest naming a file that is not
+ * there.
+ */
+export interface ImageWriter {
+  /** Including the dot, e.g. `.png` or `.webp`. */
+  readonly extension: string
+  encode(image: RgbaImage): Buffer
+}
+
+/** What the pipeline has always done, and still does unless told otherwise. */
+const PNG_WRITER: ImageWriter = { extension: '.png', encode: encodePng }
+
+/** Swap `name.png` for the writer's extension, leaving the stem alone. */
+const named = (stem: string, writer: ImageWriter): string =>
+  `${stem.replace(/\.png$/, '')}${writer.extension}`
+
 export interface BuildOptions {
   sourceDir: string
   outDir: string
+  /** Emitted image format; defaults to PNG. See `ImageWriter`. */
+  writer?: ImageWriter
   /** Downscale factor for atlas art; defaults to `DEFAULT_SCALE`. */
   scale?: number
   /**
@@ -466,7 +513,7 @@ function sliceSheet(
 
 /** Build the atlas + manifest. Every failure is a named `SpritegenError`. */
 export function buildSprites(options: BuildOptions): BuildResult {
-  const { sourceDir, outDir } = options
+  const { sourceDir, outDir, writer = PNG_WRITER } = options
   const scale = options.scale ?? DEFAULT_SCALE
   if (!(scale > 0) || scale > 1) {
     throw new SpritegenError(`scale must be in (0, 1], got ${String(scale)}`)
@@ -734,16 +781,19 @@ export function buildSprites(options: BuildOptions): BuildResult {
 
   // --- write --------------------------------------------------------------
   mkdirSync(outDir, { recursive: true })
-  const atlasPath = join(outDir, 'atlas.png')
+  const atlasFile = named('atlas', writer)
+  const atlasPath = join(outDir, atlasFile)
   const manifestPath = join(outDir, 'sprites.manifest.json')
 
   const groundPaths = {} as Record<GroundName, string>
   const ground = {} as Record<GroundName, GroundEntry>
   for (const name of GROUND_TEXTURES) {
-    const { output } = GROUND_FILES[name]
+    // `output` is the emitted STEM plus `.png`; the writer decides the suffix.
+    // `jungle` emits `floor`, so this must not reach back to the source name.
+    const file = named(GROUND_FILES[name].output, writer)
     const image = groundImages[name]
-    groundPaths[name] = join(outDir, output)
-    ground[name] = { file: output, width: image.width, height: image.height, tileable: true }
+    groundPaths[name] = join(outDir, file)
+    ground[name] = { file, width: image.width, height: image.height, tileable: true }
   }
 
   const manifest: SpriteManifest = {
@@ -753,16 +803,16 @@ export function buildSprites(options: BuildOptions): BuildResult {
     version: 2,
     origin: MANIFEST_ORIGIN,
     scale,
-    atlas: { file: 'atlas.png', width: packed.width, height: atlasHeight, padding: PADDING },
+    atlas: { file: atlasFile, width: packed.width, height: atlasHeight, padding: PADDING },
     units: { soldier: { cell: unitCell, animations } },
     props,
     effects,
     ground,
   }
 
-  writeFileSync(atlasPath, encodePng(atlas))
+  writeFileSync(atlasPath, writer.encode(atlas))
   for (const name of GROUND_TEXTURES) {
-    writeFileSync(groundPaths[name], encodePng(groundImages[name]))
+    writeFileSync(groundPaths[name], writer.encode(groundImages[name]))
   }
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 
