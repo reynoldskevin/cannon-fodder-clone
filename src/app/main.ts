@@ -52,6 +52,7 @@ import { ZoomController } from '../input/zoom-controller'
 import { showControlHint, type ControlHint } from '../ui/control-hint'
 import { showFatalError, type FatalErrorReport } from '../ui/error-overlay'
 import { createHud, type RosterMember } from '../ui/hud'
+import { ORDNANCE_ICONS } from '../ui/ordnance-icons'
 import { createSquadPanel } from '../ui/squad-panel'
 import { createMissionBanner } from '../ui/mission-banner'
 import { createBootHill } from '../ui/boot-hill'
@@ -782,7 +783,20 @@ async function boot(): Promise<void> {
     // The armed weapon is re-read here rather than remembered by the panel, so
     // the lit icon reports the armoury instead of the last thing clicked — a
     // digit, a shift-wheel or a replayed command all move it.
-    squadPanel.update({ squad: railSquad, armed: session.armoury.selected })
+    /**
+     * The counts come from the same armoury and in the same breath as `armed`
+     * (ticket 069), so the number on an icon and the number in the HUD's
+     * selector are two readings of one pouch taken at one instant. A count
+     * tracked anywhere else would be a second answer, and the two would differ
+     * for exactly as long as it took anyone to notice.
+     *
+     * ONLY THE ORDNANCE THAT HAS AN ICON is asked for — `ORDNANCE_ICONS` is
+     * where "which weapons have buttons" is decided, and the rifle is not one of
+     * them (its count is `Infinity`, which no corner should ever print).
+     */
+    const counts: Record<string, number> = {}
+    for (const icon of ORDNANCE_ICONS) counts[icon.ordnance] = session.armoury.count(icon.ordnance)
+    squadPanel.update({ squad: railSquad, armed: session.armoury.selected, counts })
   }
 
   /**
