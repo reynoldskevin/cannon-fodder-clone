@@ -14,12 +14,22 @@
  * `error-overlay.ts`, so the UI layer stays free of a stylesheet the build would
  * have to ship.
  *
- * TWO OF THOSE BLOCKS ARE NOW QUIET (ticket 072). The left rail names every
- * living man and paints both weapons with their remaining rounds, so the roster
- * pips and the monospace selector had become a second telling of facts the
- * player was already reading elsewhere on the same screen. They are hidden by
- * `RAIL_SUPERSEDED` below, not removed: everything that builds and pools them is
- * still here, and emptying that one list puts them back.
+ * THE WHOLE CARD IS NOW QUIET (ticket 072). It began as the two blocks the left
+ * rail says better — the rail names every living man and paints both weapons
+ * with their remaining rounds, so the roster pips and the monospace selector had
+ * become a second telling of facts the player was already reading elsewhere on
+ * the same screen — and it ended, on the user's call, as the card entire: "squad
+ * 3/3, the timer and the objective also — that whole box can go."
+ *
+ * SO THE MISSION CLOCK AND THE OBJECTIVE PROGRESS ARE NOW SHOWN NOWHERE IN THE
+ * GAME. Nothing else states them; that is not an oversight this file should
+ * quietly repair, it is the decision, and `HUD_PANEL_SHOWN` is where it lives so
+ * that whoever wants it back has one constant to flip rather than a commit to
+ * reconstruct.
+ *
+ * HIDDEN, NOT REMOVED, at both levels: everything that builds and pools every
+ * block is still here, `RAIL_SUPERSEDED` still names only what the rail really
+ * duplicates, and the panel switch sits ABOVE it rather than swallowing it.
  *
  * UPDATED EVERY FRAME, WRITTEN ONLY ON CHANGE. `update` is called from the
  * render loop, so it runs 60+ times a second for a readout that changes once a
@@ -112,12 +122,59 @@ export const HUD_SECTIONS: readonly HudSection[] = ['header', 'roster', 'objecti
  * HIDDEN, NOT DELETED. The elements below are still built and still pooled, so
  * emptying this list is the whole of bringing either block back.
  *
- * THE HEADER IS NOT IN HERE, and must not drift into it: the rail shows the
- * LIVING only, so `Squad 3/5` is the single place on the mission screen that
- * states a loss. The mission clock is beside it for the plainer reason that
- * nothing else shows it at all.
+ * THE HEADER AND THE OBJECTIVES ARE NOT IN HERE, and must not drift into it,
+ * even though `HUD_PANEL_SHOWN` now hides them too. This list means one specific
+ * thing — "the rail already says this" — and the rail says neither: it shows the
+ * LIVING only, so `Squad 3/5` was the one statement of a loss, and it shows no
+ * clock and no objective at all. They are off because the CARD is off, which is
+ * a different decision recorded in a different constant. Folding them in here
+ * would mean anybody who ever switched the card back on got two roster readouts
+ * with it and would have to rediscover this whole ticket to find out why.
  */
 export const RAIL_SUPERSEDED: readonly HudSection[] = ['roster', 'selector']
+
+/**
+ * Whether the mission card is drawn at all (ticket 072, widened).
+ *
+ * THE USER'S CALL, IN ONE PLACE. The argument for keeping the header was that
+ * the rail lists the LIVING only, so `Squad 3/5` was the mission screen's single
+ * statement of a loss, and the clock had nowhere else to go; the answer was that
+ * the whole box can go. It does. The mission clock and the objective progress
+ * are, from here, shown NOWHERE in the game — deliberately, and reversibly.
+ *
+ * ONE LOUD CONSTANT RATHER THAN FOUR QUIET DELETIONS, because a decision this
+ * broad has to be findable by somebody who was not in the room for it. Nothing
+ * below is removed: the elements are built, the pools are wired, `createHud`
+ * still runs and `app/main.ts` still builds, feeds and disposes the HUD in
+ * ignorance of any of this. Flipping this to `true` restores the card — minus
+ * the two blocks the rail genuinely duplicates, which stay hidden by
+ * `RAIL_SUPERSEDED` on their own separate merits.
+ *
+ * TYPED `boolean` AND NOT THE LITERAL `false`, so that the type of a switch does
+ * not depend on which position it is currently in. Checked rather than assumed:
+ * the literal compiles clean today, `&&` narrows without complaint and neither
+ * `tsc` nor eslint objects to the branch it makes unreachable. What the literal
+ * WOULD do is make flipping this to `true` a change of type as well as of value
+ * — and any `HUD_PANEL_SHOWN === true` written against it in the meantime a hard
+ * "no overlap" error rather than a comparison. The annotation keeps the flip a
+ * one-character edit.
+ */
+export const HUD_PANEL_SHOWN: boolean = false
+
+/**
+ * Whether the rail already says this section's piece.
+ *
+ * A FUNCTION OF ITS OWN SO THAT IT CAN BE ASKED WHILE THE CARD IS OFF. Folded
+ * into `hudSectionShown`, this rule would be unobservable: with the panel switch
+ * `false` that predicate answers `false` for everything, so a body reduced to
+ * `return HUD_PANEL_SHOWN` would pass every test that could be written about it
+ * — and would hand a second roster to whoever switched the card back on for the
+ * clock's sake, silently, months later. Split out, the rule keeps being true and
+ * keeps being checked while its answer is hidden.
+ */
+export function railSupersedes(section: HudSection): boolean {
+  return RAIL_SUPERSEDED.includes(section)
+}
 
 /**
  * Whether a section is drawn at all.
@@ -128,9 +185,16 @@ export const RAIL_SUPERSEDED: readonly HudSection[] = ['roster', 'selector']
  * appended shows an empty box the day somebody re-enables it. One predicate
  * gates the pixels and the per-frame work together, so they can only come back
  * together.
+ *
+ * THE PANEL SWITCH IS ASKED FIRST, AND SEPARATELY. A section of a card that is
+ * not on screen is not on screen, whatever its own merits — so with the panel
+ * off this answers `false` for every section, including the header the rail
+ * never superseded. Keeping the two questions stacked rather than merged is what
+ * stops "I want the clock back" from also handing the player a second roster.
  */
 export function hudSectionShown(section: HudSection): boolean {
-  return !RAIL_SUPERSEDED.includes(section)
+  if (!HUD_PANEL_SHOWN) return false
+  return !railSupersedes(section)
 }
 
 /** Panel background and text, matched to the error overlay's palette. */
@@ -401,9 +465,25 @@ export function createHud(mount: HTMLElement): Hud {
 
   return {
     update,
+    /**
+     * HONOURED HERE, NOT BY THE CALLER REMEMBERING. `app/main.ts` calls
+     * `setVisible(true)` on every mission and knows nothing about ticket 072 —
+     * which is right: the router's job is to say WHICH SCREEN IT IS, and this
+     * file's job is to say what the HUD does about that. So the panel switch is
+     * enforced at the one place that writes the panel's `display`, and asking to
+     * be shown while the card is off is simply a request that cannot be granted.
+     */
     setVisible(visible: boolean): void {
-      panel.style.display = visible ? PANEL_DISPLAY : 'none'
+      panel.style.display = visible && HUD_PANEL_SHOWN ? PANEL_DISPLAY : 'none'
     },
+    /**
+     * ANSWERS ABOUT THE PIXELS, WHICH IS WHY IT ANSWERS `false`. `main.ts` gates
+     * its entire per-frame `hud.update(...)` — including assembling the model —
+     * on this, so reporting "visible" while showing nothing would leave the game
+     * formatting a clock and a roster into invisible nodes sixty times a second.
+     * The cost has to leave with the pixels, and reading the element's own
+     * `display` back is what guarantees the two can never disagree.
+     */
     isVisible(): boolean {
       return panel.style.display !== 'none'
     },

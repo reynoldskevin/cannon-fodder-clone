@@ -6,6 +6,7 @@ import {
   RAIL_SUPERSEDED,
   hudSectionShown,
   objectiveLabel,
+  railSupersedes,
   type HudSection,
 } from '../hud'
 import { ORDNANCE_ICONS } from '../ordnance-icons'
@@ -59,6 +60,27 @@ describe('the whole card is off', () => {
     for (const section of HUD_SECTIONS) {
       expect(hudSectionShown(section)).toBe(false)
     }
+  })
+
+  it('and the rule underneath still names what the rail really duplicates', () => {
+    /**
+     * ASKED OF THE FUNCTION, NOT OF THE LIST. With the card off,
+     * `hudSectionShown` returns `false` for everything, so no test of IT can
+     * tell a gate that still consults `RAIL_SUPERSEDED` from one whose body has
+     * been reduced to `return HUD_PANEL_SHOWN`. Both pass; only the second hands
+     * a second roster to whoever switches the card back on, and it would do it
+     * silently, months later, to somebody who wanted the clock.
+     *
+     * So the section rule is a function of its own and is exercised on its own,
+     * underneath the switch that currently hides its answer.
+     */
+    expect(railSupersedes('roster')).toBe(true)
+    expect(railSupersedes('selector')).toBe(true)
+  })
+
+  it('and does not claim the header or the objectives, which the rail never showed', () => {
+    expect(railSupersedes('header')).toBe(false)
+    expect(railSupersedes('objectives')).toBe(false)
   })
 
   it('but the section gate survives underneath it', () => {
@@ -163,6 +185,13 @@ describe('hidden, not deleted', () => {
      */
     const asked = source.match(/hudSectionShown\(/g) ?? []
     expect(asked.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('and the card switch is composed with the section rule, not written over it', () => {
+    // The two questions stay stacked: "is the card on" and, under it, "does the
+    // rail already say this". One function asking the other is what keeps the
+    // second answer true while the first hides it.
+    expect(source).toMatch(/railSupersedes\(section\)/)
   })
 
   it('and the router cannot show the card past the switch', () => {
