@@ -258,6 +258,16 @@ export const SQUAD_PANEL_STYLE = [
   'top:0',
   'bottom:0',
   `width:${ROSTER_COLUMN_WIDTH}`,
+  /**
+   * SO THE CONSTANT MEANS THE SPACE THIS COLUMN TAKES (ticket 074). The
+   * playfield starts at `ROSTER_COLUMN_WIDTH` and the canvas is drawn from
+   * there; under the default `content-box` this panel OCCUPIES that plus its own
+   * `1.2rem` of padding, and the difference is a strip of map running on
+   * underneath the roster — the very thing the inset exists to stop, only
+   * narrower and harder to notice. Boot Hill's column carries the same line, for
+   * the same reason and because the two are meant to be one column.
+   */
+  'box-sizing:border-box',
   'z-index:30',
   `display:${SQUAD_PANEL_DISPLAY}`,
   'flex-direction:column',

@@ -13,8 +13,20 @@ import { isEditableTarget } from './editable-target'
 /** Pan speed in world units per second. */
 const PAN_SPEED = 22
 
-/** How close to the window edge the pointer must be to start scrolling, in CSS px. */
+/** How close to the playfield's edge the pointer must be to start scrolling, in CSS px. */
 const EDGE_MARGIN = 28
+
+/**
+ * The rectangle whose edges scroll the camera (ticket 074).
+ *
+ * AN ELEMENT SATISFIES THIS WITHOUT BEING TOLD TO, which is the point: `main.ts`
+ * hands over the canvas and a test hands over a plain object, and neither has to
+ * know about the other. The same bargain `PointerController` already makes with
+ * its host.
+ */
+export interface PlayfieldBounds {
+  getBoundingClientRect(): { left: number; top: number; width: number; height: number }
+}
 
 const LEFT_KEYS = new Set(['ArrowLeft', 'KeyA'])
 const RIGHT_KEYS = new Set(['ArrowRight', 'KeyD'])
@@ -60,6 +72,16 @@ export class PanController {
   constructor(
     private readonly rig: CameraRig,
     private readonly target: Window = window,
+    /**
+     * WHAT COUNTS AS AN EDGE. Given nothing, the window — which is what this was
+     * for as long as the canvas WAS the window. Given the playfield, its own
+     * rect: since ticket 074 the canvas starts at the rail's right edge, and a
+     * left band measured from `innerWidth` would sit entirely under the roster.
+     * Reading a name or reaching for the grenade would then pan the camera west
+     * and keep panning until the pointer came back out — a map that drifts
+     * whenever the player looks at his squad.
+     */
+    private readonly playfield: PlayfieldBounds | null = null,
   ) {
     this.target.addEventListener('keydown', this.onKeyDown as EventListener)
     this.target.addEventListener('keyup', this.onKeyUp as EventListener)
@@ -81,12 +103,32 @@ export class PanController {
     }
 
     if (this.pointerInside) {
-      const w = this.target.innerWidth
-      const h = this.target.innerHeight
-      if (this.pointerX >= 0 && this.pointerX < EDGE_MARGIN) right -= 1
-      else if (this.pointerX > w - EDGE_MARGIN && this.pointerX <= w) right += 1
-      if (this.pointerY >= 0 && this.pointerY < EDGE_MARGIN) up += 1
-      else if (this.pointerY > h - EDGE_MARGIN && this.pointerY <= h) up -= 1
+      // READ EVERY FRAME AND NOT CACHED. The rect moves with a resize, and a
+      // remembered one would put the bands where the window used to be — which
+      // is exactly the class of bug this parameter exists to fix.
+      const rect = this.playfield?.getBoundingClientRect()
+      const left = rect?.left ?? 0
+      const top = rect?.top ?? 0
+      const right_ = rect === undefined ? this.target.innerWidth : left + rect.width
+      const bottom = rect === undefined ? this.target.innerHeight : top + rect.height
+      /**
+       * INSIDE THE RECTANGLE BEFORE ANY BAND IS CONSIDERED, and both axes at
+       * once. Testing each axis on its own was the first version of this fix and
+       * it was half a fix: the rail runs the full height, so its top and bottom
+       * 28 pixels sat in the vertical bands whatever x said — the same "the map
+       * drifts while I read my squad" bug, rotated ninety degrees, waiting at the
+       * corner where the HEROES heading is. Outside the playfield is not further
+       * into a band; it is somewhere else, and somewhere else does not drive the
+       * camera.
+       */
+      const insideX = this.pointerX >= left && this.pointerX <= right_
+      const insideY = this.pointerY >= top && this.pointerY <= bottom
+      if (insideX && insideY) {
+        if (this.pointerX < left + EDGE_MARGIN) right -= 1
+        else if (this.pointerX > right_ - EDGE_MARGIN) right += 1
+        if (this.pointerY < top + EDGE_MARGIN) up += 1
+        else if (this.pointerY > bottom - EDGE_MARGIN) up -= 1
+      }
     }
 
     if (right === 0 && up === 0) return
