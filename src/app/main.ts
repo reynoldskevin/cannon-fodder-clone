@@ -47,6 +47,7 @@ import { GroundTextureError, loadGroundTextures } from '../render/ground-texture
 import type { GroundSurface } from '../core/view/ground-surface'
 import { isEditableTarget } from '../input/editable-target'
 import { PanController } from '../input/pan-controller'
+import { squadFocus, parseScrollUnlocked, controlHintText } from '../core/view/follow'
 import { PointerController } from '../input/pointer-controller'
 import { ZoomController } from '../input/zoom-controller'
 import { showControlHint, type ControlHint } from '../ui/control-hint'
@@ -340,6 +341,22 @@ async function boot(): Promise<void> {
   // this exact angle.
   const elevation = parseElevation(new URLSearchParams(window.location.search).get('elev'))
 
+  /**
+   * MAY THE PLAYER MOVE THE CAMERA? Only with `?scroll=1` (ticket 075).
+   *
+   * The default is a locked view that follows the squad: fixed zoom, no pan.
+   * The flag exists so the old free camera is still reachable for testing — for
+   * looking at a corner of a level, or at what the AI is doing off screen —
+   * without which those things would need a rebuild to see.
+   *
+   * READ ONCE, HERE. The controllers are built per stage and a flag re-read on
+   * every mission could disagree with itself mid-campaign if the URL changed
+   * under a `history.pushState`.
+   */
+  const scrollUnlocked = parseScrollUnlocked(
+    new URLSearchParams(window.location.search).get('scroll'),
+  )
+
   // The level manifest and the sprite manifest at once: they are independent,
   // and serialising them would put a whole extra round trip in front of the
   // first frame. The level DOCUMENTS cannot join them — the manifest is what
@@ -455,8 +472,18 @@ async function boot(): Promise<void> {
     readonly tracerFx: TracerRenderer
     readonly effectFx: FxRenderer
     readonly rig: CameraRig
-    readonly pan: PanController
-    readonly zoom: ZoomController
+    /**
+     * The free-camera controllers, or `undefined` on the locked default
+     * (ticket 075).
+     *
+     * NOT CONSTRUCTED AND THEN IGNORED. Both register window-level listeners on
+     * construction, so a "built but unused" pan controller would still swallow
+     * the arrow keys and still preventDefault on them — the camera would not
+     * move and the page would not scroll, which is a dead keyboard rather than a
+     * locked camera.
+     */
+    readonly pan: PanController | undefined
+    readonly zoom: ZoomController | undefined
   }
 
   function buildStage(level: LevelData): Stage {
@@ -515,8 +542,15 @@ async function boot(): Promise<void> {
     // The canvas is what decides where an edge IS (ticket 074): a left band
     // measured from the window would sit under the rail, so reading the roster
     // or reaching for an icon would scroll the map west and keep scrolling.
-    const pan = new PanController(rig, window, canvas)
-    const zoom = new ZoomController(rig, window, canvas)
+    //
+    // BUILT ONLY BEHIND `?scroll=1` (ticket 075). See `Stage.pan`: constructing
+    // them and declining to call `update` would leave the listeners attached,
+    // and the arrow keys would go on being swallowed by a camera that cannot
+    // move. The canvas is still what they are measured against when they ARE
+    // built — the two tickets agree about where the playfield is, they only
+    // disagree about whether the player may push it around.
+    const pan = scrollUnlocked ? new PanController(rig, window, canvas) : undefined
+    const zoom = scrollUnlocked ? new ZoomController(rig, window, canvas) : undefined
     return { level, built, tracerFx, effectFx, rig, pan, zoom }
   }
 
@@ -527,8 +561,8 @@ async function boot(): Promise<void> {
    * stage and outlive all of them, so they are freed by `teardown` instead.
    */
   function disposeStage(old: Stage): void {
-    old.zoom.dispose()
-    old.pan.dispose()
+    old.zoom?.dispose()
+    old.pan?.dispose()
     // Its own geometry and material, added to the scene from out here — so
     // `built.dispose()` does not know about them.
     old.tracerFx.dispose()
@@ -939,14 +973,18 @@ async function boot(): Promise<void> {
   function showHintOnce(): void {
     if (hintShown) return
     hintShown = true
-    // "F to zoom out", not "F to fit": since ticket 009b the zoom-out limit stops
-    // at the widest view that shows no background, which is deliberately short of
-    // the whole level. A hint that still promised a fit would be a lie.
-    hint = showControlHint(
-      mount,
-      'WASD / arrows or screen edge to pan  ·  wheel or +/− to zoom  ·  F to zoom out fully  ·  ' +
-        '1–3 or shift+wheel to change weapon',
-    )
+    /**
+     * WHAT IT SAYS DEPENDS ON WHETHER THE PLAYER CAN DO IT (ticket 075).
+     *
+     * This line used to promise pan and zoom to everybody, and with the camera
+     * locked none of those keys does anything — a hint advertising controls
+     * that are not there is worse than no hint, because the player who presses
+     * them concludes the game is broken. The wording lives in
+     * `core/view/follow.ts` beside the flag that decides it, where it is
+     * tested; the older comment here made the same argument about "F to fit"
+     * and kept the string in this untestable file.
+     */
+    hint = showControlHint(mount, controlHintText(scrollUnlocked))
   }
 
   /** Timestamp of the last frame, for the frame delta. See the render loop. */
@@ -1165,6 +1203,25 @@ async function boot(): Promise<void> {
     const fresh = session.renderEntities(groundHeightAt)
     stage.built.entities.setEntities(fresh)
     stage.built.entities.setEntities(fresh)
+
+    /**
+     * RECENTRE ON THE SQUAD, EVERY MISSION START (ticket 075).
+     *
+     * ITS OWN LINE BECAUSE THE STAGE IS OFTEN NOT REBUILT. The block above only
+     * calls `buildStage` when the LEVEL changed, deliberately — replaying the
+     * level you are already on keeps its scene — and the rig lives on the stage.
+     * So a player who died and retried would otherwise begin the new mission
+     * with the camera the dead one ended on, and the follow would then slide it
+     * back across the level from wherever his last man fell.
+     *
+     * `snapTo`, NOT `setTarget`: a mission does not move, it begins. The ease is
+     * for following men about; using it here would open every retry with a long
+     * drift the player did not ask for.
+     *
+     * AFTER the entities are seeded, so the world holds the new squad and this
+     * reads their real positions rather than the outgoing mission's.
+     */
+    stage.rig.snapTo(squadFocus(session.world.entities, initialFocus(next)))
   }
 
   /** Tear the whole session down: loop, listeners, controllers, GPU resources. */
@@ -1469,7 +1526,21 @@ async function boot(): Promise<void> {
       const dt = Math.min((now - previous) / 1000, MAX_FRAME_DT)
       previous = now
       elapsed += dt
-      stage.pan.update(dt)
+      stage.pan?.update(dt)
+      /**
+       * THE VIEW FOLLOWS THE SQUAD (ticket 075).
+       *
+       * BEFORE `rig.update`, so the ease this frame runs toward the target this
+       * frame — asking after it would spend the whole frame easing toward where
+       * the men were last time, one frame of lag that is visible as a camera
+       * that trails the squad rather than carries it.
+       *
+       * THE CURRENT TARGET IS THE FALLBACK, which is what makes a wipe hold
+       * still instead of flying to the map's corner. See `squadFocus`.
+       */
+      if (!scrollUnlocked) {
+        stage.rig.setTarget(squadFocus(session.world.entities, stage.rig.target))
+      }
       stage.rig.update(dt)
       // The simulation runs at its own fixed 60 Hz whatever this display does.
       // `advance` returns how far into the step after the last one the frame
