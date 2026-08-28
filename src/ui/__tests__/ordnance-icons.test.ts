@@ -34,23 +34,33 @@ describe('the icons are the game’s own weapons', () => {
      * which is a build failure at the right time rather than a control that is
      * quietly missing from the level screen.
      */
-    expect(ORDNANCE_ICONS.map((icon) => icon.ordnance).sort()).toEqual(Object.keys(ORDNANCE).sort())
+    for (const ordnance of Object.keys(ORDNANCE)) {
+      expect(ORDNANCE_ICONS.map((icon) => icon.ordnance)).toContain(ordnance)
+    }
   })
 
-  it('and does not offer one for the rifle', () => {
+  it('and offers one for the rifle too, which is how you put the grenade down', () => {
     /**
-     * The rifle is unlimited, is what every soldier is already holding, and has
-     * no count to show. An icon for it would be a button whose only effect is to
-     * undo the other two.
+     * REVERSED FROM TICKET 067, DELIBERATELY. The rifle was left off on the
+     * grounds that it is what every soldier is already holding and has no count
+     * to show — right when the bar was two pictures of throwables, wrong once
+     * the bar became how the player CHANGES weapon. Arming a grenade was one
+     * click and putting it down again was not: the only way back was the `1`
+     * key, or spending the last round.
      */
-    expect(ORDNANCE_ICONS.some((icon) => icon.ordnance === RIFLE_ORDNANCE)).toBe(false)
+    expect(ORDNANCE_ICONS.some((icon) => icon.ordnance === RIFLE_ORDNANCE)).toBe(true)
   })
 
-  it('and lists them in the armoury’s order, not in its own', () => {
-    // So the bar reads left-to-right in the same order as the HUD's selector and
-    // as the digits. Two orders would make the second icon the third weapon.
-    const expected = ORDNANCE_ORDER.filter((name) => name !== RIFLE_ORDNANCE)
-    expect(ORDNANCE_ICONS.map((icon) => icon.ordnance)).toEqual(expected)
+  it('and lists them in the armoury’s order, which puts the rifle leftmost', () => {
+    /**
+     * "TO THE LEFT OF THE GRENADE AND ROCKET" IS NOT ARRANGED HERE — it falls
+     * out of `ORDNANCE_ORDER`, which is the rifle followed by `ORDNANCE`'s own
+     * keys. Sorting the bar in this file would be a second order that agreed
+     * with the digits until somebody changed one of them, and then the second
+     * icon would be the third weapon.
+     */
+    expect(ORDNANCE_ICONS.map((icon) => icon.ordnance)).toEqual([...ORDNANCE_ORDER])
+    expect(ORDNANCE_ICONS[0]?.ordnance).toBe(RIFLE_ORDNANCE)
   })
 
   it('and every icon carries art', () => {
@@ -74,11 +84,12 @@ describe('an icon’s digit arms that icon’s weapon', () => {
     }
   })
 
-  it('and the grenade and rocket really are 2 and 3 today', () => {
+  it('and the rifle, grenade and rocket really are 1, 2 and 3 today', () => {
     // The concrete case, so a table that round-tripped some other way — say
     // every icon claiming the rifle's `1` — could not satisfy the loop above.
     const digit = (ordnance: string): string | undefined =>
       ORDNANCE_ICONS.find((icon) => icon.ordnance === ordnance)?.hotkey
+    expect(digit(RIFLE_ORDNANCE)).toBe('1')
     expect(digit('grenade')).toBe('2')
     expect(digit('rocket')).toBe('3')
   })
@@ -185,6 +196,22 @@ describe('the bar, and the buttons on it', () => {
     it('and prints the number of rounds', () => {
       expect(ordnanceCountLabel(4)).toBe('4')
       expect(ordnanceCountLabel(1)).toBe('1')
+    })
+
+    it('but says nothing at all for a weapon that cannot run out (ticket 073)', () => {
+      /**
+       * THE ARMOURY ANSWERS `Number.POSITIVE_INFINITY` FOR THE RIFLE, and
+       * `String()` of that is the word `Infinity` — nine characters in the
+       * corner of a 3.9rem button, over the art, saying something no player has
+       * ever wanted to read.
+       *
+       * READ OFF THE COUNT, NOT OFF THE WEAPON'S NAME. The rule is "a weapon
+       * with no finite count has no badge", which is what `count()` actually
+       * says; "the rifle is special" would be a second place that knows which
+       * weapon is unlimited, and it would be wrong the first time another one
+       * is.
+       */
+      expect(ordnanceCountLabel(Number.POSITIVE_INFINITY)).toBe('')
     })
 
     it('and prints a zero rather than going blank', () => {
