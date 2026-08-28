@@ -269,12 +269,14 @@ function variantForId(id: number): number {
  * How far a sound carries, in tiles.
  *
  * SIZED AGAINST THE VIEW, NOT AGAINST THE MAP. The camera's default viewport is
- * 16 world units tall (`render/camera-rig.ts`) and a tile is one world unit
- * (`core/view/projection.ts`), so on an ordinary widescreen window the player
- * sees on the order of fourteen tiles either side of the centre. A reach of 32
- * is a little over two of those half-widths: something just past the edge of the
+ * 12 world units tall since ticket 087 (`render/camera-rig.ts`) and a tile is one
+ * world unit (`core/view/projection.ts`), so on an ordinary widescreen window the
+ * player sees on the order of eleven tiles either side of the centre. A reach of
+ * 32 is about three of those half-widths: something just past the edge of the
  * screen is faint but present, which is what makes a firefight worth panning
- * towards.
+ * towards. The closer default widened that margin from two half-widths to three
+ * rather than narrowing it, so the number stands unchanged — the failure this
+ * guards against is a reach SHORTER than the view, not a longer one.
  *
  * AND IT MUST REACH SILENCE. Level 2 is 92 tiles across and fields fifteen
  * enemies. Without a hard floor every round fired anywhere on the map is audible
