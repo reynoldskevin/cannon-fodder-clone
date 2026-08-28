@@ -38,7 +38,6 @@ import {
 import {
   FALLEN_ROW_STYLE,
   FALLEN_NAME_STYLE,
-  MEMORIAL_INSIGNIA_STYLE,
   KILL_COUNT_STYLE,
   LOST_IN_SERVICE_TITLE,
   MEMORIAL_SCRIM,
@@ -50,7 +49,7 @@ import {
   ROLL_Z_INDEX,
   missionHeading,
 } from './lost-in-service'
-import { insigniaPosition } from './rank-insignia'
+import { INSIGNIA_STYLE, insigniaPosition } from './rank-insignia'
 import { loadDisplayFont } from './display-font'
 import { menuButtons } from './menu-buttons'
 import { rollOfHonour } from '../core/campaign'
@@ -913,7 +912,7 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
           insignia.style.cssText =
             man.rankIndex === null
               ? 'display:none'
-              : `${MEMORIAL_INSIGNIA_STYLE};background-position:${insigniaPosition(man.rankIndex)}`
+              : `${INSIGNIA_STYLE};background-position:${insigniaPosition(man.rankIndex)}`
           /**
            * DECORATIVE, AND THE ROW IS WHAT MAKES THAT TRUE. An empty span with
            * a background says nothing to a screen reader, so hiding it is only

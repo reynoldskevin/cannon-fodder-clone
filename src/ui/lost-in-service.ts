@@ -15,7 +15,6 @@
  */
 
 import { DISPLAY_FONT } from './display-font'
-import { INSIGNIA_STYLE } from './rank-insignia'
 import poppyUrl from '../../assets/source/sprites/poppy.webp?url'
 
 /** The URL of the flower, re-exported so `menu.ts` needs no second import. */
@@ -129,11 +128,11 @@ export const FALLEN_ROW_STYLE = [
   'font-size:clamp(1.35rem, 3vw, 1.65rem)',
   'letter-spacing:0.06em',
   /**
-   * DOUBLED IN TICKET 089, THEN BROUGHT DOWN A QUARTER IN 090 — and the second
-   * of those did NOT take the badge with it. `INSIGNIA_STYLE` is `1.05em x
-   * 1.4em`, sized off THIS number, so the insignia would have shrunk along with
-   * the text; `MEMORIAL_INSIGNIA_STYLE` below widens its `em` box by exactly the
-   * reciprocal to hold it still.
+   * DOUBLED IN 089, DOWN A QUARTER IN 090, AND THE BADGE DOWN A QUARTER IN 091.
+   * `INSIGNIA_STYLE` is `1.05em x 1.4em`, sized off THIS number, so the insignia
+   * tracks the row again — 090 had held it still with a memorial-only override
+   * widened by `1 / 0.75`, and 091's reduction cancelled that factor exactly,
+   * which is why the override is gone rather than retuned.
    *
    * ALL THREE CLAMP STOPS MOVE TOGETHER, because a phone sits on the floor or
    * the `vw` term: editing the ceiling alone changes nothing on the narrow
@@ -157,36 +156,6 @@ export const FALLEN_ROW_STYLE = [
  * is why the same line appears there.
  */
 export const FALLEN_NAME_STYLE = 'flex:1'
-
-/**
- * The badge on a memorial row (ticket 090).
- *
- * `INSIGNIA_STYLE` PLUS A BOX, NOT A REPLACEMENT. The sheet URL, the
- * `background-size`, `flex:none` and the rest all still come from the shared
- * constant; only the two dimensions are overridden, and they are appended so the
- * later declaration wins.
- *
- * WHY IT EXISTS AT ALL. The shared box is `1.05em x 1.4em` — sized off the row's
- * `font-size`, which is what let ticket 089 double the type and take the
- * insignia with it for free. Ticket 090 then took the TEXT down 25% and was
- * asked to leave the insignia where it was, so the coupling has to be undone by
- * exactly that much: `1 / 0.75`, giving `1.05 -> 1.4` and `1.4 -> 1.8666667`.
- * Exact at every clamp stop, because both stops scaled by the same 0.75 —
- * 1.05 x 1.8rem and 1.4 x 1.35rem are both 1.89rem; 1.4 x 2.2rem and
- * 1.8666667 x 1.65rem are both 3.08rem.
- *
- * AND NOT IN `rank-insignia.ts`, which `squad-panel.ts` and `boot-hill.ts` also
- * read: widening the box there would hold this badge and grow the roster
- * chevrons and the Boot Hill stones with it.
- *
- * STILL COUPLED, JUST RE-AIMED. The badge is `em` and still moves if the row
- * moves again. That is deliberate — a badge sized in its own `clamp` would drift
- * away from the text at viewport widths nobody checked, which is the bug the
- * `em` was chosen to avoid.
- */
-export const MEMORIAL_INSIGNIA_STYLE = [INSIGNIA_STYLE, 'width:1.4em', 'height:1.8666667em'].join(
-  ';',
-)
 
 /** The kill count at the end of a row — present, but not the loud part. */
 export const KILL_COUNT_STYLE = `color:${ASH};font-variant-numeric:tabular-nums;white-space:nowrap`

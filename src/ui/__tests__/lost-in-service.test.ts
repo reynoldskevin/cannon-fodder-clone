@@ -8,7 +8,6 @@ import {
   FALLEN_ROW_STYLE,
   FALLEN_NAME_STYLE,
   MEMORIAL_TITLE_STYLE as TITLE_FOR_SCALE,
-  MEMORIAL_INSIGNIA_STYLE,
   POPPY_LEFT_STYLE,
   POPPY_RIGHT_STYLE,
   ROLL_Z_INDEX,
@@ -328,13 +327,16 @@ describe('and the insignia doubles with the row rather than separately', () => {
   })
 })
 
-describe('the text comes down a quarter without moving the badge (ticket 090)', () => {
+describe('the text is a quarter down from 089, and the badge a quarter down from 090', () => {
   /**
-   * THE TWO ASKS FIGHT EACH OTHER, WHICH IS WHY THIS IS TESTED AS ARITHMETIC.
-   * `INSIGNIA_STYLE` is `1.05em x 1.4em`, sized off the row — the coupling that
-   * let ticket 089 double the type and take the insignia with it for free.
-   * Shrinking the text by a quarter would shrink the badge by a quarter too, so
-   * holding it still means widening its `em` box by exactly `1 / 0.75`.
+   * TWO TICKETS, ONE ARITHMETIC. 090 shrank the TEXT 25% and held the badge
+   * still, which it did by widening the badge's `em` box by `1 / 0.75`. 091 then
+   * brought the BADGE down by the same quarter — which cancels that factor
+   * exactly and lands back on the shared `1.05em x 1.4em`.
+   *
+   * So the second change was a DELETION, and these cases exist to keep it one:
+   * a memorial-only override restating `1.05em` would be two values that agree
+   * today and drift the first time either moves.
    */
 
   /** The three stops of a `clamp(min, preferred, max)`, as written. */
@@ -344,7 +346,33 @@ describe('the text comes down a quarter without moving the badge (ticket 090)', 
     return (found[1] as string).split(',').map((s) => s.trim())
   }
 
-  /** The `em` box the memorial's badge actually ends up with, last-wins. */
+  const remOf = (stop: string): number => Number(stop.replace('rem', ''))
+
+  /**
+   * The style a memorial badge actually ends up with, resolved from the SOURCE.
+   *
+   * TWO EARLIER DRAFTS OF THIS CASE WERE VACUOUS, which is why it is built this
+   * way. The first compared two literals (`1.05 * 1.35` against
+   * `1.4 * 1.35 * 0.75`) — arithmetic true whatever the code does. The second
+   * read `menu.ts`'s template, which names its style constant by IDENTIFIER, so
+   * an override defined elsewhere never appeared in the captured text.
+   *
+   * So: find which constant `menu.ts` names, then go and read THAT constant's
+   * box — from `lost-in-service.ts` if it is a memorial-local one, or from the
+   * shared import if it is not.
+   */
+  const memorialBadgeStyle = (): string => {
+    const menu = readFileSync(new URL('../menu.ts', import.meta.url), 'utf8')
+    const named = /insignia\.style\.cssText =[\s\S]*?\$\{(\w+)\}/.exec(menu)?.[1]
+    if (named === undefined) throw new Error('no style constant named for the memorial badge')
+    if (named === 'INSIGNIA_STYLE') return INSIGNIA_STYLE
+    const lis = readFileSync(new URL('../lost-in-service.ts', import.meta.url), 'utf8')
+    const body = new RegExp(`export const ${named} = ([\\s\\S]*?)\n\n`).exec(lis)?.[1]
+    if (body === undefined) throw new Error(`cannot resolve ${named}`)
+    return `${INSIGNIA_STYLE};${body}`
+  }
+
+  /** The `em` box a style string ends up with, last declaration winning. */
   const emBox = (style: string): { width: number; height: number } => {
     const all = [...style.matchAll(/(width|height):([\d.]+)em/g)]
     const last = (which: string): number => {
@@ -356,46 +384,44 @@ describe('the text comes down a quarter without moving the badge (ticket 090)', 
     return { width: last('width'), height: last('height') }
   }
 
-  const remOf = (stop: string): number => Number(stop.replace('rem', ''))
-
-  it('the row text is three quarters of what ticket 089 set', () => {
+  it('the row text is where ticket 090 left it — this ticket did not touch type', () => {
     expect(clampStops(FALLEN_ROW_STYLE)).toEqual(['1.35rem', '3vw', '1.65rem'])
   })
 
-  it('and the badge renders at the size it did before, not the size the row implies', () => {
+  it('and the badge renders at three quarters of what 090 held it to', () => {
     /**
-     * ASSERTED AS A PRODUCT, NOT AS A NUMBER COPIED OUT OF THE TICKET. `em`
-     * times `font-size` is the rendered box, so multiplying the two is the only
-     * check that actually says "unchanged" — a test pinning `1.4em` would pass
-     * just as happily if the row size moved again underneath it and the badge
-     * quietly changed size with it.
+     * ASSERTED AS A PRODUCT, for the reason 090's version of this case gave: `em`
+     * times `font-size` is the rendered box, so a test pinning `1.05em` alone
+     * would pass just as happily if the row size moved underneath it.
      *
-     * 089's row ran clamp(1.8rem, 4vw, 2.2rem) against a 1.05 x 1.4 box.
+     * 090 held the badge at 1.4em x 1.8666667em against clamp(1.35rem, ..., 1.65rem).
      */
-    const box = emBox(MEMORIAL_INSIGNIA_STYLE)
+    const box = emBox(memorialBadgeStyle())
     const row = clampStops(FALLEN_ROW_STYLE)
-    const beforeMin = 1.05 * 1.8
-    const beforeMax = 1.4 * 2.2
-    expect(box.width * remOf(row[0] as string)).toBeCloseTo(beforeMin, 6)
-    expect(box.height * remOf(row[2] as string)).toBeCloseTo(beforeMax, 6)
+    const heldMin = 1.4 * 1.35
+    const heldMax = 1.8666667 * 1.65
+    expect(box.width * remOf(row[0] as string)).toBeCloseTo(heldMin * 0.75, 5)
+    expect(box.height * remOf(row[2] as string)).toBeCloseTo(heldMax * 0.75, 5)
   })
 
-  it('and the shared constant is untouched, so two other screens do not move', () => {
+  it('and it gets there by using the shared box, not by restating it', () => {
     /**
-     * THE LEAK THIS TICKET COULD EASILY HAVE SPRUNG. `squad-panel.ts` and
-     * `boot-hill.ts` draw the same badge from `INSIGNIA_STYLE`; widening the box
-     * THERE would have held the memorial's insignia and grown the roster
-     * chevrons and the Boot Hill stones as a side effect nobody asked for.
+     * THE DELETION, PINNED. `1.05em x 1.4em` is already what `INSIGNIA_STYLE`
+     * says; a memorial-only override spelling the same numbers again would be a
+     * second copy of a shared constant — the "two values that agree today" shape
+     * this project keeps meeting. So the override must be GONE, not retuned.
      */
+    const source = readFileSync(new URL('../lost-in-service.ts', import.meta.url), 'utf8')
+    expect(source).not.toContain('MEMORIAL_INSIGNIA_STYLE')
+    const menu = readFileSync(new URL('../menu.ts', import.meta.url), 'utf8')
+    expect(menu).toContain('INSIGNIA_STYLE')
+    expect(menu).not.toContain('MEMORIAL_INSIGNIA_STYLE')
+  })
+
+  it('and the shared constant itself is untouched, so two other screens hold still', () => {
+    // The memorial is REJOINING the squad panel and Boot Hill here, not dragging
+    // them with it.
     expect(INSIGNIA_STYLE).toContain('width:1.05em')
     expect(INSIGNIA_STYLE).toContain('height:1.4em')
-  })
-
-  it('and the memorial override comes after it, so the later rule wins', () => {
-    // Composed, not rewritten: the sheet URL, background-size and `flex:none`
-    // all still come from the shared constant.
-    expect(MEMORIAL_INSIGNIA_STYLE.indexOf('background-image')).toBeLessThan(
-      MEMORIAL_INSIGNIA_STYLE.lastIndexOf('width:'),
-    )
   })
 })
