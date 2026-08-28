@@ -539,6 +539,25 @@ async function boot(): Promise<void> {
   }
 
   /**
+   * Arm `ordnance`: the one place the selection is ever asked for.
+   *
+   * QUEUED AS A `selectOrdnance` COMMAND rather than written straight into the
+   * armoury, because that is what the command union is for: the selection is
+   * part of the input log, and a session replayed from one has to make the same
+   * changes at the same ticks.
+   *
+   * ONE FUNCTION SO THE MOUSE AND THE KEYBOARD CANNOT DRIFT APART (ticket 067).
+   * The squad rail's ordnance icons arm the same weapons the digits do, and the
+   * ticket's whole claim is that clicking the grenade does what pressing `2`
+   * does. Two call sites pushing the same command shape would make that a
+   * coincidence that holds only until one of them learns something the other
+   * does not.
+   */
+  function armOrdnance(ordnance: string): void {
+    session.queue.push({ type: 'selectOrdnance', ordnance })
+  }
+
+  /**
    * The ordnance selector's keys: a BARE `1`/`2`/`3` (ticket 016).
    *
    * MATCHED ON `event.code`, never on `event.key`, for the reason
@@ -550,10 +569,8 @@ async function boot(): Promise<void> {
    * without this guard a developer with `?debug=1` open would change weapon
    * every time he switched a layer.
    *
-   * Queued as a `selectOrdnance` COMMAND rather than written straight into the
-   * armoury, because that is what the command union is for: the selection is
-   * part of the input log, and a session replayed from one has to make the same
-   * changes at the same ticks.
+   * The push itself lives in `armOrdnance` above, which the rail's icons call
+   * too — see it for why the selection is queued rather than written.
    */
   const onSelectKey = (event: KeyboardEvent): void => {
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
@@ -584,7 +601,7 @@ async function boot(): Promise<void> {
     const ordnance = ordnanceForHotkey(digit)
     if (ordnance === undefined) return
     event.preventDefault()
-    session.queue.push({ type: 'selectOrdnance', ordnance })
+    armOrdnance(ordnance)
   }
 
   /**
@@ -643,7 +660,12 @@ async function boot(): Promise<void> {
    * It exposes the same `update`/`setVisible`/`isVisible`/`dispose` the HUD does,
    * so the router below drives both with the same lines.
    */
-  const squadPanel = createSquadPanel(mount)
+  const squadPanel = createSquadPanel(mount, {
+    // THE SAME DOOR THE DIGITS GO THROUGH (ticket 067). The rail reports which
+    // weapon was clicked and nothing else; `armOrdnance` is what makes that
+    // identical to a keypress rather than merely similar to one.
+    onSelectOrdnance: armOrdnance,
+  })
 
   /**
    * MISSION COMPLETE / MISSION FAILED, and the three seconds it stays up
@@ -757,7 +779,10 @@ async function boot(): Promise<void> {
   function refreshSquadPanel(): void {
     const living = livingRecruitIds(session.assignment, (id) => session.world.isAlive(id))
     for (const man of railSquad) man.alive = living.has(man.id)
-    squadPanel.update({ squad: railSquad })
+    // The armed weapon is re-read here rather than remembered by the panel, so
+    // the lit icon reports the armoury instead of the last thing clicked — a
+    // digit, a shift-wheel or a replayed command all move it.
+    squadPanel.update({ squad: railSquad, armed: session.armoury.selected })
   }
 
   /**

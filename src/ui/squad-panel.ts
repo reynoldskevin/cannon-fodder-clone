@@ -32,6 +32,19 @@
  * it, and because ticket 064 took the two-tone roster off Boot Hill on the same
  * argument.
  *
+ * UNDER THE ROLL, THE TWO THINGS YOU CAN THROW (ticket 067). The grenade and the
+ * rocket were armed by pressing `2` and `3` and by nothing else. They are now
+ * also a pair of painted buttons at the foot of the rail, built from
+ * `ORDNANCE_ICONS` — which is where "which weapons, in what order, on which
+ * digit" is decided and tested. A second list hand-written here would be a
+ * second answer to all three, and the tested one would not be the one on screen.
+ *
+ * THE PANEL REPORTS THE WEAPON AND DECIDES NOTHING. It does not touch the
+ * command queue and does not know what arming means; it says which ordnance was
+ * asked for and `app/main.ts` does with that exactly what it does with a digit.
+ * That is what makes "clicking arms it the way pressing 2 does" true by
+ * construction rather than by two call sites that happen to agree today.
+ *
  * DOM APIs and inline styles, like every other file here, so `src/ui` ships no
  * stylesheet. ROWS ARE REUSED AND TEXT IS WRITTEN ONLY ON CHANGE, the bargain
  * `hud.ts` and `boot-hill.ts` make — and now for the HUD's own reason as well,
@@ -40,6 +53,13 @@
  */
 
 import { DISPLAY_FONT, loadDisplayFont } from './display-font'
+import {
+  ORDNANCE_ICONS,
+  ORDNANCE_ICON_ARMED_STYLE,
+  ORDNANCE_ICON_BAR_STYLE,
+  ORDNANCE_ICON_STYLE,
+} from './ordnance-icons'
+import type { OrdnanceIcon } from './ordnance-icons'
 import { INSIGNIA_STYLE, insigniaPosition } from './rank-insignia'
 import { ROSTER_COLUMN_WIDTH } from './roster-column'
 
@@ -76,6 +96,31 @@ export interface SquadPanelModel {
    * differently.
    */
   readonly squad: readonly SquadPanelMember[]
+  /**
+   * The weapon the next order will use, as `session.armoury.selected` says it
+   * (ticket 067) — so exactly one icon is lit and the bar cannot disagree with
+   * the HUD's selector about what is in the squad's hands.
+   *
+   * IT IS THE ARMOURY'S ANSWER AND NEVER THE BAR'S OWN. A panel that remembered
+   * the last icon clicked would go stale the moment a digit, a shift-wheel or a
+   * replayed command changed the selection behind its back, and the lit icon
+   * would then be a claim about the weapon rather than a report of it.
+   *
+   * Frequently the rifle, which has no icon: nothing is lit, which is correct —
+   * see `ORDNANCE_ICONS` for why the rifle has no button.
+   */
+  readonly armed: string
+}
+
+/** What the rail needs from the game around it. */
+export interface SquadPanelOptions {
+  /**
+   * Arm `ordnance` — the panel's whole share of the ordnance bar.
+   *
+   * It reports the weapon and stops there; the caller queues the selection
+   * exactly as it does for a keypress. See the header.
+   */
+  onSelectOrdnance(ordnance: string): void
 }
 
 /**
@@ -285,7 +330,14 @@ interface Row {
   readonly right: HTMLElement
 }
 
-export function createSquadPanel(mount: HTMLElement): SquadPanel {
+/** One weapon's button, and what it is currently showing. */
+interface IconButton {
+  readonly element: HTMLButtonElement
+  /** The last state written, so the style is rewritten only when it changes. */
+  armed: boolean
+}
+
+export function createSquadPanel(mount: HTMLElement, options: SquadPanelOptions): SquadPanel {
   // The rail is set in the same face as Boot Hill's roster; it registers once
   // however many screens ask.
   loadDisplayFont()
@@ -302,6 +354,52 @@ export function createSquadPanel(mount: HTMLElement): SquadPanel {
   list.style.cssText =
     'margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0.15rem'
   panel.append(list)
+
+  /**
+   * The ordnance bar, under the roll (ticket 067).
+   *
+   * BUILT ONCE AND NEVER REBUILT. `ORDNANCE_ICONS` is a frozen table read at
+   * import; the only thing that changes between frames is which button is lit,
+   * and that is a style write on an existing element rather than a new one.
+   */
+  const bar = document.createElement('div')
+  bar.style.cssText = ORDNANCE_ICON_BAR_STYLE
+  bar.setAttribute('aria-label', 'Ordnance')
+  bar.setAttribute('role', 'group')
+
+  const buttons: IconButton[] = ORDNANCE_ICONS.map((icon) => {
+    /**
+     * A REAL `button`, NOT A `div` WITH A CLICK HANDLER. It is focusable, is
+     * fired by Enter and Space, and announces itself as a control — and the
+     * whole point of this bar is to be the mouse route to something that already
+     * has a keyboard one.
+     */
+    const element = document.createElement('button')
+    /**
+     * `type="button"`, because a bare `<button>` inside any form the page ever
+     * grows submits it and reloads the page — which mid-mission costs the
+     * mission.
+     */
+    element.type = 'button'
+    /**
+     * The label is the whole accessible name: the art carries no words, so
+     * without this a reader announces an unlabelled button and the keyboard
+     * route stays undiscoverable.
+     */
+    element.setAttribute('aria-label', icon.label)
+    // Repeated as the tooltip for the sighted player, who otherwise has a
+    // picture and no way to learn the digit.
+    element.title = icon.label
+    element.style.cssText = ORDNANCE_ICON_STYLE
+    element.style.backgroundImage = `url(${icon.src})`
+    element.addEventListener('click', () => {
+      options.onSelectOrdnance(icon.ordnance)
+    })
+    bar.append(element)
+    return { element, armed: false }
+  })
+
+  panel.append(bar)
   mount.append(panel)
 
   /**
@@ -346,6 +444,28 @@ export function createSquadPanel(mount: HTMLElement): SquadPanel {
     if (span.style.backgroundPosition !== cell.position) {
       span.style.backgroundPosition = cell.position
     }
+  }
+
+  /**
+   * Light the armed weapon and dim the rest (ticket 067).
+   *
+   * WRITTEN ONLY ON CHANGE, like every other write in this file — `update` runs
+   * on every frame the rail is up, and the selection changes a handful of times
+   * a mission.
+   *
+   * `cssText` REWRITTEN WHOLE RATHER THAN THE THREE ARMED PROPERTIES UNSET.
+   * Unsetting them one by one would be this file keeping its own list of what
+   * `ORDNANCE_ICON_ARMED_STYLE` contains, and the day a fourth declaration is
+   * added there the old one would stay on the button for the rest of the
+   * mission. The background image is put back because `cssText` clears it.
+   */
+  function setArmed(button: IconButton, icon: OrdnanceIcon, armed: boolean): void {
+    if (button.armed === armed) return
+    button.armed = armed
+    button.element.style.cssText = armed
+      ? `${ORDNANCE_ICON_STYLE};${ORDNANCE_ICON_ARMED_STYLE}`
+      : ORDNANCE_ICON_STYLE
+    button.element.style.backgroundImage = `url(${icon.src})`
   }
 
   function update(model: SquadPanelModel): void {
@@ -393,6 +513,14 @@ export function createSquadPanel(mount: HTMLElement): SquadPanel {
       if (row !== undefined && row.element.style.display !== 'none') {
         row.element.style.display = 'none'
       }
+    }
+    for (let i = 0; i < buttons.length; i += 1) {
+      const button = buttons[i]
+      const icon = ORDNANCE_ICONS[i]
+      // Parallel arrays built from one `map`, so neither can be short — the
+      // `noUncheckedIndexedAccess` concession every loop in this codebase makes.
+      if (button === undefined || icon === undefined) continue
+      setArmed(button, icon, icon.ordnance === model.armed)
     }
   }
 
