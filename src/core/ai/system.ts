@@ -72,6 +72,7 @@
  */
 
 import { hasLineOfSight, inRange, weaponFor } from '../combat'
+import type { Difficulty } from '../combat'
 import { INFANTRY } from '../pathing/navgrid'
 import { TILE_WORLD_SIZE, tileToWorld, worldToTileX, worldToTileY } from '../view/projection'
 import { ARCHETYPES } from './archetypes'
@@ -152,6 +153,17 @@ export interface AiOptions {
    * his men shoot — would be undone from a new file.
    */
   readonly team?: Team
+  /**
+   * How hard the enemy fights (ticket 093). `'normal'` when absent.
+   *
+   * REACHES THIS SYSTEM BECAUSE THE STOPPING DISTANCE IS A FRACTION OF THE
+   * WEAPON. `closeToFraction` is applied to `rangeTiles`, so a machine left on
+   * `'normal'` while combat ran `'hard'` would halt a man at 0.6 of 6.4 tiles
+   * and then let him shoot from eight — and the reverse would halt him at 4.8
+   * believing he could reach a target his rifle stops short of. Same value as
+   * `CombatOptions.difficulty`, always; `createSession` is what guarantees it.
+   */
+  readonly difficulty?: Difficulty
   /**
    * The archetype table these units' stats are resolved from, by `Entity.kind`.
    * The shipped `ARCHETYPES` by default.
@@ -583,6 +595,9 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
   const squad = options.squad
   const combat = options.combat
   const team = options.team ?? 'enemy'
+  // Resolved once at construction, for the reason `combat/system.ts` gives where
+  // it does the same: a difficulty that could change mid-mission breaks replay.
+  const difficulty = options.difficulty ?? 'normal'
   const mask = options.traversalMask ?? INFANTRY
   // Sight, hearing and the two timeouts are NOT resolved here any more: they are
   // per unit as of ticket 018 and are settled once each in `memoryFor`, where
@@ -1316,7 +1331,7 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
       // the squad's, so a lookup by kind alone would halt him at the PLAYER'S
       // eight tiles and leave him shooting from 1.6 tiles outside his own
       // envelope — closing to a distance at which he cannot hit anything.
-      const spec = weaponFor(unit.kind, unit.team)
+      const spec = weaponFor(unit.kind, unit.team, difficulty)
       const rangeWorld = spec === null ? 0 : spec.rangeTiles * TILE_WORLD_SIZE
       /**
        * TWO THRESHOLDS, NOT ONE (ticket 037), and the gap between them is the

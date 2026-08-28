@@ -25,7 +25,7 @@ export {
   weaponForKind,
   weaponFor,
 } from './weapons'
-export type { WeaponSpec } from './weapons'
+export type { WeaponSpec, Difficulty } from './weapons'
 
 export { hasLineOfSight, clearFractionAlong } from './los'
 export type { SightPoint } from './los'

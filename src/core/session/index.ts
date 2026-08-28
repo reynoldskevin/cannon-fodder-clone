@@ -24,6 +24,7 @@ import { createAiSystem } from '../ai'
 import { createArmoury, DEFAULT_LOADOUT } from '../armoury'
 import { applyCommand, createCommandQueue } from '../command'
 import { createCombatSystem } from '../combat'
+import type { Difficulty } from '../combat'
 import { createObjectiveSystem } from '../objectives'
 import { createOrdnanceSystem } from '../ordnance'
 import { bakeNavGrid } from '../pathing'
@@ -112,6 +113,24 @@ export interface SessionOptions {
    * arrives.
    */
   readonly ammo?: Readonly<Record<string, number>>
+  /**
+   * How hard the enemy fights (ticket 093). `'normal'` — the shipped game — when
+   * absent, which is what keeps every session built before this ticket, and
+   * every test in the repo that names no difficulty, a test of the real game.
+   *
+   * DECLARED ON THE SESSION AND NOT ON `combat`, EVEN THOUGH THE WEAPON TABLE
+   * LIVES THERE. Two systems consume it — `createCombatSystem` decides whether a
+   * round reaches, `createAiSystem` decides where the man stops walking — and a
+   * caller who could set it on one of them could set it on ONLY one. That is not
+   * a hypothetical: the two failures are an enemy who closes for 6.4 tiles and
+   * shoots at eight, and one who halts at 4.8 believing he can reach a target his
+   * rifle stops short of. Both are silent, and no unit test of either system can
+   * see either, because each system is internally consistent and merely wrong
+   * about its partner. Making the session the only place it can be said is what
+   * removes the way to get it wrong; `__tests__/difficulty.test.ts` is what holds
+   * the two together.
+   */
+  readonly difficulty?: Difficulty
 }
 
 /** A running mission: the world, the loop driving it, and its render state. */
@@ -660,17 +679,23 @@ export function createSession(level: LevelData, options: SessionOptions = {}): S
   // because a certain round plus one point of infantry health makes any
   // sightline an execution and no cover or manoeuvre changes it. This line is
   // where the session says which of the two it is running.
+  // ONE VALUE, READ ONCE, HANDED TO BOTH SYSTEMS BELOW. See
+  // `SessionOptions.difficulty` for what goes wrong when only one of them gets
+  // it, and why that cannot be caught anywhere but here.
+  const difficulty = options.difficulty ?? 'normal'
+
   const combat = createCombatSystem(grid, {
     ...options.combat,
     autoEngageTeams: options.combat?.autoEngageTeams ?? AUTO_ENGAGE_TEAMS,
     hitPolicy: options.combat?.hitPolicy ?? HIT_POLICY,
+    difficulty,
   })
   // The enemy's brain (ticket 012). It is handed the two systems it drives
   // rather than building any of its own: a pursuit is a `squad.order`, opening
   // fire is the same `combat.orderFire` the player's pointer sends, and an
   // enemy round is therefore subject to exactly the range and sightline checks
   // a player's is.
-  const ai = createAiSystem(grid, { squad, combat })
+  const ai = createAiSystem(grid, { squad, combat, difficulty })
   assignPatrolRoutes(world, level, ai)
   // The mission's judge (ticket 013). It is handed the level and reads the
   // world; it never drains the event bus, which is presentation's and

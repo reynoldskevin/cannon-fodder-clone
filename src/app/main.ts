@@ -19,6 +19,7 @@ import { parseElevation } from '../core/view/orientation'
 import { tileToWorld } from '../core/view/projection'
 import { levelRelief } from '../core/view/relief'
 import { createSession, livingRecruitIds } from '../core/session'
+import { difficultyFromSearch } from './difficulty-flag'
 import { ordnanceForHotkey } from '../core/armoury'
 import { createTracerBuffer } from '../core/render-state/tracers'
 import { createFxBuffer } from '../core/render-state/fx'
@@ -409,7 +410,16 @@ async function boot(): Promise<void> {
   // up by the render loop, the scene builder and the HUD without any of them
   // being rebuilt — and without the page reload that would cost the player the
   // level fetch, the atlas decode and his camera position.
-  let session = createSession(firstLevel)
+  /**
+   * `?hard=1`, resolved ONCE at boot (ticket 093).
+   *
+   * Read here rather than at each `createSession` so a player cannot change
+   * difficulty between missions of one campaign by editing the URL — the roll of
+   * the dead would then span two different games.
+   */
+  const difficulty = difficultyFromSearch(window.location.search)
+
+  let session = createSession(firstLevel, { difficulty })
 
   /**
    * The live tracers (ticket 025a): every `ShotFired` this frame drained, stamped
@@ -1125,7 +1135,11 @@ async function boot(): Promise<void> {
     // WITH THE MEN THE PLAYER CHOSE. `Session.assignment` is built from this and
     // is the map `missionReport` takes verbatim — it is the only place the sim's
     // entity ids and the campaign's recruit ids ever meet.
-    session = createSession(next, { squad })
+    // AND THE DIFFICULTY, WHICH IS THE EASY HALF TO FORGET. This is the call
+    // every mission after the first goes through, so a `?hard=1` wired only into
+    // the boot call above would give the player one hard mission and then a
+    // silent return to normal for the rest of the campaign.
+    session = createSession(next, { squad, difficulty })
     /**
      * THE ROLL. WHO DEPLOYED is decided here and nowhere else — men die during a
      * mission but nobody joins one — so the names and badges are built once, and

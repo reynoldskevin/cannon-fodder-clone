@@ -4,11 +4,18 @@ import { asciiLevel } from '../../pathing/__tests__/ascii'
 import { bakeNavGrid } from '../../pathing/navgrid'
 import { tileToWorld } from '../../view/projection'
 import { createCombatSystem } from '../index'
+import type { Difficulty } from '../index'
 import type { SimEvent } from '../../world/events'
 import type { Entity } from '../../world/world'
 
 /**
- * Ticket 036 — the standoff band, end to end through the combat system.
+ * Ticket 036 — the standoff band, end to end through the combat system — as
+ * amended by ticket 093.
+ *
+ * TICKET 092 CLOSED THIS BAND FOR EVERYBODY AND 093 MADE THAT AN OPT-IN. The
+ * cases below run on the SHIPPED DEFAULT, where the band is exactly what 036
+ * built; the hard-mode block at the bottom is where 092's enemy lives now, and
+ * it is the same geometry asserted the other way round.
  *
  * `enemy-weapon.test.ts` asserts the TABLE. This asserts that the table is
  * actually reached: a per-team weapon nothing looks up is two rows of data and
@@ -30,12 +37,19 @@ const OPEN = `
   ....................
 `
 
-function rig() {
+function rig(difficulty?: Difficulty) {
   const level = asciiLevel(OPEN)
   const world = new World(level, { seed: 1 })
   // Commanded fire only. An auto-engaging shooter would hit men no order ever
   // pointed at, which is the one thing every assertion here has to rule out.
-  const combat = createCombatSystem(bakeNavGrid(level), { autoEngageTeams: [] })
+  //
+  // The difficulty is passed THROUGH the system's options rather than set on a
+  // module, which is what makes the hard block below a test of the wiring and
+  // not just of the table `enemy-weapon.test.ts` already covers.
+  const combat = createCombatSystem(bakeNavGrid(level), {
+    autoEngageTeams: [],
+    ...(difficulty === undefined ? {} : { difficulty }),
+  })
   world.addSystem(combat)
   return {
     world,
@@ -74,13 +88,12 @@ describe('at seven tiles the squad can shoot and the enemy cannot', () => {
 
   it('and the enemy`s round, fired down the same line, finds nobody', () => {
     /**
-     * SEVEN TILES IS INSIDE THE OLD RANGE AND OUTSIDE THE NEW ONE, which is what
-     * makes this the decisive distance: before this ticket the enemy carried the
-     * player's eight-tile rifle and this assertion could not have passed.
+     * SEVEN TILES IS THE DECISIVE DISTANCE — inside the squad's eight and
+     * outside the enemy's 6.4.
      *
-     * He still FIRES — a commanded shot always leaves the rifle, and suppressing
+     * He still FIRES: a commanded shot always leaves the rifle, and suppressing
      * fire is a tracer that hits nothing. What he must not do is reach a man
-     * 0.6 tiles beyond the weapon he now holds.
+     * 0.6 tiles beyond the weapon he holds.
      */
     const r = rig()
     r.spawn(4, 5, 'player')
@@ -115,7 +128,7 @@ describe('at seven tiles the squad can shoot and the enemy cannot', () => {
 describe('and inside his range the exchange is mutual again', () => {
   it('at six tiles both rounds find their man', () => {
     /**
-     * The other side of the boundary, and it is what stops the ticket from being
+     * The other side of the boundary, and it is what stops the band from being
      * satisfiable by an enemy who simply cannot shoot. Six is inside 6.4.
      */
     const r = rig()
@@ -129,6 +142,71 @@ describe('and inside his range the exchange is mutual again', () => {
     if (his?.type !== 'ShotFired' || hers?.type !== 'ShotFired') throw new Error('missing shots')
     expect(his.targetId).toBe(mine.id)
     expect(hers.targetId).toBe(theirs.id)
+  })
+})
+
+describe('on HARD the band is closed (tickets 092, 093)', () => {
+  it('the enemy`s round at seven tiles now finds the player', () => {
+    /**
+     * THE SAME GEOMETRY AS THE DECISIVE CASE ABOVE, ASSERTED THE OTHER WAY.
+     * That is what makes this a test of the difficulty reaching the combat
+     * system rather than of the hard table existing — a `difficulty` option
+     * accepted and then ignored leaves this identical to the default and
+     * failing, while `enemy-weapon.test.ts` would still pass in full.
+     */
+    const r = rig('hard')
+    const mine = r.spawn(4, 5, 'player')
+    const theirs = r.spawn(11, 5, 'enemy')
+    r.combat.orderFire([theirs.id], { x: 4, y: 5 })
+    const shot = firstShotBy(r.run(4), theirs.id)
+    if (shot?.type !== 'ShotFired') throw new Error('no shot')
+    expect(shot.targetId).toBe(mine.id)
+  })
+
+  it('and at eight tiles — the shared maximum — both rounds still find their man', () => {
+    // `inRange` compares with `<=`, so eight is the last distance inside an
+    // eight-tile rifle. This pins the hard reach at exactly the squad's rather
+    // than merely at more than 6.4: an enemy given seven tiles passes the case
+    // above and fails here.
+    const r = rig('hard')
+    const mine = r.spawn(4, 5, 'player')
+    const theirs = r.spawn(12, 5, 'enemy')
+    r.combat.orderFire([mine.id], { x: 12, y: 5 })
+    r.combat.orderFire([theirs.id], { x: 4, y: 5 })
+    const shots = r.run(4)
+    const his = firstShotBy(shots, theirs.id)
+    const hers = firstShotBy(shots, mine.id)
+    if (his?.type !== 'ShotFired' || hers?.type !== 'ShotFired') throw new Error('missing shots')
+    expect(his.targetId).toBe(mine.id)
+    expect(hers.targetId).toBe(theirs.id)
+  })
+
+  it('and at nine tiles NEITHER does, so hard equalises rather than unbounds', () => {
+    const r = rig('hard')
+    const mine = r.spawn(4, 5, 'player')
+    const theirs = r.spawn(13, 5, 'enemy')
+    r.combat.orderFire([mine.id], { x: 13, y: 5 })
+    r.combat.orderFire([theirs.id], { x: 4, y: 5 })
+    const shots = r.run(4)
+    const his = firstShotBy(shots, theirs.id)
+    const hers = firstShotBy(shots, mine.id)
+    if (his?.type !== 'ShotFired' || hers?.type !== 'ShotFired') throw new Error('missing shots')
+    expect(his.targetId).toBeNull()
+    expect(hers.targetId).toBeNull()
+  })
+
+  it('and he fires faster on hard than on normal, in the same window', () => {
+    // The rate half of the difficulty, counted from the event stream rather than
+    // from the constant — the only thing that fails if `markFired` is handed the
+    // normal spec while the reach lookup got the hard one.
+    const count = (d?: Difficulty): number => {
+      const r = rig(d)
+      r.spawn(4, 5, 'player')
+      const theirs = r.spawn(8, 5, 'enemy')
+      r.combat.orderFire([theirs.id], { x: 4, y: 5 })
+      return r.run(600).filter((e) => e.type === 'ShotFired' && e.shooterId === theirs.id).length
+    }
+    expect(count('hard')).toBeGreaterThan(count())
   })
 })
 
@@ -154,7 +232,9 @@ describe('and he pulls the trigger less often', () => {
     const byHim = shots.filter((e) => e.type === 'ShotFired' && e.shooterId === theirs.id).length
     expect(byMe).toBeGreaterThan(0)
     expect(byHim).toBeGreaterThan(0)
-    // 600 ticks at 32 vs 52: about 19 rounds against about 12.
+    // 600 ticks at 32 against 46: about 19 rounds against about 14. This runs on
+    // the DEFAULT difficulty, where the enemy's slower rate is the shipped
+    // behaviour; the hard block above covers the other one.
     expect(byHim).toBeLessThan(byMe)
     expect(byHim).toBeLessThan(byMe * 0.75)
   })
