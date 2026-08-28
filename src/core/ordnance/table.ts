@@ -187,13 +187,52 @@ export const ORDNANCE: Readonly<Record<string, OrdnanceSpec>> = {
     // thrown thing, and to arrive before the target can step aside.
     speedTilesPerTick: 0.5,
     fuseTicks: 180,
-    // Tighter than the grenade: it is aimed, not lobbed, so it does not need
-    // the radius to forgive the throw.
-    blastRadiusTiles: 2,
-    peakDamage: 6,
-    // Quadratic, so the killing is concentrated at the point of impact and the
-    // fringe is survivable. That is what distinguishes it in play from a
-    // grenade with a bigger number.
+    /**
+     * WIDER THAN THE GRENADE, WHICH IT WAS NOT UNTIL TICKET 071.
+     *
+     * The old row read radius 2 with peak 6, and the sentence that used to sit
+     * here called it "tighter than the grenade: it is aimed, not lobbed". That
+     * reasoning was about AIMING FORGIVENESS and quietly decided the KILL ZONE
+     * as well — two different things that `blastRadiusTiles` happens to control
+     * together. Measured, it made the heavier, slower, scarcer weapon clear FIVE
+     * squares against the grenade's NINE: the thing you can throw every second
+     * and a half killed more ground than the thing you carry two of.
+     *
+     * RADIUS IS NOT KILL ZONE, AND THE GAP IS BIGGER HERE THAN ANYWHERE. A man
+     * dies where damage falls below `INFANTRY_HEALTH`, not where it reaches
+     * zero, and a quadratic curve crosses that line early: the lethal radius is
+     * `blastRadiusTiles * (1 - sqrt(INFANTRY_HEALTH / peakDamage))`, which for
+     * these numbers is 4 * (1 - sqrt(1/12)) = 2.845 tiles. That is just past a
+     * 5x5 block's corner at sqrt(8) = 2.828 and comfortably short of the next
+     * ring at 3.0 — so the rocket kills exactly twenty-five squares.
+     *
+     * `kill-zone.test.ts` COUNTS THE BODIES rather than trusting that
+     * arithmetic, and re-derives it from this row so the two cannot drift.
+     */
+    blastRadiusTiles: 4,
+    /**
+     * TWELVE, UP FROM SIX, AND IT IS THE RADIUS'S PARTNER RATHER THAN A SEPARATE
+     * BUFF. Quadratic falloff collapses fast — at half the radius it is already
+     * down to a quarter strength — so a lethal radius of 2.85 out of a 4-tile
+     * blast is unreachable at peak 6 whatever the radius: pushing the radius out
+     * far enough would give the rocket a wounding fringe most of a screen wide.
+     * Raising the peak is what keeps the taper to 4 tiles.
+     *
+     * It also reads correctly: a rocket should hit harder at the point of impact
+     * than a thrown grenade, and now does — 12 against 4.
+     */
+    peakDamage: 12,
+    /**
+     * STILL QUADRATIC, and the reason has changed. It used to be here to make
+     * the rocket's killing "concentrated at the point of impact" — which is no
+     * longer true, and was the whole of the inversion above. What the curve buys
+     * now is the SHAPE OF THE FRINGE: past the kill zone the rocket's damage
+     * drops away far faster than a linear curve would, so the twenty tiles of
+     * ring around the 5x5 are scratched rather than nearly killed. It is also
+     * what the vehicles extension point would feel, a tougher entity being the
+     * only thing on the field that can survive inside the lethal radius and
+     * therefore the only thing that can tell two curves apart.
+     */
     falloff: 'quadratic',
     cooldownTicks: 150,
     ammoCost: 1,
