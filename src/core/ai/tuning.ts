@@ -148,73 +148,6 @@ export const DEFAULT_CLOSE_TO_FRACTION = 0.6
 export const DEFAULT_ARRIVAL_TILES = 0.75
 
 /**
- * How wide an enemy's forward arc is, as the COSINE of its half-angle (ticket
- * 038). 0.5 is 60° either side of where he is looking, so 120° in total.
- *
- * A COSINE AND NOT AN ANGLE, which is this file's first rule ("no derived
- * fields") applied to trigonometry. The test in `system.ts` is a dot product
- * between the unit facing and the normalised offset to a candidate, and that
- * dot product IS the cosine of the angle between them — so a spec holding 60
- * would need a `Math.cos` at read time, once per candidate per enemy per tick,
- * to recover the number stored here. `weapons.ts` and `archetypes.ts` both
- * forbid exactly that, and the value still survives a JSON round-trip so a
- * later per-profile arc can come out of a level document unchanged.
- *
- * RAISE IT (toward 1) and the arc NARROWS: at 0.87 he sees 30° either side,
- * which is a man peering down a corridor — easy to walk around, and the player
- * stops treating garrisons as dangerous. LOWER IT (toward -1) and the arc
- * WIDENS: at 0 he sees everything ahead of his shoulders, and at -1 the cone is
- * gone entirely and the scan is the disc it was before this ticket. 120° is a
- * front arc wide enough that an enemy is not comically oblivious while still
- * leaving a back to be approached from.
- *
- * ONE ARC FOR EVERYBODY, deliberately: there is no per-archetype override,
- * because the sniper's advantage is his range and not his neck. The day a
- * design argues otherwise, this becomes a row in `archetypes.ts` and this value
- * becomes its fallback, exactly as sight and hearing did in ticket 018.
- */
-export const VISION_HALF_ANGLE_COS = 0.5
-
-/**
- * How close somebody has to be before the arc above stops applying, in tiles
- * (ticket 038). Inside this radius an enemy notices a living target in ANY
- * direction, behind him included.
- *
- * WITHOUT IT THE MECHANIC READS AS A BUG. A soldier could stand pressed against
- * an enemy's back indefinitely and never be noticed, and no player seeing that
- * reads it as stealth — they read it as the AI being broken. A man notices
- * someone close behind him.
- *
- * FOUR, RAISED FROM TWO (ticket 046). Two tiles made the exception almost
- * literal — it covered a man touching an enemy's back and very little else, so a
- * soldier three tiles off that back, in the open with a clear line, was still
- * invisible. Four is a man in the room rather than a man against the wall, and
- * is still a third of sight: the arc remains the thing that decides at any
- * distance a player would call a distance.
- *
- * THE RETUNE MOVED THREE FIXTURES, which is worth knowing before moving it
- * again. `vision-cone.test.ts` and `heard-from-behind.test.ts` each stood their
- * subject three or four tiles behind a sentry — outside the old radius, inside
- * the new one — so they had been asserting the ARC while standing in the
- * EXCEPTION, and they went green for the wrong reason the moment this number
- * passed them. They now stand beyond the radius. A fourth, in `facing.test.ts`,
- * needed the player removed outright.
- *
- * RAISE IT and the blind spot shrinks from the inside out; at the sight range
- * the cone is deleted outright and every case this ticket added quietly goes
- * back to the disc it replaced, with every arc test still green because they
- * all stand further away than this. LOWER IT toward zero and the exception
- * disappears, which brings the invisible-man-at-your-shoulder complaint
- * straight back.
- *
- * TILES, LIKE EVERY OTHER RANGE HERE, and converted to world units once where
- * the two spaces meet — never read as a world distance directly. It is NOT a
- * weapon range and says nothing about how far anybody shoots; see the second
- * rule at the top of this file.
- */
-export const DEFAULT_AWARENESS_RADIUS_TILES = 4
-
-/**
  * The answer when there is NO DIRECTION TO COMPUTE, as a unit vector (ticket
  * 039). `-z` is north, so this is south.
  *
@@ -229,15 +162,16 @@ export const DEFAULT_AWARENESS_RADIUS_TILES = 4
  * here, because nothing needs to be — one man on one tile of one map reaches it,
  * and which way he happens to look is beneath notice. What is NOT beneath notice
  * is that he gets a finite vector at all: normalising a zero-length offset
- * stores NaN, and NaN loses every comparison it enters, so the arc's dot product
- * would never reach `VISION_HALF_ANGLE_COS` and that man would be blind in every
- * direction at once, for the rest of the mission, with nothing on screen to
- * explain it. `AiSystem.face` refuses a degenerate vector for the same reason.
+ * stores NaN, and a NaN facing reaches the renderer, which draws a man pointing
+ * nowhere for the rest of the mission with nothing on screen to explain it.
+ * `AiSystem.face` refuses a degenerate vector for the same reason.
  *
- * KEEP IT A UNIT VECTOR. The arc test is a dot product against
- * `VISION_HALF_ANGLE_COS`, so a value of any other length would scale that
- * product and silently widen or narrow the arc for whoever fell back to it. Any
- * direction of length 1 would do; none of them is better than another.
+ * WHAT THIS GUARDED CHANGED IN TICKET 086, THE REQUIREMENT DID NOT. Until then a
+ * NaN here also blinded the man outright, because sight was a dot product
+ * against a half-angle and NaN loses every comparison it enters. Sight is all
+ * round now and reads no facing at all, so the stakes are a drawing bug rather
+ * than a behaviour one — still worth a unit vector, and any direction of length
+ * 1 would do.
  *
  * CHANGE IT and, on the shipped maps, nothing moves at all — no enemy on either
  * of them stands on the exact centre tile. That is the honest measure of how

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { rig, OPEN } from './rig'
-import { DEFAULT_ENEMY_FACING, DEFAULT_AWARENESS_RADIUS_TILES } from '../tuning'
+import { DEFAULT_ENEMY_FACING } from '../tuning'
 
 /**
  * Ticket 038 — where an enemy is looking, as simulation state.
@@ -304,56 +304,24 @@ describe('a man walking his beat looks where he is going', () => {
     expect(r.ai.facingOf(enemy.id)!.dz).toBeLessThan(0)
   })
 
-  it('and therefore notices a man standing on his beat ahead of him', () => {
-    // The consequence that matters in play. A patrolling guard blind to his own
-    // route is strictly worse at his job than a static one — the same shape of
-    // failure `patrol.test.ts` records for the leash.
-    const r = rig(OPEN)
-    const enemy = r.spawn(10, 9, 'enemy')
-    r.ai.assignPatrol(enemy.id, [
-      { x: 10, y: 0 },
-      { x: 10, y: 9 },
-    ])
-    const player = r.spawn(10, 2, 'player', 10_000)
-    /**
-     * NOTICED BEFORE HE WALKS PAST HIM, which is the whole assertion.
-     *
-     * A weaker version of this case — "does he ever leave idle?" — PASSES on the
-     * broken build, and passes for a reason that is funnier than the bug: facing
-     * south while marching north, he strolls straight past the player and only
-     * then has him in his arc. He notices by overshooting. So the sampling stops
-     * the moment he is level with the man.
-     */
-    let gapWhenNoticed: number | null = null
-    for (let i = 0; i < 300 && gapWhenNoticed === null; i += 1) {
-      r.run(2)
-      const here = r.world.get(enemy.id)!
-      const there = r.world.get(player.id)!
-      if (r.ai.stateOf(enemy.id) !== 'idle') gapWhenNoticed = Math.hypot(here.x - there.x, here.z - there.z)
-    }
-    /**
-     * ASSERTED ON THE DISTANCE HE NOTICES AT, not on whether he ever does.
-     *
-     * Two weaker versions of this case both PASS on the broken build, and each
-     * for a reason worth writing down. "Does he ever leave idle?" passes because,
-     * facing south while marching north, he strolls straight past the man and
-     * only then has him in his arc — he notices by overshooting. "Does he notice
-     * before passing him?" passes too, because `DEFAULT_AWARENESS_RADIUS_TILES`
-     * catches anyone within four tiles regardless of the arc, so he trips over him
-     * at arm's length.
-     *
-     * Neither is sight. He is walking at a man in the open with a clear line, and
-     * a sentry who only finds him by collision is the bug. Four tiles is
-     * comfortably outside the awareness exception and comfortably inside his
-     * twelve of vision.
-     */
-    expect(gapWhenNoticed).not.toBeNull()
-    expect(gapWhenNoticed!).toBeGreaterThan(DEFAULT_AWARENESS_RADIUS_TILES + 2)
-  })
+  /**
+   * REMOVED IN TICKET 086: "and therefore notices a man standing on his beat
+   * ahead of him".
+   *
+   * It asserted that a patrolling guard, having turned to face his route, then
+   * ACQUIRED a man standing on it — at a gap deliberately set beyond
+   * `DEFAULT_AWARENESS_RADIUS_TILES + 2` so that only the forward arc could
+   * explain the sighting. Sight is all round now: he notices that man whichever
+   * way he is pointed, so the case would still pass while proving nothing about
+   * facing, which is what this file is for. What it really guarded — that a
+   * routed man turns along his route rather than keeping his spawn pose — is the
+   * case directly above, and that still means something.
+   */
 
   it('but a man standing still on his post keeps the facing he had', () => {
     // The guard on the fix: "face where you moved" must not become "face
-    // nowhere when you stop", which would blank a stationary sentry's arc.
+    // nowhere when you stop", which would leave a standing sentry drawn pointing
+    // nowhere.
     const r = rig(OPEN)
     const enemy = r.spawn(10, 5, 'enemy')
     r.ai.face(enemy.id, 1, 0)
