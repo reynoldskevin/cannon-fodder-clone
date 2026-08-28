@@ -53,8 +53,24 @@ const CAMERA_DISTANCE = 120
  */
 const CAMERA_DEPTH_HALF = CAMERA_DISTANCE * 3
 
-/** World-space height of the viewport: roughly how many tiles are visible top to bottom. */
-const DEFAULT_VIEW_HEIGHT = 16
+/**
+ * World-space height of the viewport at boot: roughly how many tiles are visible
+ * top to bottom. Twelve since ticket 087, down from sixteen.
+ *
+ * THIS IS THE FRAMING THE GAME IS PLAYED AT, not merely where it opens. Ticket
+ * 075 locked pan and zoom, so the follow camera holds this height for the whole
+ * mission and no player ever dials it in themselves. At sixteen tiles a soldier
+ * was a small figure among the trees and a firefight read as dots moving; twelve
+ * is a quarter closer, enough that the sprite the player is commanding is
+ * legible, and still wide enough to see what is shooting at it.
+ *
+ * MUST STAY CLEAR OF `MIN_VIEW_HEIGHT` (10) — with two tiles of headroom it is
+ * strictly inside the legal range, so `resize`'s clamp passes the boot height
+ * through untouched rather than silently starting the game at the limit. The
+ * sky-free cap still outranks it: on a level too small to frame at twelve,
+ * `maxViewHeight` bites and the game boots at the cap instead.
+ */
+const DEFAULT_VIEW_HEIGHT = 12
 
 /**
  * Closest the player may zoom in, in world units of viewport height.
