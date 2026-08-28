@@ -25,7 +25,7 @@
  * `mission-banner.ts` and `briefing.ts` run on.
  */
 
-import sheetUrl from '../../assets/source/sprites/rank-insignia-sheet.png?url'
+import sheetUrl from '../../assets/source/sprites/rank-insignia-sheet.webp?url'
 
 /** The grid, as measured. */
 export const INSIGNIA_COLUMNS = 8

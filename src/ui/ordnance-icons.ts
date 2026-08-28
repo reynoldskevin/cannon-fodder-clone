@@ -39,9 +39,9 @@
  */
 
 import { ORDNANCE_ORDER, RIFLE_ORDNANCE, labelFor, ordnanceForHotkey } from '../core/armoury'
-import grenadeUrl from '../../assets/source/sprites/grenade.png?url'
-import rifleUrl from '../../assets/source/sprites/rifle.png?url'
-import rocketUrl from '../../assets/source/sprites/rocket.png?url'
+import grenadeUrl from '../../assets/source/sprites/grenade.webp?url'
+import rifleUrl from '../../assets/source/sprites/rifle.webp?url'
+import rocketUrl from '../../assets/source/sprites/rocket.webp?url'
 
 /**
  * The picture for each weapon, keyed by its `ORDNANCE` name.

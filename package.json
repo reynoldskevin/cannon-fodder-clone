@@ -13,6 +13,7 @@
     "import:levels": "node tools/import-levels.mjs",
     "build:models": "node tools/build-models.mjs",
     "encode:audio": "node tools/encode-audio.mjs",
+    "encode:images": "node tools/encode-images.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

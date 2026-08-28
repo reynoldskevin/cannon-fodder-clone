@@ -53,10 +53,10 @@ import { menuButtons } from './menu-buttons'
 import { rollOfHonour } from '../core/campaign'
 import type { CampaignSummary } from '../core/campaign'
 import jungleUrl from '../../assets/source/jungle-background.png?url'
-import logoUrl from '../../assets/source/logo.png?url'
-import sargeUrl from '../../assets/source/character-sarge.png?url'
-import shadesUrl from '../../assets/source/character-shades.png?url'
-import luckyUrl from '../../assets/source/character-lucky.png?url'
+import logoUrl from '../../assets/source/logo.webp?url'
+import sargeUrl from '../../assets/source/character-sarge.webp?url'
+import shadesUrl from '../../assets/source/character-shades.webp?url'
+import luckyUrl from '../../assets/source/character-lucky.webp?url'
 
 /** Everything the Menu draws. All of it comes from `core`. */
 export interface MenuModel {

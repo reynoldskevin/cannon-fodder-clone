@@ -15,7 +15,7 @@
  */
 
 import { DISPLAY_FONT } from './display-font'
-import poppyUrl from '../../assets/source/sprites/poppy.png?url'
+import poppyUrl from '../../assets/source/sprites/poppy.webp?url'
 
 /** The URL of the flower, re-exported so `menu.ts` needs no second import. */
 export const POPPY_URL: string = poppyUrl
