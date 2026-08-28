@@ -27,12 +27,33 @@
 
 import { ROSTER_COLUMN_WIDTH } from './roster-column'
 
-export const PLAYFIELD_STYLE = [
-  'position:fixed',
+/**
+ * The rectangle the game occupies, as positional declarations alone
+ * (ticket 076).
+ *
+ * SPLIT OUT SO THE MISSION BANNER CAN SHARE IT. MISSION COMPLETE was
+ * `inset:0` — correct while the canvas was the whole window, and half the
+ * rail's width off-centre from the moment ticket 074 moved the playfield. The
+ * fix is not a `calc()` copied into `mission-banner.ts`: that is the very
+ * mistake this file's header refuses to make about `ROSTER_COLUMN_WIDTH`, one
+ * level up. Two spellings would agree until somebody widened the rail, and then
+ * the result of the mission would sit off the map with nothing failing.
+ *
+ * POSITION ONLY, NO `position` AND NO `display`. Both users are `position:fixed`
+ * and say so themselves, but `display` differs — `block` is right for a canvas
+ * and wrong for a flex layer that centres text on both axes — so it stays out of
+ * the shared part.
+ */
+export const PLAYFIELD_INSET = [
   'top:0',
   `left:${ROSTER_COLUMN_WIDTH}`,
   `width:calc(100vw - ${ROSTER_COLUMN_WIDTH})`,
   'height:100vh',
+].join(';')
+
+export const PLAYFIELD_STYLE = [
+  'position:fixed',
+  PLAYFIELD_INSET,
   // A canvas is `inline` by default, which hands it a baseline and a few pixels
   // of descender gap — invisible while it was the only thing on the page and a
   // hairline of background once it has a neighbour.

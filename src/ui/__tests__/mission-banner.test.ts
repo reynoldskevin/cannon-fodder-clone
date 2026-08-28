@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { BANNER_LAYER_STYLE, BANNER_TEXT_STYLE } from '../mission-banner'
 import { DISPLAY_FONT } from '../display-font'
+import { PLAYFIELD_INSET } from '../playfield'
+import { ROSTER_COLUMN_WIDTH } from '../roster-column'
 
 /**
  * Ticket 058 — the mission-end banner is large, centred, and in the display face.
@@ -30,12 +33,48 @@ const layer = declarations(BANNER_LAYER_STYLE)
 const text = declarations(BANNER_TEXT_STYLE)
 
 describe('the banner is centred on the viewport', () => {
-  it('covers it, rather than sitting in the document flow', () => {
-    // `mount` is the canvas's container and the banner goes over the live view,
-    // so anything short of a fixed full-viewport layer would land the text
-    // wherever the last element happened to leave the cursor.
+  it('covers the PLAYFIELD, rather than sitting in the document flow', () => {
+    /**
+     * FIXED, BUT NO LONGER `inset:0` (ticket 076). It was the whole window while
+     * the canvas was, and ticket 074 moved the playfield off the left edge to
+     * clear the roster rail — so a full-viewport layer now centres the result of
+     * the mission half the rail's width left of the ground it is about, and
+     * drifts further the wider the rail gets, because the rail is a `clamp()`
+     * against the viewport.
+     */
     expect(layer.get('position')).toBe('fixed')
-    expect(layer.get('inset')).toBe('0')
+    expect(layer.get('inset')).toBeUndefined()
+    expect(layer.get('top')).toBe('0')
+    expect(layer.get('height')).toBe('100vh')
+  })
+
+  it('starting where the map starts, not where the window does', () => {
+    expect(layer.get('left')).toBe(ROSTER_COLUMN_WIDTH)
+    expect(layer.get('width')).toBe(`calc(100vw - ${ROSTER_COLUMN_WIDTH})`)
+  })
+
+  it('and takes that geometry from the playfield rather than re-spelling it', () => {
+    /**
+     * THE MISTAKE `playfield.ts` ALREADY REFUSED TO MAKE, one level up. Its
+     * header argues that copying the rail's `clamp()` would line up exactly
+     * until somebody widened one of them, and then the map would slide under the
+     * panel with nothing failing anywhere. A `calc()` transcribed into
+     * `mission-banner.ts` would be the same trap: the banner and the canvas
+     * would agree today and part company on the first edit.
+     *
+     * IT READS THE SOURCE, because the VALUE cannot tell the difference. A
+     * `calc()` copied by hand produces a byte-identical string, so
+     * `toContain(PLAYFIELD_INSET)` passes just as happily on a copy as on the
+     * import — which was measured, not assumed: that mutant survived the first
+     * version of this case. `squad-panel.test.ts` had the same problem about the
+     * same constant and solved it the same way, and this follows it.
+     */
+    expect(BANNER_LAYER_STYLE).toContain(PLAYFIELD_INSET)
+    const banner = readFileSync(new URL('../mission-banner.ts', import.meta.url), 'utf8')
+    expect(banner).toMatch(/from '\.\/playfield'/)
+    expect(banner).toContain('PLAYFIELD_INSET')
+    // And no second spelling of the rail beside the import.
+    expect(banner).not.toContain('100vw')
   })
 
   it('and centres its content on both axes', () => {
