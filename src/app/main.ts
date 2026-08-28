@@ -984,7 +984,15 @@ async function boot(): Promise<void> {
      * tested; the older comment here made the same argument about "F to fit"
      * and kept the string in this untestable file.
      */
-    hint = showControlHint(mount, controlHintText(scrollUnlocked))
+    /**
+     * NOTHING AT ALL ON THE LOCKED CAMERA (ticket 080). `controlHintText`
+     * answers `null` there, and a `null` is not an empty hint to draw — it is
+     * the absence of one. Passing `''` through would build the capsule, pad it,
+     * round it and float it over the map for seven seconds with no words in it.
+     */
+    const text = controlHintText(scrollUnlocked)
+    if (text === null) return
+    hint = showControlHint(mount, text)
   }
 
   /** Timestamp of the last frame, for the frame delta. See the render loop. */
