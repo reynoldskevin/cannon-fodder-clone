@@ -65,18 +65,29 @@ describe('level 2`s bank reads as ground', () => {
     expect(countOf(TILE.ROCK)).toBeLessThanOrEqual(30)
   })
 
-  it('and far fewer trees, without flattening the scrub the artist painted', () => {
+  it('and no trees standing in the river', () => {
     /**
      * Canopy at the waterline plants a tree, because `scenery.ts` plants one per
      * fringe canopy tile and does not consult walkability at all. There were 48.
      *
-     * The lower bound matters as much as the upper one: the artist DID paint a
-     * band of dark scrub along the bank, and a rule that flattened all of it to
-     * grass would be trading one wrong answer for another and silently opening
-     * ground that was meant to be blocked.
+     * THE LOWER BOUND THAT USED TO SIT HERE IS GONE, AND DELIBERATELY (ticket
+     * 079). It read `> 10` and argued that a rule flattening every bank to grass
+     * would silently open ground the artist had blocked. The argument is right;
+     * the assertion was not, because it was a claim about one PAINTING rather
+     * than about the rule — and the painting changed. Measured off
+     * `level2/map.png` with water pixels excluded exactly as the classifier
+     * excludes them, the darkest land mean on all 196 shoreline tiles is
+     * luminance 71.5 against a canopy cut of 55: not one bank tile is within
+     * sixteen points of being scrub. Zero is the correct answer here, not a
+     * flattened one.
+     *
+     * WHAT IT PROTECTED IS STILL PROTECTED, and at the level it belongs to:
+     * `shoreline.test.ts` — "but stays canopy when its land really is canopy" —
+     * feeds the rule a bank tile whose land IS canopy and requires canopy back.
+     * That claim is about the rule and survives any repaint. Holding the count
+     * here instead meant the artwork had to be repainted to satisfy a test.
      */
     expect(countOf(TILE.CANOPY)).toBeLessThanOrEqual(35)
-    expect(countOf(TILE.CANOPY)).toBeGreaterThan(10)
   })
 
   it('and most of it is now walkable ground', () => {
