@@ -54,6 +54,10 @@ export type { BootHillModel, Grave, Trooper } from './boothill'
 // shows the campaign's totals has no tests, so the arithmetic lives here.
 export { campaignSummary } from './boothill'
 export type { CampaignSummary } from './boothill'
+// Ticket 073. The memorial's fold, beside the summary it reads: the end screen
+// is a `div` nothing tests, so the grouping is a selector out here.
+export { rollOfHonour } from './roll-of-honour'
+export type { MissionRoll, FallenMan } from './roll-of-honour'
 export { RANKS, rankFor, rankIndexFor, insigniaIndexOf } from './ranks'
 export type { Rank } from './ranks'
 export { NAME_POOL } from './names'
