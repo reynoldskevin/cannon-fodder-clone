@@ -19,12 +19,13 @@ export {
   WEAPON_BY_KIND,
   RIFLE,
   ENEMY_RIFLE,
+  ENEMY_RANGE_FRACTION,
   INFANTRY_HEALTH,
   AIM_CORRIDOR_TILES,
   weaponForKind,
   weaponFor,
 } from './weapons'
-export type { WeaponSpec } from './weapons'
+export type { WeaponSpec, Difficulty } from './weapons'
 
 export { hasLineOfSight, clearFractionAlong } from './los'
 export type { SightPoint } from './los'

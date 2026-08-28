@@ -130,26 +130,38 @@ export const RIFLE: Weapon = 'rifle'
 export const ENEMY_RIFLE: Weapon = 'enemy-rifle'
 
 /**
- * The rifle's reach, in tiles. BOTH rows read it, which is the whole reason it
- * is hoisted out of them.
+ * How far the enemy's rifle reaches ON THE DEFAULT DIFFICULTY, as a fraction of
+ * the squad's.
  *
- * THERE USED TO BE A FRACTION HERE (ticket 036's `ENEMY_RANGE_FRACTION = 0.8`),
- * giving the enemy 6.4 tiles against the squad's 8 and opening a 1.6-tile band
- * in which the player could fire and the enemy could not. Ticket 092 closed it:
- * the two sides reach equally again, and the only handicap the enemy still
- * carries is his rate of fire.
+ * THE ENEMY'S RANGE IS DERIVED FROM THE PLAYER'S, NOT TYPED AS A SECOND NUMBER.
+ * A hardcoded 6.4 beside an 8 is two values that agree today and nothing that
+ * makes them agree tomorrow; expressed as a fraction, a later retune of
+ * `RIFLE_RANGE_TILES` carries the relationship with it.
  *
- * THE FRACTION WAS DELETED RATHER THAN SET TO 1, and that is not a style point.
- * A constant multiplying by one is not a fraction; it is a public export
- * announcing a handicap that no longer exists, and the next person to reach for
- * it finds a lever wired to nothing. What the derivation was actually FOR —
- * that a retune of the rifle carries both rows with it rather than leaving two
- * numbers that agree today — survives intact, because both rows still name this
- * constant.
+ * RAISE IT toward 1 and the standoff band closes: at 1 the two sides hold the
+ * same reach and backing off stops being an answer to being engaged. LOWER IT
+ * and the band widens until the squad can stand outside the envelope and kill a
+ * garrison that never gets to reply — free kills, and a level that stops asking
+ * anything of the player.
  *
- * RAISE IT and the firefight moves outward for both sides at once; LOWER IT and
- * units walk into knife range before anyone fires. The reasoning about the value
- * lives on `WeaponSpec.rangeTiles`.
+ * 0.8 leaves 1.6 tiles of band at the current 8-tile rifle: wide enough that a
+ * step or two of retreat is a real decision, narrow enough that it takes
+ * deliberate movement rather than happening by accident.
+ *
+ * AND CLOSING THE BAND IS WHAT `hard` IS (tickets 092, 093). Ticket 092 removed
+ * this fraction outright and shipped the closed band as the default; 093 put the
+ * default back and made 092's enemy the `hard` row below. So the value here is
+ * the NORMAL game, and `ENEMY_RIFLE_HARD` is the same weapon with the handicap
+ * lifted.
+ */
+export const ENEMY_RANGE_FRACTION = 0.8
+
+/**
+ * The squad rifle's reach, in tiles, hoisted out of the rows below so the
+ * enemy's can be written as a multiple of it rather than as a literal.
+ *
+ * The reasoning about the VALUE lives on `WeaponSpec.rangeTiles` and on the row
+ * itself — this constant exists only so that the rows read from one place.
  */
 const RIFLE_RANGE_TILES = 8
 
@@ -231,6 +243,55 @@ export const INFANTRY_HEALTH = 1
 export const AIM_CORRIDOR_TILES = 1.5
 
 /**
+ * The enemy rifle as the game ships — the row `hard` is a delta from.
+ *
+ * HOISTED OUT OF `WEAPONS` so `ENEMY_RIFLE_HARD` can spread it. Reading it back
+ * out of the table would be `WEAPONS[ENEMY_RIFLE]`, which is `WeaponSpec |
+ * undefined` under `noUncheckedIndexedAccess` and would need an assertion to
+ * silence — an assertion about a lookup that is a compile-time certainty here
+ * and would stay silent if the row were ever renamed.
+ */
+const ENEMY_RIFLE_NORMAL: WeaponSpec = {
+    name: ENEMY_RIFLE,
+    // IDENTICAL TO THE SQUAD'S. Lethality is not the lever this ticket pulls —
+    // one careless step still ends a man on either side, and dropping it below
+    // `INFANTRY_HEALTH` would make enemy fire something the player can stand in.
+    damage: INFANTRY_HEALTH,
+    // ~1.30 rounds a second against the squad's ~1.88, and still the larger half
+    // of the difficulty swing ticket 036 introduced. RAISE IT and the enemy
+    // becomes a target rather than a threat; LOWER IT toward 32 and three
+    // converging enemies again kill a four-man squad faster than the player can
+    // react to the first shot, which is the report that produced this row.
+    //
+    // 46, DOWN FROM 52 (ticket 075). A deliberate step back toward the squad's
+    // rate, taken together with the reaction beat in `ai/tuning.ts`, because the
+    // enemy was too easy. 13% more fire, not a different weapon.
+    //
+    // FASTER THAN THIS IS `hard` (tickets 092, 093), not a retune of this row.
+    cooldownTicks: 46,
+    // 6.4 tiles, DERIVED and never typed: 8 × 0.8. The 1.6 tiles this leaves
+    // between the two reaches is the standoff band — the distance at which the
+    // squad can fire and the enemy cannot — and it exists only because the two
+    // sides hold different weapons.
+    //
+    // The multiplication happens ONCE, here, at module construction. What lands
+    // in the table is a plain number, so the row still survives the JSON round
+    // trip this file promises; a getter would not, and is what the "specs are
+    // data" rule at the top forbids.
+    rangeTiles: RIFLE_RANGE_TILES * ENEMY_RANGE_FRACTION,
+    accuracy: {
+      // THE SAME CURVE AS THE SQUAD'S, DELIBERATELY UNCHANGED. The endpoints are
+      // relative to each weapon's OWN `rangeTiles`, so shortening the range has
+      // already steepened the falloff in real terms: at 6.4 tiles this man is at
+      // his worst instead of partway down the curve. Moving the endpoints as
+      // well would be two changes explaining one outcome, and nothing could then
+      // say which of them produced it.
+      pointBlank: 0.9,
+      maxRange: 0.25,
+    },
+  }
+
+/**
  * Every weapon in the game, keyed by the identifier `ShotFired` carries.
  *
  * A plain object rather than a `Map`: iteration order over string keys is
@@ -249,8 +310,8 @@ export const WEAPONS: Readonly<Record<Weapon, WeaponSpec>> = {
     // a sightline is survivable — which is what makes flanking worth doing.
     cooldownTicks: 32,
     // Eight tiles. The camera shows appreciably more than this, so a soldier
-    // who kills you was on screen when he did it. Named, because the enemy row
-    // below reads the same constant.
+    // who kills you was on screen when he did it. Named, because the enemy rows
+    // below are written against it.
     rangeTiles: RIFLE_RANGE_TILES,
     accuracy: {
       // NINE IN TEN AT ARM'S LENGTH. An enemy who has walked into your squad's
@@ -268,52 +329,7 @@ export const WEAPONS: Readonly<Record<Weapon, WeaponSpec>> = {
       maxRange: 0.25,
     },
   },
-  [ENEMY_RIFLE]: {
-    name: ENEMY_RIFLE,
-    // IDENTICAL TO THE SQUAD'S. Lethality is not the lever this ticket pulls —
-    // one careless step still ends a man on either side, and dropping it below
-    // `INFANTRY_HEALTH` would make enemy fire something the player can stand in.
-    damage: INFANTRY_HEALTH,
-    // ~1.50 rounds a second against the squad's ~1.88 — four for every five.
-    //
-    // AND IT IS NOW THE ONLY THING SEPARATING THE TWO ROWS. Ticket 036 handed
-    // the enemy two handicaps at once, a shorter reach and a slower rate; 092
-    // returned the reach, so this number carries the whole difference alone.
-    // RAISE IT and he becomes a target rather than a threat; LOWER IT to 32 and
-    // the two sides are identical, which is the configuration that measured
-    // unbeatable — three converging enemies killing a four-man squad in 1.7
-    // seconds, faster than the player could react to the first round.
-    //
-    // 40, DOWN FROM 46 (ticket 092), which was down from 52 (ticket 075). The
-    // trend is deliberate and it is running out of room: 32 is the floor, and
-    // it is not a value this row can take while `enemy-weapon.test.ts` still
-    // asserts he is the slower shot.
-    //
-    // 40 DIVIDES THE MINUTE, WHICH USED TO DISQUALIFY IT. See
-    // `WeaponSpec.cooldownTicks` — the rate assertion overcounted by one for
-    // exactly those values, and 092 fixed the arithmetic rather than picking a
-    // number that dodged it.
-    cooldownTicks: 40,
-    // THE SAME EIGHT TILES AS THE SQUAD'S, from the same constant. Ticket 036
-    // wrote this as `RIFLE_RANGE_TILES * ENEMY_RANGE_FRACTION` for 6.4; the
-    // fraction is gone (see `RIFLE_RANGE_TILES`) and the constant is not,
-    // because the reason for naming it — one retune moving both rows — never
-    // depended on the two values differing.
-    //
-    // What lands in the table is still a plain number, so the row survives the
-    // JSON round trip this file promises. A getter would not, and is what the
-    // "specs are data" rule at the top forbids.
-    rangeTiles: RIFLE_RANGE_TILES,
-    accuracy: {
-      // THE SAME CURVE AS THE SQUAD'S, DELIBERATELY UNCHANGED — and with the
-      // reach now equal too, identical in real terms as well as in its
-      // endpoints, where under ticket 036 the shorter range made it effectively
-      // steeper. Moving the endpoints as well would be two changes explaining
-      // one outcome, and nothing could then say which produced it.
-      pointBlank: 0.9,
-      maxRange: 0.25,
-    },
-  },
+  [ENEMY_RIFLE]: ENEMY_RIFLE_NORMAL,
 }
 
 /**
@@ -364,6 +380,62 @@ export const WEAPON_BY_TEAM: Readonly<Record<Team, Readonly<Record<string, Weapo
   },
 }
 
+/**
+ * How hard the enemy fights (ticket 093).
+ *
+ * TWO NAMED SETTINGS RATHER THAN A NUMBER, because a scalar invites arithmetic
+ * on tuning values — `rangeTiles * multiplier` for an arbitrary multiplier —
+ * and nobody would ever have measured the result. These are two authored rows,
+ * each defensible on its own.
+ *
+ * `normal` IS WHAT THE GAME SHIPS AS. Ticket 092 raised the enemy for everybody
+ * and the difficulty was the honest home for it: the reported problem was never
+ * that the default was too easy, it was that there was no way to ask for more.
+ */
+export type Difficulty = 'normal' | 'hard'
+
+/**
+ * The enemy rifle on `hard`: the squad's reach, and six ticks off the cooldown
+ * (tickets 092, 093).
+ *
+ * SPREAD FROM THE NORMAL ROW AND OVERRIDING TWO FIELDS, deliberately. Written
+ * as four fresh literals, a later retune of `damage` or of the accuracy curve
+ * would land on one difficulty and not the other, and nothing would say so —
+ * the hard player would be fighting a DIFFERENT weapon rather than a harder
+ * one. This way the two rows can only ever differ in reach and rate, and a test
+ * in `enemy-weapon.test.ts` pins exactly that.
+ *
+ * THE NAME IS UNCHANGED, which is the other half of the decision. `Weapon` is
+ * `string` — an open enum — and `ShotFired.weapon` carries it to FX and audio.
+ * A second identifier would make every one of those consumers responsible for
+ * knowing about difficulty, and being an open enum, nothing would fail to
+ * compile when one forgot. A hard round sounds and looks exactly like a normal
+ * one, because it IS one; it simply comes from further away and more often.
+ *
+ * 40 DIVIDES A MINUTE EXACTLY AND THAT IS FINE NOW. `WeaponSpec.cooldownTicks`
+ * records why it once was not, and why nothing in this file should go back to
+ * naming the tick count of a minute as a value to steer around.
+ */
+const ENEMY_RIFLE_HARD: WeaponSpec = {
+  ...ENEMY_RIFLE_NORMAL,
+  rangeTiles: RIFLE_RANGE_TILES,
+  cooldownTicks: 40,
+}
+
+/**
+ * The weapon table each difficulty answers from.
+ *
+ * A WHOLE TABLE PER DIFFICULTY rather than a patch applied at lookup time, so
+ * `weaponFor` stays a read and every row is inspectable as data — the same
+ * reason `WEAPONS` is a plain object. `hard` spreads `WEAPONS` and replaces one
+ * row, so a weapon added to the game arrives on both difficulties automatically
+ * and cannot be forgotten on one.
+ */
+const WEAPONS_BY_DIFFICULTY: Readonly<Record<Difficulty, Readonly<Record<Weapon, WeaponSpec>>>> = {
+  normal: WEAPONS,
+  hard: { ...WEAPONS, [ENEMY_RIFLE]: ENEMY_RIFLE_HARD },
+}
+
 /** The spec an entity of this kind fires with, or `null` if it is unarmed. */
 export function weaponForKind(kind: string): WeaponSpec | null {
   const name = WEAPON_BY_KIND[kind]
@@ -372,21 +444,43 @@ export function weaponForKind(kind: string): WeaponSpec | null {
 }
 
 /**
- * The spec an entity of this kind, on this team, fires with — or `null` if it is
- * unarmed (ticket 036).
+ * The spec an entity of this kind, on this team, at this difficulty, fires with
+ * — or `null` if it is unarmed (tickets 036, 093).
  *
- * THE SEAM THE WHOLE TICKET NEEDED. Both sides spawn as `kind: 'rifleman'`, so
- * before this there was no property by which the enemy could be given a worse
+ * THE SEAM THE WHOLE OF 036 NEEDED. Both sides spawn as `kind: 'rifleman'`, so
+ * before it there was no property by which the enemy could be given a different
  * weapon at all.
  *
  * A kind the team does not override falls through to `weaponForKind`, and a kind
- * neither table names is UNARMED on both teams — the default that stops a parked
- * jeep returning fire, preserved here because an override table that fell
- * through to SOMETHING rather than to nothing would arm every piece of scenery
- * on one side of the map.
+ * neither table names is UNARMED on every team and every difficulty — the
+ * default that stops a parked jeep returning fire, preserved here because an
+ * override table that fell through to SOMETHING rather than to nothing would arm
+ * every piece of scenery on one side of the map.
+ *
+ * THE DIFFICULTY IS AN ARGUMENT WITH A `normal` DEFAULT, NOT MODULE STATE
+ * SOMETHING SETS AT BOOT (ticket 093). A mutable module-level difficulty would
+ * be global state in the one layer whose determinism guarantee is why replays
+ * work, and `main.ts` already builds more than one session in a page — the
+ * campaign runner makes a fresh one per mission, and two of them would fight
+ * over it. The default is what keeps every call site written before 093, and
+ * every test in the repo that names no difficulty, a test of the shipped game.
+ *
+ * BOTH SYSTEMS THAT CALL THIS MUST BE HANDED THE SAME VALUE. `combat/system.ts`
+ * asks whether a round reaches; `ai/system.ts` asks where to stop walking. Hand
+ * the difficulty to one and not the other and the enemy closes for one range and
+ * shoots at another — each system internally consistent and wrong about its
+ * partner, which no unit test of either can see. `createSession` resolves it
+ * once and `session/__tests__/difficulty.test.ts` is what holds them together.
  */
-export function weaponFor(kind: string, team: Team): WeaponSpec | null {
+export function weaponFor(
+  kind: string,
+  team: Team,
+  difficulty: Difficulty = 'normal',
+): WeaponSpec | null {
+  const table = WEAPONS_BY_DIFFICULTY[difficulty]
   const override = WEAPON_BY_TEAM[team][kind]
-  if (override === undefined) return weaponForKind(kind)
-  return WEAPONS[override] ?? null
+  if (override !== undefined) return table[override] ?? null
+  const byKind = WEAPON_BY_KIND[kind]
+  if (byKind === undefined) return null
+  return table[byKind] ?? null
 }

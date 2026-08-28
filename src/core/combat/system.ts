@@ -36,6 +36,7 @@ import {
   readyToFire,
 } from './resolution'
 import { AIM_CORRIDOR_TILES, weaponFor } from './weapons'
+import type { Difficulty } from './weapons'
 import { canFireFromTerrain } from '../level/terrain'
 import { INFANTRY } from '../pathing/navgrid'
 import { TILE_WORLD_SIZE, tileToWorld } from '../view/projection'
@@ -64,6 +65,17 @@ export interface CombatOptions {
    * order from `orderFire`.
    */
   readonly autoEngageTeams?: readonly Team[]
+  /**
+   * How hard the enemy fights (ticket 093). `'normal'` — the shipped game —
+   * when absent, so every caller written before it is unaffected.
+   *
+   * MUST MATCH `AiOptions.difficulty` ON THE SAME MISSION. This system decides
+   * whether a round REACHES; the AI decides where the man stops walking. Give
+   * them different answers and he closes for one range and shoots at another,
+   * with both systems internally consistent and no unit test of either able to
+   * see it. `createSession` resolves one value for both.
+   */
+  readonly difficulty?: Difficulty
   /**
    * How a hit is decided (ticket 011b).
    *
@@ -203,6 +215,10 @@ const worldToTileAxis = (world: number, tiles: number): number =>
 export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): CombatSystem {
   const sightMask = options.sightMask ?? INFANTRY
   const autoEngageTeams = options.autoEngageTeams ?? ALL_TEAMS
+  // Resolved ONCE at construction rather than read per shot, so a mission cannot
+  // change difficulty halfway through — which would break replay, since the same
+  // seed and commands would no longer produce the same mission.
+  const difficulty = options.difficulty ?? 'normal'
   const hitPolicy = options.hitPolicy ?? 'certain'
   const cooldowns = createCooldowns()
 
@@ -541,7 +557,7 @@ export function createCombatSystem(grid: NavGrid, options: CombatOptions = {}): 
       // passing the kind alone would hand every enemy on the map the player's
       // rifle — same range, same rate — while the weapon table sat there
       // correctly split and unread.
-      const spec = weaponFor(shooter.kind, shooter.team)
+      const spec = weaponFor(shooter.kind, shooter.team, difficulty)
       // Unarmed kinds — vehicles, wreckage, anything not in `WEAPON_BY_KIND` —
       // can be shot at and killed but never shoot. Checked before the cooldown
       // so an unarmed entity never enters the cooldown table at all.
