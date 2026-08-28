@@ -37,15 +37,15 @@ import {
   type CueRequest,
 } from '../core/audio-events'
 
-import death1Url from '../../assets/source/audio/death1.wav?url'
-import death2Url from '../../assets/source/audio/death2.wav?url'
-import death3Url from '../../assets/source/audio/death3.wav?url'
-import defeatUrl from '../../assets/source/audio/defeat.wav?url'
-import explosionUrl from '../../assets/source/audio/explosion.wav?url'
-import grenadeThrowUrl from '../../assets/source/audio/grenade-throw.wav?url'
-import gunfireUrl from '../../assets/source/audio/gunfire.wav?url'
-import rocketLaunchUrl from '../../assets/source/audio/rocket-launch.wav?url'
-import victoryUrl from '../../assets/source/audio/victory.wav?url'
+import death1Url from '../../assets/source/audio/death1.m4a?url'
+import death2Url from '../../assets/source/audio/death2.m4a?url'
+import death3Url from '../../assets/source/audio/death3.m4a?url'
+import defeatUrl from '../../assets/source/audio/defeat.m4a?url'
+import explosionUrl from '../../assets/source/audio/explosion.m4a?url'
+import grenadeThrowUrl from '../../assets/source/audio/grenade-throw.m4a?url'
+import gunfireUrl from '../../assets/source/audio/gunfire.m4a?url'
+import rocketLaunchUrl from '../../assets/source/audio/rocket-launch.m4a?url'
+import victoryUrl from '../../assets/source/audio/victory.m4a?url'
 
 /**
  * The samples each cue may use, in variant order.
