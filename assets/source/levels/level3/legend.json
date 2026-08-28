@@ -1,0 +1,23 @@
+{
+  "tileSize": 16,
+  "colourTolerance": 40,
+  "markerColours": {
+    "60,160,255": "avatars",
+    "255,60,60": "enemies",
+    "255,220,0": "props"
+  },
+  "labels": [
+    { "at": [170, 48], "type": "bird_right", "category": "props" },
+    { "at": [242, 90], "type": "bird_right", "category": "props" },
+    { "at": [288, 118], "type": "bird_right", "category": "props" },
+    { "at": [248, 158], "type": "bird_right", "category": "props" },
+    { "at": [188, 200], "type": "bird_right", "category": "props" },
+    { "at": [1304, 644], "type": "bird_left", "category": "props" },
+    { "at": [876, 654], "type": "floating_dead_soldier", "category": "props" },
+    { "at": [705, 712], "type": "tree", "category": "props" },
+    { "at": [1306, 900], "type": "building_roof", "category": "props" },
+    { "at": [1298, 964], "type": "building_door", "category": "props" },
+    { "at": [1379, 980], "type": "grenade_box", "category": "props" }
+  ],
+  "objectives": [{ "type": "kill_count", "count": 11 }]
+}
