@@ -104,43 +104,63 @@ describe('the scroll flag reads only one spelling as unlocked', () => {
 })
 
 describe('and the hint does not advertise controls that are not there', () => {
-  it('the locked camera is not offered pan, zoom or the fit key', () => {
+  it('the locked camera is shown NO hint at all', () => {
     /**
-     * THE LINE THIS TICKET WOULD OTHERWISE HAVE TURNED INTO A LIE. The hint read
-     * "WASD / arrows or screen edge to pan · wheel or +/- to zoom · F to zoom out
-     * fully" for every player, and with the camera locked not one of those keys
-     * does anything. A player who presses them and sees nothing concludes the
-     * game is broken, not that the camera is deliberately fixed.
+     * NOT AN EMPTY STRING — `null`, so `showHintOnce` shows nothing rather than
+     * floating an empty capsule over the map.
+     *
+     * With pan and zoom gone (ticket 075) the weapon line was the only thing
+     * left in the pill, and ticket 080 removed that too: the ordnance rail draws
+     * the three weapons as real buttons, and the CONTROLS card in front of every
+     * campaign says "Click an icon for rifle, grenade or rocket". A hint
+     * repeating what two better things already show is clutter over the one
+     * rectangle the player is trying to watch.
      */
-    const locked = controlHintText(false)
-    for (const gone of ['WASD', 'arrows', 'pan', 'zoom', 'F to']) {
-      expect({ gone, mentioned: locked.includes(gone) }).toEqual({ gone, mentioned: false })
+    expect(controlHintText(false)).toBeNull()
+  })
+
+  it('and neither mode advertises the number keys or shift+wheel', () => {
+    /**
+     * THE BINDINGS ARE NOT REMOVED, ONLY THE ADVERTISEMENT. `onSelectKey` still
+     * takes `1`-`3` and `onSelectWheel` still takes shift+wheel — this is a
+     * claim about the TEXT, and a future edit that put either back into the pill
+     * has to argue with this case rather than slip past it.
+     */
+    for (const mode of [true, false]) {
+      const text = controlHintText(mode) ?? ''
+      for (const gone of ['1–3', '1-3', 'shift+wheel', 'change weapon']) {
+        expect({ mode, gone, mentioned: text.includes(gone) }).toEqual({
+          mode,
+          gone,
+          mentioned: false,
+        })
+      }
     }
   })
 
-  it('but IS still told how to change weapon, which the camera never took away', () => {
-    // `onSelectWheel` returns immediately without shift, so cycling is unaffected
-    // by the camera being locked — and a hint reduced to nothing at all would be
-    // a worse answer than a hint reduced to what is true.
-    const locked = controlHintText(false)
-    expect(locked).toContain('shift+wheel')
-    expect(locked.trim().length).toBeGreaterThan(0)
-  })
-
-  it('and `?scroll=1` gets the full line back', () => {
+  it('but `?scroll=1` still names pan, zoom and the fit key', () => {
+    /**
+     * THESE HAVE NOWHERE ELSE TO BE LEARNED. No card teaches them and no icon
+     * implies them, so the one place they are written down has to stay — which
+     * is the same argument ticket 075 made for making the line conditional in
+     * the first place.
+     */
     const free = controlHintText(true)
-    for (const promised of ['pan', 'zoom', 'F to zoom out fully', 'shift+wheel']) {
-      expect({ promised, mentioned: free.includes(promised) }).toEqual({
+    expect(free).not.toBeNull()
+    for (const promised of ['pan', 'zoom', 'F to zoom out fully']) {
+      expect({ promised, mentioned: (free ?? '').includes(promised) }).toEqual({
         promised,
         mentioned: true,
       })
     }
   })
 
-  it('and the weapon controls are spelled once, not twice', () => {
-    // Two copies would be two things to update the next time the keys move, and
-    // the one that was missed would be the one the player read.
-    const free = controlHintText(true)
-    expect(free.split('shift+wheel').length - 1).toBe(1)
+  it('and never returns an empty string, which would draw an empty pill', () => {
+    // The failure mode `null` exists to avoid: a styled, padded, rounded capsule
+    // with nothing in it, sitting over the map for seven seconds.
+    for (const mode of [true, false]) {
+      const text = controlHintText(mode)
+      expect({ mode, empty: text !== null && text.trim() === '' }).toEqual({ mode, empty: false })
+    }
   })
 })
