@@ -6,12 +6,14 @@ import {
   MEMORIAL_TITLE_STYLE,
   MISSION_HEADING_STYLE,
   FALLEN_ROW_STYLE,
+  FALLEN_NAME_STYLE,
   POPPY_LEFT_STYLE,
   POPPY_RIGHT_STYLE,
   ROLL_Z_INDEX,
   missionHeading,
 } from '../lost-in-service'
 import { DISPLAY_FONT } from '../display-font'
+import { readFileSync } from 'node:fs'
 
 /**
  * Ticket 073 — the campaign end screen as a memorial.
@@ -160,5 +162,92 @@ describe('and the dead are readable over it', () => {
     )
     expect(alphas.length).toBeGreaterThan(0)
     expect(Math.min(...alphas)).toBeGreaterThanOrEqual(0.9)
+  })
+})
+
+describe('a man wears his insignia rather than being labelled with it (ticket 088)', () => {
+  /**
+   * THE ROLL WAS THE ONE SCREEN THAT SPELT THE RANK OUT. `squad-panel.ts` and
+   * `boot-hill.ts` both draw the badge from `rank-insignia.ts` beside a name;
+   * the memorial printed "Private Jools". The art and the index were already
+   * there — `Grave` carries `rankIndex` — so this moves a rank from words into
+   * the picture the rest of the game uses for it.
+   */
+
+  it('the name claims the middle, so a third child is not spread by the row', () => {
+    /**
+     * THE BUG TICKET 062 ALREADY HIT ON BOOT HILL, arriving here for the same
+     * reason. `FALLEN_ROW_STYLE` is `justify-content:space-between`: with two
+     * children that puts the name left and the count right, and with THREE it
+     * spreads them evenly — badge left, name stranded in the middle, count
+     * right. `flex:1` on the name is what keeps the badge next to it.
+     */
+    expect(FALLEN_NAME_STYLE).toContain('flex:1')
+  })
+
+  it('and the row centres its items, because a badge has no baseline', () => {
+    /**
+     * `align-items:baseline` was right for two spans of text. The badge is a
+     * background on an EMPTY span, which has no text baseline to align to, so it
+     * would sit wherever the box model left it — usually a little high. Both
+     * other screens that draw this badge use `center`.
+     */
+    expect(row.get('align-items')).toBe('center')
+  })
+
+  it('and the roll asks `rank-insignia` for the badge instead of writing the word', () => {
+    /**
+     * READ FROM `menu.ts`'S SOURCE, because that is where the row is built and
+     * `environment: 'node'` cannot import it — the same technique
+     * `squad-panel.test.ts` uses, and the same reason.
+     *
+     * BOTH HALVES ARE ASSERTED. That the badge is drawn, and that the rank WORD
+     * is gone: a build that added the insignia and left `rankAtDeath` in the
+     * visible text would satisfy either half alone while changing nothing the
+     * player would call a fix.
+     */
+    const menu = readFileSync(new URL('../menu.ts', import.meta.url), 'utf8')
+    expect(menu).toMatch(/insigniaPosition\(/)
+    expect(menu).toContain('INSIGNIA_STYLE')
+    /**
+     * THE VISIBLE TEXT IS THE NAME AND NOTHING ELSE. Asserted on the ASSIGNMENT
+     * rather than by searching the file for the old string — the rank still
+     * appears in `menu.ts`, in the `title` two cases below, so a bare
+     * `not.toContain` would fail on the very line that makes this accessible.
+     * An earlier draft of this test did exactly that.
+     */
+    expect(menu).toMatch(/who\.textContent\s*=\s*man\.name\b/)
+    expect(menu).not.toMatch(/textContent\s*=\s*`\$\{man\.rankAtDeath\}/)
+  })
+
+  it('and a man whose rank no longer exists gets no badge, not a wrong one', () => {
+    /**
+     * `Grave.rankIndex` IS `number | null`. A stone carved under a ladder the
+     * game no longer has reports `null`, and `insigniaPosition` CLAMPS — it
+     * would happily turn that into badge 0 and decorate a sergeant as a private.
+     * Boot Hill already answers this by hiding the box, and the roll has to make
+     * the same choice rather than inherit the clamp by accident.
+     */
+    const menu = readFileSync(new URL('../menu.ts', import.meta.url), 'utf8')
+    expect(menu).toMatch(/man\.rankIndex === null/)
+  })
+
+  it('and the rank is moved out of sight, not out of existence', () => {
+    /**
+     * THE FAILURE THIS TICKET COULD EASILY HAVE SHIPPED. Boot Hill marks its
+     * badge `aria-hidden` and calls it decorative — which is only honest because
+     * the row carries the rank in its `title` as well. Hiding the badge here
+     * WITHOUT that would delete the rank for a screen reader rather than show it
+     * differently, and nothing on screen would look wrong.
+     */
+    const menu = readFileSync(new URL('../menu.ts', import.meta.url), 'utf8')
+    /**
+     * NAMED ON THE BADGE, not searched for anywhere in the file. An earlier
+     * draft matched a bare /aria-hidden/ and SURVIVED the mutant that removed
+     * the badge's — because `menu.ts` already hides the decorative poppies, so
+     * the regex was answering a question about a different element entirely.
+     */
+    expect(menu).toMatch(/insignia\.setAttribute\('aria-hidden'/)
+    expect(menu).toMatch(/title\s*=\s*`\$\{man\.rankAtDeath\} \$\{man\.name\}`/)
   })
 })
