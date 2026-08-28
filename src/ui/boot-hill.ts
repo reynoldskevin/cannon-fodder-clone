@@ -38,7 +38,7 @@ import { DISPLAY_FONT, loadDisplayFont } from './display-font'
 import { INSIGNIA_STYLE, insigniaPosition } from './rank-insignia'
 import { ROSTER_COLUMN_WIDTH } from './roster-column'
 import hillUrl from '../../assets/source/hill-path-background.webp?url'
-import crossUrl from '../../assets/source/sprites/cross.png?url'
+import crossUrl from '../../assets/source/sprites/cross.webp?url'
 import type { BootHillModel, Grave, Trooper } from '../core/campaign'
 
 export interface BootHillOptions {

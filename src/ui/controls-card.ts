@@ -22,7 +22,7 @@
 
 import { createButton, createChrome } from './screen-chrome'
 import { DISPLAY_FONT, loadDisplayFont } from './display-font'
-import instructionsUrl from '../../assets/source/sprites/instructions.png?url'
+import instructionsUrl from '../../assets/source/sprites/instructions.webp?url'
 
 /** What the screen is called. */
 export const CONTROLS_TITLE = 'CONTROLS'
