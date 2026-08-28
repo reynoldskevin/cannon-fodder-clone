@@ -21,6 +21,14 @@ import { tmpdir } from 'node:os'
  * the importer happens to emit. The map is 1472x1088; at 16px tiles that is a
  * 92x68 grid, and a glyph's tile is `floor(centroid / 16)`.
  *
+ * ONE OF THESE WAS RE-MEASURED. The enemy near the middle of the map has its
+ * centroid at y=335.93, which floors to tile 20 — a hair above the 336 boundary
+ * that would have put it in 21. The first pass through this list read the
+ * centroid ROUNDED for display (336) and derived the tile from that, which is a
+ * different calculation from the importer's and disagreed by one tile on the one
+ * marker that sits within a pixel of a tile edge. The unrounded centroid is the
+ * ground truth.
+ *
  * The glyphs are ~17x17 with 53-61 opaque pixels, where level 1's are 25x25.
  * That is well inside the default `minSide: 15 / maxSide: 40 / minPixels: 40`
  * envelope, so no `glyph` override is needed — but it is the reason the default
@@ -53,7 +61,7 @@ const EXPECTED = {
     { x: 27, y: 7 },
     { x: 2, y: 13 },
     { x: 66, y: 13 },
-    { x: 57, y: 21 },
+    { x: 57, y: 20 },
     { x: 24, y: 29 },
     { x: 14, y: 33 },
     { x: 54, y: 34 },
@@ -197,21 +205,86 @@ describe('and what it emits is a level this game can actually load', () => {
     expect(parsed.size).toEqual(EXPECTED.size)
   })
 
-  it('and every man who lands on it lands on ground he can stand on', () => {
+  it('and every one of the player`s men lands on ground he can stand on', () => {
     /**
-     * THE INVARIANT THAT DECIDES WHETHER THE LEVEL IS PLAYABLE AT ALL, and the
-     * one a new map is most likely to break: this map is half water and half
-     * dense jungle, and a crosshair drawn a few pixels into the canopy puts a
-     * soldier on a tile he cannot occupy. Nothing else in the pipeline checks
-     * it — the importer places a spawn wherever the glyph is.
+     * NON-NEGOTIABLE FOR THE AVATARS. A crosshair drawn a few pixels into the
+     * treeline puts a soldier on a tile he cannot occupy, and the player opens
+     * the mission unable to move a man he can see. Nothing else in the pipeline
+     * checks it — the importer places a spawn wherever the glyph is.
      */
-    const blocked: string[] = []
-    for (const spawn of [...result.level.spawns.avatars, ...result.level.spawns.enemies]) {
-      if (result.level.walkable[spawn.y]?.[spawn.x] !== true) {
-        blocked.push(`${String(spawn.x)},${String(spawn.y)}`)
+    const blocked = result.level.spawns.avatars
+      .filter((s) => result.level.walkable[s.y]?.[s.x] !== true)
+      .map((s) => `${String(s.x)},${String(s.y)}`)
+    expect(blocked).toEqual([])
+  })
+
+  it('and FIVE of the sixteen enemies do NOT, which is a fact about the map', () => {
+    /**
+     * MEASURED, NOT ASSUMED, AND IT IS WHY THE OBJECTIVE IS NOT `kill_all`.
+     *
+     * With the annotation ink excluded from the tile mean — which is what the
+     * importer does, precisely so a crosshair cannot lift dark jungle above the
+     * walkable cut — these five tiles read luminance 44 to 50 against a cut of
+     * 55. They are dense canopy, and the author drew five enemy crosshairs
+     * inside the treeline.
+     *
+     * THOSE FIVE ARE COMPLETELY INERT. `combat/los.ts` opens with
+     * `if (!grid.passable(to)) return false`, so a man standing on an impassable
+     * tile can neither be seen nor shot — and symmetrically cannot see out. They
+     * cannot be reached, killed, or fired upon, and they cannot fight back.
+     *
+     * SO `kill_all` WOULD BE UNWINNABLE, and the importer says so in as many
+     * words. This case pins the count so that the day the map is repainted — or
+     * a walkability mask is authored — the objective is revisited deliberately
+     * rather than left behind as a mystery.
+     */
+    const blocked = result.level.spawns.enemies
+      .filter((s) => result.level.walkable[s.y]?.[s.x] !== true)
+      .map((s) => `${String(s.x)},${String(s.y)}`)
+      .sort()
+    expect(blocked).toEqual(['23,48', '51,48', '57,20', '62,57', '8,2'].sort())
+  })
+
+  it('and the mission it declares can actually be won', () => {
+    /**
+     * THE PROPERTY THAT MATTERS, checked independently of the importer's own
+     * warning: flood-fill the walkable grid from the avatar spawns and count the
+     * enemies a soldier could actually walk to. `kill_count` asks for a number,
+     * and if fewer than that number can be reached the mission can never end —
+     * which is a level that looks completely fine until somebody plays it to the
+     * last enemy and finds the objective still open.
+     */
+    const { w, h } = result.level.size
+    const seen = Array.from({ length: h }, () => new Array<boolean>(w).fill(false))
+    const queue: { x: number; y: number }[] = []
+    for (const start of result.level.spawns.avatars) {
+      if (!seen[start.y]?.[start.x]) {
+        const row = seen[start.y]
+        if (row) row[start.x] = true
+        queue.push(start)
       }
     }
-    expect(blocked).toEqual([])
+    while (queue.length > 0) {
+      const at = queue.pop()
+      if (at === undefined) continue
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = at.x + dx
+        const ny = at.y + dy
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue
+        if (result.level.walkable[ny]?.[nx] !== true) continue
+        const row = seen[ny]
+        if (row === undefined || row[nx]) continue
+        row[nx] = true
+        queue.push({ x: nx, y: ny })
+      }
+    }
+    const reachable = result.level.spawns.enemies.filter((e) => seen[e.y]?.[e.x] === true).length
+    expect(reachable).toBe(11)
+
+    const objective = result.level.objectives[0] as { type: string; count?: number }
+    expect(objective.type).toBe('kill_count')
+    // The number asked for must be one the map can actually supply.
+    expect(Number(objective.count)).toBeLessThanOrEqual(reachable)
   })
 
   it('and the map really is the mixed terrain it looks like', () => {
