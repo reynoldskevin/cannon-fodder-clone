@@ -121,16 +121,18 @@ const HIGHLIGHT = '#f2c14e'
  * all. Taken back here and nowhere higher, so the rest of the rail keeps giving
  * clicks away.
  *
- * `margin-top:auto` PUSHES IT TO THE FOOT OF THE RAIL. The roster grows and
- * shrinks as men fall; a bar that followed the last name would move up the
- * screen every time somebody died, and the player would reach for where it was.
+ * DIRECTLY UNDER THE LAST NAME, NOT AT THE FOOT OF THE RAIL (ticket 068). It was
+ * pinned to the bottom by `margin-top:auto` on the reasoning that a bar which
+ * followed the roster would walk up the screen as men died. It reads as detached
+ * furniture down there — the rail is full height, so the icons sat a long way
+ * from the thing they belong to. They move with the roster now, which is the
+ * cost of belonging to it.
  */
 export const ORDNANCE_ICON_BAR_STYLE = [
   'display:flex',
   'flex-direction:row',
   'justify-content:center',
   'gap:0.5rem',
-  'margin-top:auto',
   /**
    * NO WIDER THAN THE ICONS IT CARRIES, and centred by `align-self` rather than
    * by filling the rail. This bar is the one part of the screen that takes
@@ -158,8 +160,11 @@ export const ORDNANCE_ICON_BAR_STYLE = [
  */
 export const ORDNANCE_ICON_STYLE = [
   'flex:none',
-  'width:2.6rem',
-  'height:2.6rem',
+  // 50% UP ON WHAT 067 SHIPPED (ticket 068). At 2.6rem the art was a thumbnail
+  // of a grenade rather than a grenade, and it is a click target as well as a
+  // picture — a button the size of a favicon is one the player has to aim at.
+  'width:3.9rem',
+  'height:3.9rem',
   'padding:0',
   'background-color:rgba(58,62,44,0.85)',
   'background-repeat:no-repeat',
