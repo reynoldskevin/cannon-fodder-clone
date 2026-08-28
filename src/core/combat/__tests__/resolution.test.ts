@@ -10,6 +10,7 @@ import {
   readyToFire,
   markFired,
   inRange,
+  type WeaponSpec,
 } from '../index'
 
 /**
@@ -143,11 +144,9 @@ describe('cooldowns', () => {
     expect(readyToFire(cd, 2, 1)).toBe(true)
   })
 
-  it('produces exactly the expected rate of fire over a minute', () => {
-    // The number a designer will actually want to change, asserted as a rate
-    // rather than as an internal counter.
+  /** Rounds a unit gets away in ticks `0..3599` at this spec's cooldown. */
+  const roundsInAMinute = (spec: WeaponSpec): number => {
     const cd = createCooldowns()
-    const spec = WEAPONS[RIFLE]!
     let shots = 0
     for (let tick = 0; tick < 3600; tick++) {
       if (readyToFire(cd, 1, tick)) {
@@ -155,7 +154,64 @@ describe('cooldowns', () => {
         markFired(cd, 1, tick, spec)
       }
     }
-    expect(shots).toBe(Math.floor(3600 / spec.cooldownTicks) + 1)
+    return shots
+  }
+
+  /**
+   * The rate a cooldown SHOULD produce over `0..3599`.
+   *
+   * `ceil`, AND THIS USED TO BE `floor(...) + 1`, WHICH WAS WRONG (ticket 092).
+   * The unit fires on tick 0 and every `cd` ticks after, so the count is the
+   * number of multiples of `cd` in `[0, 3599]` — which `floor + 1` gets right
+   * only when `cd` does NOT divide 3600. At 40 it fires on 0..3560, ninety
+   * rounds, and the old expression demanded ninety-one.
+   *
+   * That off-by-one was not harmless: it made every cooldown dividing the minute
+   * unusable, and `weapons.ts` and `enemy-weapon.test.ts` both carried warnings
+   * steering designers away from 30, 36, 40, 45 and 60 to avoid tripping over
+   * arithmetic in this file. `ceil` agrees with `floor + 1` everywhere the old
+   * form was correct (32 -> 113) and is right where it was not (40 -> 90), so
+   * the warnings go with it.
+   */
+  const expectedRounds = (spec: WeaponSpec): number => Math.ceil(3600 / spec.cooldownTicks)
+
+  it('produces exactly the expected rate of fire over a minute', () => {
+    // The number a designer will actually want to change, asserted as a rate
+    // rather than as an internal counter.
+    const spec = WEAPONS[RIFLE]!
+    expect(roundsInAMinute(spec)).toBe(expectedRounds(spec))
+    expect(roundsInAMinute(spec)).toBe(113)
+  })
+
+  it('and gets it right for a cooldown that divides the minute exactly', () => {
+    /**
+     * THE CASE THE OLD FORMULA GOT WRONG, and the only thing that stops the fix
+     * above from being vacuous: at 32 both expressions answer 113, so a suite
+     * that exercised the shipped rifle alone would report `floor + 1` and `ceil`
+     * as equally correct and the correction as unnecessary.
+     *
+     * Forty is used because it is a divisor of 3600 and because ticket 092 gives
+     * it to the enemy rifle — but the spec here is SYNTHETIC on purpose. The
+     * arithmetic is a property of the cooldown machinery, not of any row in the
+     * weapon table, and pinning it to a shipped row would make a future retune
+     * look like a failure of this test.
+     */
+    const everyFortyTicks: WeaponSpec = { ...WEAPONS[RIFLE]!, cooldownTicks: 40 }
+    expect(roundsInAMinute(everyFortyTicks)).toBe(90)
+    expect(roundsInAMinute(everyFortyTicks)).toBe(expectedRounds(everyFortyTicks))
+    // Spelled out, because it is the whole reason the old expression survived
+    // this long: it is only ever wrong by one, and only for these divisors.
+    expect(Math.floor(3600 / 40) + 1).toBe(91)
+  })
+
+  it('and for every cooldown either side of one, so the fix is not a special case', () => {
+    for (const cooldownTicks of [1, 7, 30, 32, 36, 40, 45, 46, 60, 119, 3600]) {
+      const spec: WeaponSpec = { ...WEAPONS[RIFLE]!, cooldownTicks }
+      expect({ cooldownTicks, rounds: roundsInAMinute(spec) }).toEqual({
+        cooldownTicks,
+        rounds: expectedRounds(spec),
+      })
+    }
   })
 
   it('forgets a despawned unit so the map does not grow all mission', () => {

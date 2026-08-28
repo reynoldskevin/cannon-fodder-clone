@@ -1,23 +1,33 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
 import {
   WEAPONS,
   WEAPON_BY_KIND,
   RIFLE,
   ENEMY_RIFLE,
-  ENEMY_RANGE_FRACTION,
   weaponFor,
   weaponForKind,
   type WeaponSpec,
 } from '../index'
+import * as combat from '../index'
 
 /**
- * Ticket 036 — the two sides stop holding the same rifle.
+ * Ticket 036 — the two sides stop holding the same rifle — as amended by
+ * ticket 092.
  *
  * `world.ts` spawns avatars and enemies alike as `kind: 'rifleman'`, and
- * `WEAPON_BY_KIND` is keyed by kind, so before this ticket there was no seam at
- * all through which an enemy could be given a worse weapon. Every number below
- * exists because the game was measured as unbeatable with the two sides
- * identical: three enemies at six tiles killed a four-man squad in 1.7 seconds.
+ * `WEAPON_BY_KIND` is keyed by kind, so before ticket 036 there was no seam at
+ * all through which an enemy could be given a different weapon. THAT SEAM IS
+ * WHAT SURVIVES, and it is the part of 036 worth keeping: the per-team override,
+ * the sniper row that stops a kind being forgotten, and the unarmed default.
+ *
+ * WHAT 092 UNDOES IS THE HANDICAP THE SEAM CARRIED. 036 gave the enemy 80% of
+ * the squad's reach and a much longer cooldown because the game measured
+ * unbeatable with the two sides identical — three enemies at six tiles killed a
+ * four-man squad in 1.7 seconds. The reach is now equal again and the cooldown
+ * is 40 against 32, so the surviving margin is a fifth of the rate and nothing
+ * else. If the 1.7 seconds returns, THIS is the file that says which numbers to
+ * look at.
  */
 
 const spec = (name: keyof typeof WEAPONS): WeaponSpec => {
@@ -57,79 +67,121 @@ describe('the enemy carries a weapon of his own', () => {
   })
 })
 
-describe('his range is 80% of the squad`s', () => {
-  it('is DERIVED from the player rifle rather than typed as a second number', () => {
-    // The relation, not the value: a retune of the squad's rifle must carry the
-    // enemy's with it. A hardcoded 6.4 beside an 8 is two numbers that agree
-    // today and nothing that makes them agree tomorrow.
-    expect(enemy().rangeTiles).toBe(player().rangeTiles * ENEMY_RANGE_FRACTION)
+describe('his rifle reaches exactly as far as the squad`s (ticket 092)', () => {
+  it('is DERIVED from the player rifle rather than typed as a second 8', () => {
+    // The relation, not the value. This survives ticket 036's deletion because
+    // it is the property that mattered all along: a retune of the squad's rifle
+    // must carry the enemy's with it. Two 8s side by side agree today and
+    // nothing makes them agree tomorrow.
+    expect(enemy().rangeTiles).toBe(player().rangeTiles)
   })
 
-  it('and BOTH the fraction and the resulting distance are pinned literally', () => {
+  it('and the derivation is in the SOURCE, not merely an equality that holds today', () => {
     /**
-     * THE RELATION ABOVE IS NOT ENOUGH ON ITS OWN, and this project has already
-     * shipped that mistake once: ticket 034's tint test computed its expectation
-     * with the same expression production used, so swapping two rows left the
-     * suite green while rendering the map wrong.
+     * THE ASSERTION ABOVE IS SATISFIED BY TYPING 8 TWICE, which is exactly the
+     * failure mode ticket 036 wrote a fraction to avoid — and with the fraction
+     * gone, nothing else in this file can tell a derived row from a duplicated
+     * literal. So the row is read.
      *
-     * `ENEMY_RANGE_FRACTION = 1` satisfies the derivation test perfectly and
-     * un-does the entire ticket. These two lines are what make that a failure.
+     * Ticket 034's tint bug is the standing precedent for why an equality
+     * computed the way production computes it proves nothing on its own; this
+     * project has since paid for it twice more.
      */
-    expect(ENEMY_RANGE_FRACTION).toBe(0.8)
-    expect(player().rangeTiles).toBe(8)
-    expect(enemy().rangeTiles).toBe(6.4)
+    const source = readFileSync(new URL('../weapons.ts', import.meta.url), 'utf8')
+    const row = source.slice(source.indexOf('[ENEMY_RIFLE]: {'))
+    expect(row).not.toBe('')
+    const written = /^\s*rangeTiles:\s*([^,\n]+),/m.exec(row)?.[1]
+    expect(written).toBe('RIFLE_RANGE_TILES')
   })
 
-  it('leaving a band in which the squad can shoot and he cannot', () => {
-    // The difficulty lever this ticket actually pulls, stated as a property
-    // rather than left implicit in two constants.
-    expect(player().rangeTiles).toBeGreaterThan(enemy().rangeTiles)
+  it('and the resulting distance is pinned literally on both rows', () => {
+    expect(player().rangeTiles).toBe(8)
+    expect(enemy().rangeTiles).toBe(8)
+  })
+
+  it('so no fraction constant survives claiming a handicap that is gone', () => {
+    /**
+     * `ENEMY_RANGE_FRACTION` IS DELETED RATHER THAN SET TO 1, which is ticket
+     * 091's shape a second time. A constant that multiplies by one is not a
+     * fraction; it is a public export of `core/combat/index.ts` telling every
+     * reader the two sides are handicapped apart when they are not, and the next
+     * person to grep for it finds a lever that does nothing.
+     *
+     * Checked against the module namespace because a deleted export cannot be
+     * imported by name — that would be a compile error rather than a failure.
+     */
+    expect(Object.keys(combat)).not.toContain('ENEMY_RANGE_FRACTION')
   })
 })
 
-describe('and he fires more slowly', () => {
+describe('and he fires more slowly, which is now the only handicap left', () => {
   it('with a strictly longer cooldown than the squad`s rifle', () => {
     /**
-     * 46, DOWN FROM 52 (ticket 075). The enemy read as too easy; this is one of
-     * the two numbers moved for it, the other being the reaction beat in
-     * `ai/tuning.ts`. The exact value stays pinned on purpose — it makes a
-     * retune something somebody decided rather than something that drifted —
-     * while the assertions below are what actually hold the claim that he is
-     * slower, and they are the ones that stop this going any further.
+     * 40, DOWN FROM 46 (ticket 092), which was itself down from 52 (ticket 075).
+     * The exact value stays pinned on purpose — it makes a retune something
+     * somebody decided rather than something that drifted — while the ordering
+     * assertion is what actually holds the claim that he is the slower shot.
      */
     expect(enemy().cooldownTicks).toBeGreaterThan(player().cooldownTicks)
     expect(player().cooldownTicks).toBe(32)
-    expect(enemy().cooldownTicks).toBe(46)
+    expect(enemy().cooldownTicks).toBe(40)
   })
 
-  it('and a cooldown that does not divide 3600, which is not a style point', () => {
+  it('at a rate re-derived from the two cooldowns, not left at a stale threshold', () => {
     /**
-     * `weapons.ts` documents it and `resolution.test.ts` is the reason: the rate
-     * assertion is `floor(3600 / cooldownTicks) + 1`, which overcounts by one for
-     * any value dividing 3600 exactly. 48 and 50 — the two obvious choices
-     * either side of 52 — both divide it. A designer who tries one deserves to
-     * meet this test rather than a baffling off-by-one in another file.
+     * FOUR ROUNDS FOR EVERY FIVE OF THE SQUAD'S. The old bound here was
+     * `< 0.7 × the squad's`, which 46 cleared by a hair (78.3 against 78.75) and
+     * 40 does not clear at all. Loosening that number until 40 fits would be the
+     * test following the code; stating the ratio the two cooldowns actually
+     * produce makes a retune of either come back here and say what the new claim
+     * is.
      */
-    expect(3600 % enemy().cooldownTicks).not.toBe(0)
-    expect(3600 % player().cooldownTicks).not.toBe(0)
+    const roundsPerMinute = (s: WeaponSpec): number => 3600 / s.cooldownTicks
+    expect(roundsPerMinute(enemy())).toBeLessThan(roundsPerMinute(player()))
+    expect(roundsPerMinute(enemy()) / roundsPerMinute(player())).toBeCloseTo(0.8, 10)
   })
 
-  it('measurably slower: he lands fewer rounds a minute at his own maximum range', () => {
-    // Guards the pair of changes together, which neither constant does alone —
-    // a shorter range with an unchanged cooldown, or the reverse, both leave the
-    // firefight far closer to the one that was reported as unbeatable.
-    const roundsPerMinute = (s: WeaponSpec): number => 3600 / s.cooldownTicks
-    expect(roundsPerMinute(enemy())).toBeLessThan(roundsPerMinute(player()) * 0.7)
+  it('and 40 divides 3600, which is no longer a reason to avoid it', () => {
+    /**
+     * The inverse of the guard this replaces. `weapons.ts` used to warn against
+     * the divisors of 3600 and this file used to assert `3600 % cooldown !== 0`,
+     * both because `resolution.test.ts` counted the rate as
+     * `floor(3600 / cd) + 1` and overcounted by one for exactly those values.
+     * Ticket 092 fixed the arithmetic (`ceil`) instead of steering the requested
+     * value around it, so the constraint is gone — and this asserts it is gone
+     * rather than merely unmentioned, because a warning quietly reinstated in
+     * `weapons.ts` would send the next designer back around the same loop.
+     */
+    expect(3600 % enemy().cooldownTicks).toBe(0)
+    const source = readFileSync(new URL('../weapons.ts', import.meta.url), 'utf8')
+    expect(source).not.toContain('3600')
   })
 })
 
 describe('the accuracy curve is deliberately untouched', () => {
-  it('so the shorter range is the only thing that moved', () => {
-    // Two changes explaining one outcome would leave the ticket unable to say
-    // which produced it. The endpoints are relative to each weapon's OWN range,
-    // so shortening the range already steepens the falloff in real terms.
+  it('so the reach and the rate are the only things that moved', () => {
     expect(enemy().accuracy).toEqual(player().accuracy)
     expect(player().accuracy).toEqual({ pointBlank: 0.9, maxRange: 0.25 })
+  })
+
+  it('leaving two rows that differ in name and cooldown ALONE', () => {
+    /**
+     * The end state stated once, positively, instead of inferred from four
+     * separate equalities — and the assertion that fails loudest if a later
+     * ticket reaches for damage or accuracy to re-open a gap between the sides
+     * without saying so.
+     *
+     * `expect(theirs).not.toEqual(mine)` at the top of this file now rests
+     * entirely on these two fields, which is worth knowing.
+     */
+    const exceptTheRate = (s: WeaponSpec) => ({
+      damage: s.damage,
+      rangeTiles: s.rangeTiles,
+      accuracy: s.accuracy,
+    })
+    expect(exceptTheRate(enemy())).toEqual(exceptTheRate(player()))
+    expect(enemy().name).not.toBe(player().name)
+    expect(enemy().cooldownTicks).not.toBe(player().cooldownTicks)
   })
 })
 
