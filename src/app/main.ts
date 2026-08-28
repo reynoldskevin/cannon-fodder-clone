@@ -47,7 +47,7 @@ import { GroundTextureError, loadGroundTextures } from '../render/ground-texture
 import type { GroundSurface } from '../core/view/ground-surface'
 import { isEditableTarget } from '../input/editable-target'
 import { PanController } from '../input/pan-controller'
-import { squadFocus, parseScrollUnlocked } from '../core/view/follow'
+import { squadFocus, parseScrollUnlocked, controlHintText } from '../core/view/follow'
 import { PointerController } from '../input/pointer-controller'
 import { ZoomController } from '../input/zoom-controller'
 import { showControlHint, type ControlHint } from '../ui/control-hint'
@@ -973,14 +973,18 @@ async function boot(): Promise<void> {
   function showHintOnce(): void {
     if (hintShown) return
     hintShown = true
-    // "F to zoom out", not "F to fit": since ticket 009b the zoom-out limit stops
-    // at the widest view that shows no background, which is deliberately short of
-    // the whole level. A hint that still promised a fit would be a lie.
-    hint = showControlHint(
-      mount,
-      'WASD / arrows or screen edge to pan  ·  wheel or +/− to zoom  ·  F to zoom out fully  ·  ' +
-        '1–3 or shift+wheel to change weapon',
-    )
+    /**
+     * WHAT IT SAYS DEPENDS ON WHETHER THE PLAYER CAN DO IT (ticket 075).
+     *
+     * This line used to promise pan and zoom to everybody, and with the camera
+     * locked none of those keys does anything — a hint advertising controls
+     * that are not there is worse than no hint, because the player who presses
+     * them concludes the game is broken. The wording lives in
+     * `core/view/follow.ts` beside the flag that decides it, where it is
+     * tested; the older comment here made the same argument about "F to fit"
+     * and kept the string in this untestable file.
+     */
+    hint = showControlHint(mount, controlHintText(scrollUnlocked))
   }
 
   /** Timestamp of the last frame, for the frame delta. See the render loop. */

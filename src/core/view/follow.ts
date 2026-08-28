@@ -85,3 +85,29 @@ export function squadFocus(
 export function parseScrollUnlocked(raw: string | null | undefined): boolean {
   return raw === '1'
 }
+
+/** The weapon controls, which no camera mode takes away. */
+const WEAPON_HINT = '1–3 or shift+wheel to change weapon'
+
+/**
+ * The line the control hint shows, for the camera mode the game is in.
+ *
+ * IT IS HERE BECAUSE THE OLD ONE BECAME A LIE THE MOMENT THIS TICKET LANDED.
+ * `showHintOnce` promised "WASD / arrows or screen edge to pan · wheel or +/− to
+ * zoom · F to zoom out fully" to every player, and with the camera locked not
+ * one of those does anything. Its own comment already warned about this exact
+ * failure — "a hint that still promised a fit would be a lie" — about the
+ * previous ticket to change what the keys do.
+ *
+ * THE WEAPON HALF SURVIVES BOTH MODES and is spelled once. Cycling is
+ * `1`-`3` and SHIFT+wheel (`onSelectWheel` returns immediately without the
+ * modifier), so it is untouched by the camera being locked — and two copies of
+ * it would be two things to update the next time the keys move.
+ */
+export function controlHintText(scrollUnlocked: boolean): string {
+  if (!scrollUnlocked) return WEAPON_HINT
+  return (
+    'WASD / arrows or screen edge to pan  ·  wheel or +/− to zoom  ·  F to zoom out fully  ·  ' +
+    WEAPON_HINT
+  )
+}

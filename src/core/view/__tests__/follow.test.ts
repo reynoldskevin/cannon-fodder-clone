@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { squadFocus, parseScrollUnlocked, type FollowUnit } from '../follow'
+import { squadFocus, parseScrollUnlocked, controlHintText, type FollowUnit } from '../follow'
 import type { GroundPoint } from '../camera'
 
 /**
@@ -100,5 +100,47 @@ describe('the scroll flag reads only one spelling as unlocked', () => {
     // — a player who typed no query string at all — is the locked camera.
     expect(parseScrollUnlocked(null)).toBe(false)
     expect(parseScrollUnlocked('1')).toBe(true)
+  })
+})
+
+describe('and the hint does not advertise controls that are not there', () => {
+  it('the locked camera is not offered pan, zoom or the fit key', () => {
+    /**
+     * THE LINE THIS TICKET WOULD OTHERWISE HAVE TURNED INTO A LIE. The hint read
+     * "WASD / arrows or screen edge to pan · wheel or +/- to zoom · F to zoom out
+     * fully" for every player, and with the camera locked not one of those keys
+     * does anything. A player who presses them and sees nothing concludes the
+     * game is broken, not that the camera is deliberately fixed.
+     */
+    const locked = controlHintText(false)
+    for (const gone of ['WASD', 'arrows', 'pan', 'zoom', 'F to']) {
+      expect({ gone, mentioned: locked.includes(gone) }).toEqual({ gone, mentioned: false })
+    }
+  })
+
+  it('but IS still told how to change weapon, which the camera never took away', () => {
+    // `onSelectWheel` returns immediately without shift, so cycling is unaffected
+    // by the camera being locked — and a hint reduced to nothing at all would be
+    // a worse answer than a hint reduced to what is true.
+    const locked = controlHintText(false)
+    expect(locked).toContain('shift+wheel')
+    expect(locked.trim().length).toBeGreaterThan(0)
+  })
+
+  it('and `?scroll=1` gets the full line back', () => {
+    const free = controlHintText(true)
+    for (const promised of ['pan', 'zoom', 'F to zoom out fully', 'shift+wheel']) {
+      expect({ promised, mentioned: free.includes(promised) }).toEqual({
+        promised,
+        mentioned: true,
+      })
+    }
+  })
+
+  it('and the weapon controls are spelled once, not twice', () => {
+    // Two copies would be two things to update the next time the keys move, and
+    // the one that was missed would be the one the player read.
+    const free = controlHintText(true)
+    expect(free.split('shift+wheel').length - 1).toBe(1)
   })
 })
