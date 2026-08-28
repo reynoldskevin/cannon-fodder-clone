@@ -37,6 +37,7 @@ import {
 } from './screen-chrome'
 import {
   FALLEN_ROW_STYLE,
+  FALLEN_NAME_STYLE,
   KILL_COUNT_STYLE,
   LOST_IN_SERVICE_TITLE,
   MEMORIAL_SCRIM,
@@ -48,6 +49,7 @@ import {
   ROLL_Z_INDEX,
   missionHeading,
 } from './lost-in-service'
+import { INSIGNIA_STYLE, insigniaPosition } from './rank-insignia'
 import { loadDisplayFont } from './display-font'
 import { menuButtons } from './menu-buttons'
 import { rollOfHonour } from '../core/campaign'
@@ -893,15 +895,44 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
           const row = document.createElement('li')
           row.style.cssText = FALLEN_ROW_STYLE
 
+          /**
+           * THE BADGE, NOT THE WORD (ticket 088). Every other screen that shows
+           * a rank draws it from `rank-insignia.ts`; this roll was the one that
+           * spelled it out. `Grave` already carries `rankIndex`, so nothing is
+           * computed here that was not already known.
+           */
+          const insignia = document.createElement('span')
+          /**
+           * NO BADGE IS A REAL ANSWER, not a missing one. `Grave.rankIndex` is
+           * `null` for a stone carved under a ladder the game no longer has, and
+           * `insigniaPosition` CLAMPS — handed `null` it would decorate that man
+           * as a private rather than admit it does not know. Boot Hill draws
+           * nothing in the same case; so does this.
+           */
+          insignia.style.cssText =
+            man.rankIndex === null
+              ? 'display:none'
+              : `${INSIGNIA_STYLE};background-position:${insigniaPosition(man.rankIndex)}`
+          /**
+           * DECORATIVE, AND THE ROW IS WHAT MAKES THAT TRUE. An empty span with
+           * a background says nothing to a screen reader, so hiding it is only
+           * honest because the `title` below still carries "Private Jools" —
+           * otherwise this ticket would DELETE the rank rather than move it.
+           */
+          insignia.setAttribute('aria-hidden', 'true')
+
           const who = document.createElement('span')
-          who.textContent = `${man.rankAtDeath} ${man.name}`
+          who.textContent = man.name
+          who.style.cssText = FALLEN_NAME_STYLE
+          // The rank the badge is drawing, for anyone not looking at pictures.
+          row.title = `${man.rankAtDeath} ${man.name}`
           const kills = document.createElement('span')
           // "1 killed", not "1 kills". The count is the man's whole record and
           // the plural is the difference between a memorial and a scoreboard.
           kills.textContent = `${String(man.kills)} killed`
           kills.style.cssText = KILL_COUNT_STYLE
 
-          row.append(who, kills)
+          row.append(insignia, who, kills)
           men.append(row)
         }
         roll.append(men)
