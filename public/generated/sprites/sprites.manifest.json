@@ -3,7 +3,7 @@
   "origin": "top-left",
   "scale": 0.75,
   "atlas": {
-    "file": "atlas.png",
+    "file": "atlas.webp",
     "width": 2048,
     "height": 4064,
     "padding": 16
@@ -1916,19 +1916,19 @@
   },
   "ground": {
     "jungle": {
-      "file": "floor.png",
+      "file": "floor.webp",
       "width": 512,
       "height": 512,
       "tileable": true
     },
     "water": {
-      "file": "water.png",
+      "file": "water.webp",
       "width": 512,
       "height": 512,
       "tileable": true
     },
     "bridge": {
-      "file": "bridge.png",
+      "file": "bridge.webp",
       "width": 512,
       "height": 512,
       "tileable": true

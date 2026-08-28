@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { mkdtempSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildSprites, type ImageWriter } from '../index.ts'
-import { encodePng } from '../image.ts'
+import { buildSprites, type ImageWriter } from '../index'
+import { encodePng } from '../image'
 
 /**
  * Ticket 084 — the emitted image format is a parameter, not a constant.
