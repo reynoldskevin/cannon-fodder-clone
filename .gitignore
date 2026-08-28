@@ -20,3 +20,10 @@ playwright-report/
 .vercel
 
 assets/mockups
+
+# Sound masters (ticket 082). 96 kHz 24-bit, 10.19 MB for 20.6 seconds — the
+# browser resamples to 48 kHz on arrival, so these are an editing format, not a
+# shipping one. The .m4a files beside them ARE committed, because the build
+# imports those and a clean clone has to work. `npm run encode:audio` is the
+# step between the two.
+assets/source/audio/*.wav

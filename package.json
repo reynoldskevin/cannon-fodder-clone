@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "import:levels": "node tools/import-levels.mjs",
     "build:models": "node tools/build-models.mjs",
+    "encode:audio": "node tools/encode-audio.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
