@@ -32,12 +32,18 @@
  * it, and because ticket 064 took the two-tone roster off Boot Hill on the same
  * argument.
  *
- * UNDER THE ROLL, THE TWO THINGS YOU CAN THROW (ticket 067). The grenade and the
+ * UNDER THE ROLL, THE THINGS YOU CAN ARM (tickets 067, 073). The grenade and the
  * rocket were armed by pressing `2` and `3` and by nothing else. They are now
- * also a pair of painted buttons at the foot of the rail, built from
- * `ORDNANCE_ICONS` — which is where "which weapons, in what order, on which
- * digit" is decided and tested. A second list hand-written here would be a
- * second answer to all three, and the tested one would not be the one on screen.
+ * also painted buttons at the foot of the rail, built from `ORDNANCE_ICONS` —
+ * which is where "which weapons, in what order, on which digit" is decided and
+ * tested. A second list hand-written here would be a second answer to all three,
+ * and the tested one would not be the one on screen.
+ *
+ * AND THE RIFLE IS ONE OF THEM NOW (ticket 073). 067 left it off; that made
+ * arming a grenade one click and putting it down again a keypress the player had
+ * to already know about. The bar grew the rifle at its left end, and this file
+ * did not have to be told — it walks `ORDNANCE_ICONS`, so the button arrived
+ * with the table.
  *
  * AND HOW MANY OF EACH ARE LEFT (ticket 069). The icons said what could be
  * thrown and never how much of it remained — that number was in the HUD's
@@ -114,8 +120,9 @@ export interface SquadPanelModel {
    * replayed command changed the selection behind its back, and the lit icon
    * would then be a claim about the weapon rather than a report of it.
    *
-   * Frequently the rifle, which has no icon: nothing is lit, which is correct —
-   * see `ORDNANCE_ICONS` for why the rifle has no button.
+   * Frequently the rifle, which since ticket 073 has an icon of its own at the
+   * left end of the bar — so it lights like any other weapon, and "nothing is
+   * lit" is no longer a state the bar can be in.
    */
   readonly armed: string
   /**
@@ -128,7 +135,9 @@ export interface SquadPanelModel {
    * disagree with the HUD's selector about the same pouch.
    *
    * A MISSING KEY IS AN EMPTY POUCH AND STILL PRINTS `0`, not a blank corner —
-   * see `ordnanceCountLabel`.
+   * see `ordnanceCountLabel`. A weapon that CANNOT run out is the other case
+   * entirely: the armoury answers `Infinity` for the rifle, the label comes back
+   * empty, and the badge is hidden outright rather than drawn blank.
    */
   readonly counts: Readonly<Record<string, number>>
 }
@@ -206,6 +215,29 @@ export const SQUAD_PANEL_DISPLAY = 'flex'
  * had already been drawn once.
  */
 export const SQUAD_ROW_DISPLAY = 'flex'
+
+/**
+ * A COUNT BADGE'S `display` WHEN IT HAS A NUMBER TO SHOW (ticket 073).
+ *
+ * The third of these constants, for the third instance of the same trap. The
+ * rifle's count is `Infinity`, `ordnanceCountLabel` answers `''` for it, and the
+ * badge is HIDDEN rather than written empty — it carries a dark plate, padding
+ * and a `min-width`, so an empty one is a small blank tile parked over the art,
+ * which reads as a readout that has broken rather than one that does not apply.
+ * Hiding means putting a value back when a number returns, and the value is
+ * named once, here, for the reason `SQUAD_PANEL_DISPLAY` and `SQUAD_ROW_DISPLAY`
+ * are: two literals, one where the badge is built and one where `update` shows
+ * it again, agree until the day someone changes one of them, and a badge that
+ * lays out differently only after it has been hidden once is a bug nobody
+ * reproduces on a first draw.
+ *
+ * NOT BECAUSE `''` WOULD LAY OUT WRONG. It would not: `ORDNANCE_COUNT_STYLE`
+ * carries `position:absolute`, and an absolutely positioned box is blockified,
+ * so clearing the inline `display` computes to `block` here whatever a `span`
+ * would otherwise be. The honest argument is the naming one above, not a
+ * rendering difference that does not exist.
+ */
+export const ORDNANCE_COUNT_DISPLAY = 'block'
 
 /**
  * The rail itself: full height, hard against the left edge.
@@ -438,6 +470,15 @@ export function createSquadPanel(mount: HTMLElement, options: SquadPanelOptions)
      */
     const count = document.createElement('span')
     count.style.cssText = ORDNANCE_COUNT_STYLE
+    /**
+     * BORN HIDDEN, AND SHOWN BY THE FIRST `update` THAT HAS A NUMBER. The panel
+     * is built before it has a model, so a badge left visible here is an empty
+     * dark tile — and the rifle's never fills, so between `setVisible(true)` and
+     * the first `update` it would flash a broken-looking readout in the corner
+     * of the one icon that never has one. Empty is the state a badge starts in,
+     * so it starts in the state `update` gives an empty label.
+     */
+    count.style.display = 'none'
     count.setAttribute('aria-hidden', 'true')
     element.append(count)
     bar.append(element)
@@ -569,7 +610,23 @@ export function createSquadPanel(mount: HTMLElement, options: SquadPanelOptions)
       // `?? 0` because a pouch that was never stocked has no key at all, and an
       // icon with nothing in its corner reads as a weapon whose count is
       // unknown rather than as one that is empty.
-      setText(button.count, ordnanceCountLabel(model.counts[icon.ordnance] ?? 0))
+      const label = ordnanceCountLabel(model.counts[icon.ordnance] ?? 0)
+      /**
+       * AN EMPTY LABEL HIDES THE BADGE RATHER THAN BEING WRITTEN INTO IT
+       * (ticket 073). The badge is not a bare text node — it carries a dark
+       * plate, padding and a `min-width` so a digit stays legible over any art —
+       * so an empty one is still a small blank tile in the corner of the rifle.
+       *
+       * ASKED OF THE LABEL AND NOT OF THE WEAPON. Whatever `ordnanceCountLabel`
+       * calls empty is what has no badge, so the two rules cannot drift apart,
+       * and the one place that knows which weapons are countable stays the
+       * armoury. A test for `icon.ordnance === RIFLE_ORDNANCE` here would be a
+       * second answer to that, and a stale one the day a second unlimited weapon
+       * lands.
+       */
+      const shown = label === '' ? 'none' : ORDNANCE_COUNT_DISPLAY
+      if (button.count.style.display !== shown) button.count.style.display = shown
+      setText(button.count, label)
     }
   }
 
