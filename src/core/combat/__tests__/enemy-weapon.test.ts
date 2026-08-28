@@ -5,29 +5,28 @@ import {
   WEAPON_BY_KIND,
   RIFLE,
   ENEMY_RIFLE,
+  ENEMY_RANGE_FRACTION,
   weaponFor,
   weaponForKind,
   type WeaponSpec,
 } from '../index'
-import * as combat from '../index'
 
 /**
  * Ticket 036 — the two sides stop holding the same rifle — as amended by
- * ticket 092.
+ * tickets 092 and 093.
  *
  * `world.ts` spawns avatars and enemies alike as `kind: 'rifleman'`, and
  * `WEAPON_BY_KIND` is keyed by kind, so before ticket 036 there was no seam at
- * all through which an enemy could be given a different weapon. THAT SEAM IS
- * WHAT SURVIVES, and it is the part of 036 worth keeping: the per-team override,
- * the sniper row that stops a kind being forgotten, and the unarmed default.
+ * all through which an enemy could be given a different weapon. Every number in
+ * the DEFAULT blocks below exists because the game measured unbeatable with the
+ * two sides identical: three enemies at six tiles killed a four-man squad in
+ * 1.7 seconds.
  *
- * WHAT 092 UNDOES IS THE HANDICAP THE SEAM CARRIED. 036 gave the enemy 80% of
- * the squad's reach and a much longer cooldown because the game measured
- * unbeatable with the two sides identical — three enemies at six tiles killed a
- * four-man squad in 1.7 seconds. The reach is now equal again and the cooldown
- * is 40 against 32, so the surviving margin is a fifth of the rate and nothing
- * else. If the 1.7 seconds returns, THIS is the file that says which numbers to
- * look at.
+ * TICKET 092 REMOVED THAT HANDICAP FOR EVERYBODY, AND 093 PUT IT BACK. What 092
+ * built is now the `hard` row — the enemy at the squad's eight tiles and 40
+ * ticks — reachable only by a player who asks for it with `?hard=1`. So this
+ * file asserts TWO tables: the shipped default, unchanged since 036, and the
+ * delta hard mode applies to it.
  */
 
 const spec = (name: keyof typeof WEAPONS): WeaponSpec => {
@@ -67,121 +66,160 @@ describe('the enemy carries a weapon of his own', () => {
   })
 })
 
-describe('his rifle reaches exactly as far as the squad`s (ticket 092)', () => {
-  it('is DERIVED from the player rifle rather than typed as a second 8', () => {
-    // The relation, not the value. This survives ticket 036's deletion because
-    // it is the property that mattered all along: a retune of the squad's rifle
-    // must carry the enemy's with it. Two 8s side by side agree today and
-    // nothing makes them agree tomorrow.
-    expect(enemy().rangeTiles).toBe(player().rangeTiles)
+describe('his range is 80% of the squad`s, on the DEFAULT difficulty', () => {
+  it('is DERIVED from the player rifle rather than typed as a second number', () => {
+    // The relation, not the value: a retune of the squad's rifle must carry the
+    // enemy's with it. A hardcoded 6.4 beside an 8 is two numbers that agree
+    // today and nothing that makes them agree tomorrow.
+    expect(enemy().rangeTiles).toBe(player().rangeTiles * ENEMY_RANGE_FRACTION)
   })
 
-  it('and the derivation is in the SOURCE, not merely an equality that holds today', () => {
+  it('and BOTH the fraction and the resulting distance are pinned literally', () => {
     /**
-     * THE ASSERTION ABOVE IS SATISFIED BY TYPING 8 TWICE, which is exactly the
-     * failure mode ticket 036 wrote a fraction to avoid — and with the fraction
-     * gone, nothing else in this file can tell a derived row from a duplicated
-     * literal. So the row is read.
+     * THE RELATION ABOVE IS NOT ENOUGH ON ITS OWN, and this project has already
+     * shipped that mistake once: ticket 034's tint test computed its expectation
+     * with the same expression production used, so swapping two rows left the
+     * suite green while rendering the map wrong.
      *
-     * Ticket 034's tint bug is the standing precedent for why an equality
-     * computed the way production computes it proves nothing on its own; this
-     * project has since paid for it twice more.
+     * `ENEMY_RANGE_FRACTION = 1` satisfies the derivation test perfectly and
+     * un-does the whole handicap. These lines are what make that a failure.
      */
-    const source = readFileSync(new URL('../weapons.ts', import.meta.url), 'utf8')
-    const row = source.slice(source.indexOf('[ENEMY_RIFLE]: {'))
-    expect(row).not.toBe('')
-    const written = /^\s*rangeTiles:\s*([^,\n]+),/m.exec(row)?.[1]
-    expect(written).toBe('RIFLE_RANGE_TILES')
-  })
-
-  it('and the resulting distance is pinned literally on both rows', () => {
+    expect(ENEMY_RANGE_FRACTION).toBe(0.8)
     expect(player().rangeTiles).toBe(8)
-    expect(enemy().rangeTiles).toBe(8)
+    expect(enemy().rangeTiles).toBe(6.4)
   })
 
-  it('so no fraction constant survives claiming a handicap that is gone', () => {
-    /**
-     * `ENEMY_RANGE_FRACTION` IS DELETED RATHER THAN SET TO 1, which is ticket
-     * 091's shape a second time. A constant that multiplies by one is not a
-     * fraction; it is a public export of `core/combat/index.ts` telling every
-     * reader the two sides are handicapped apart when they are not, and the next
-     * person to grep for it finds a lever that does nothing.
-     *
-     * Checked against the module namespace because a deleted export cannot be
-     * imported by name — that would be a compile error rather than a failure.
-     */
-    expect(Object.keys(combat)).not.toContain('ENEMY_RANGE_FRACTION')
+  it('leaving a band in which the squad can shoot and he cannot', () => {
+    expect(player().rangeTiles).toBeGreaterThan(enemy().rangeTiles)
   })
 })
 
-describe('and he fires more slowly, which is now the only handicap left', () => {
+describe('and he fires more slowly, on the DEFAULT difficulty', () => {
   it('with a strictly longer cooldown than the squad`s rifle', () => {
-    /**
-     * 40, DOWN FROM 46 (ticket 092), which was itself down from 52 (ticket 075).
-     * The exact value stays pinned on purpose — it makes a retune something
-     * somebody decided rather than something that drifted — while the ordering
-     * assertion is what actually holds the claim that he is the slower shot.
-     */
     expect(enemy().cooldownTicks).toBeGreaterThan(player().cooldownTicks)
     expect(player().cooldownTicks).toBe(32)
-    expect(enemy().cooldownTicks).toBe(40)
+    expect(enemy().cooldownTicks).toBe(46)
   })
 
-  it('at a rate re-derived from the two cooldowns, not left at a stale threshold', () => {
-    /**
-     * FOUR ROUNDS FOR EVERY FIVE OF THE SQUAD'S. The old bound here was
-     * `< 0.7 × the squad's`, which 46 cleared by a hair (78.3 against 78.75) and
-     * 40 does not clear at all. Loosening that number until 40 fits would be the
-     * test following the code; stating the ratio the two cooldowns actually
-     * produce makes a retune of either come back here and say what the new claim
-     * is.
-     */
+  it('measurably slower: he lands fewer rounds a minute at his own maximum range', () => {
+    // Guards the pair together, which neither constant does alone — a shorter
+    // range with an unchanged cooldown, or the reverse, both leave the firefight
+    // far closer to the one that was reported as unbeatable.
     const roundsPerMinute = (s: WeaponSpec): number => 3600 / s.cooldownTicks
-    expect(roundsPerMinute(enemy())).toBeLessThan(roundsPerMinute(player()))
-    expect(roundsPerMinute(enemy()) / roundsPerMinute(player())).toBeCloseTo(0.8, 10)
-  })
-
-  it('and 40 divides 3600, which is no longer a reason to avoid it', () => {
-    /**
-     * The inverse of the guard this replaces. `weapons.ts` used to warn against
-     * the divisors of 3600 and this file used to assert `3600 % cooldown !== 0`,
-     * both because `resolution.test.ts` counted the rate as
-     * `floor(3600 / cd) + 1` and overcounted by one for exactly those values.
-     * Ticket 092 fixed the arithmetic (`ceil`) instead of steering the requested
-     * value around it, so the constraint is gone — and this asserts it is gone
-     * rather than merely unmentioned, because a warning quietly reinstated in
-     * `weapons.ts` would send the next designer back around the same loop.
-     */
-    expect(3600 % enemy().cooldownTicks).toBe(0)
-    const source = readFileSync(new URL('../weapons.ts', import.meta.url), 'utf8')
-    expect(source).not.toContain('3600')
+    expect(roundsPerMinute(enemy())).toBeLessThan(roundsPerMinute(player()) * 0.7)
   })
 })
 
 describe('the accuracy curve is deliberately untouched', () => {
-  it('so the reach and the rate are the only things that moved', () => {
+  it('so the shorter range is the only thing that moved', () => {
+    // The endpoints are relative to each weapon's OWN range, so shortening the
+    // range already steepens the falloff in real terms.
     expect(enemy().accuracy).toEqual(player().accuracy)
     expect(player().accuracy).toEqual({ pointBlank: 0.9, maxRange: 0.25 })
   })
+})
 
-  it('leaving two rows that differ in name and cooldown ALONE', () => {
+/**
+ * Ticket 093 — what ticket 092 shipped as the default becomes an opt-in.
+ *
+ * 092 gave the enemy the squad's eight tiles and dropped him to 40 ticks for
+ * EVERY player. That is the `hard` row now, and the blocks above are what
+ * anybody who does not type `?hard=1` gets.
+ */
+describe('hard mode hands him the squad`s reach and a faster rifle', () => {
+  const hard = (): WeaponSpec => {
+    const found = weaponFor('rifleman', 'enemy', 'hard')
+    if (found === null) throw new Error('no hard enemy rifle')
+    return found
+  }
+
+  it('reaches as far as the squad, from the same constant', () => {
+    expect(hard().rangeTiles).toBe(player().rangeTiles)
+    expect(hard().rangeTiles).toBe(8)
+  })
+
+  it('and fires at 40 ticks — faster than normal, still slower than the squad', () => {
+    expect(hard().cooldownTicks).toBe(40)
+    expect(hard().cooldownTicks).toBeLessThan(enemy().cooldownTicks)
+    expect(hard().cooldownTicks).toBeGreaterThan(player().cooldownTicks)
+  })
+
+  it('and 40 divides 3600, which is no longer a reason to avoid it', () => {
     /**
-     * The end state stated once, positively, instead of inferred from four
-     * separate equalities — and the assertion that fails loudest if a later
-     * ticket reaches for damage or accuracy to re-open a gap between the sides
-     * without saying so.
-     *
-     * `expect(theirs).not.toEqual(mine)` at the top of this file now rests
-     * entirely on these two fields, which is worth knowing.
+     * `weapons.ts` used to warn against the divisors of 3600 and this file used
+     * to assert `3600 % cooldown !== 0`, both because `resolution.test.ts`
+     * counted the rate as `floor(3600 / cd) + 1` and overcounted by one for
+     * exactly those values. Ticket 092 fixed the arithmetic and that fix is
+     * UNCONDITIONAL — it was never about difficulty. Asserted as gone rather
+     * than merely unmentioned, because a warning quietly reinstated would send
+     * the next designer back around the same loop.
      */
-    const exceptTheRate = (s: WeaponSpec) => ({
+    expect(3600 % hard().cooldownTicks).toBe(0)
+    const source = readFileSync(new URL('../weapons.ts', import.meta.url), 'utf8')
+    expect(source).not.toContain('3600')
+  })
+
+  it('differs from the normal row in reach and rate ALONE', () => {
+    /**
+     * THE ASSERTION THAT STOPS THE TWO ROWS DRIFTING. A hard row written as four
+     * fresh literals would let a later retune of damage or the accuracy curve
+     * land on one difficulty and not the other, and nothing would say so — the
+     * player would be fighting a different weapon rather than a harder one.
+     */
+    const exceptReachAndRate = (s: WeaponSpec) => ({
+      name: s.name,
       damage: s.damage,
-      rangeTiles: s.rangeTiles,
       accuracy: s.accuracy,
     })
-    expect(exceptTheRate(enemy())).toEqual(exceptTheRate(player()))
-    expect(enemy().name).not.toBe(player().name)
-    expect(enemy().cooldownTicks).not.toBe(player().cooldownTicks)
+    expect(exceptReachAndRate(hard())).toEqual(exceptReachAndRate(enemy()))
+  })
+
+  it('and still fires under the SAME identifier, so FX and audio need not know', () => {
+    /**
+     * `Weapon` is `string` — an open enum. A second identifier for the hard rifle
+     * would make every consumer of `ShotFired.weapon` responsible for knowing
+     * about difficulty, and nothing would fail to compile when one forgot.
+     */
+    expect(hard().name).toBe(ENEMY_RIFLE)
+    expect(hard().name).toBe(enemy().name)
+  })
+
+  it('and leaves the SQUAD`S rifle identical on both difficulties', () => {
+    // Hard mode is the enemy getting better, not the player getting worse.
+    expect(weaponFor('rifleman', 'player', 'hard')).toEqual(weaponFor('rifleman', 'player'))
+    expect(weaponFor('sniper', 'player', 'hard')).toEqual(weaponFor('sniper', 'player'))
+  })
+
+  it('and arms the enemy sniper from it too, so no kind is forgotten', () => {
+    // The same way to forget that ticket 036 guarded: a difficulty table listing
+    // `rifleman` and not `sniper` leaves hard snipers on the normal rifle.
+    expect(weaponFor('sniper', 'enemy', 'hard')).toEqual(hard())
+  })
+})
+
+describe('the difficulty is an ARGUMENT, not module state', () => {
+  it('defaults to normal when nobody passes one', () => {
+    expect(weaponFor('rifleman', 'enemy')).toEqual(weaponFor('rifleman', 'enemy', 'normal'))
+    expect(weaponFor('rifleman', 'enemy')).not.toEqual(weaponFor('rifleman', 'enemy', 'hard'))
+  })
+
+  it('so asking for hard does not change what the next normal lookup answers', () => {
+    /**
+     * A mutable module-level difficulty something set at boot would be global
+     * state in the layer whose determinism guarantee is why replays work, and
+     * the campaign runner already builds more than one session in a page — two
+     * of them would fight over it. This is the assertion that fails if the
+     * difficulty is ever stored rather than passed.
+     */
+    const before = weaponFor('rifleman', 'enemy')
+    weaponFor('rifleman', 'enemy', 'hard')
+    expect(weaponFor('rifleman', 'enemy')).toEqual(before)
+    expect(weaponFor('rifleman', 'enemy')?.rangeTiles).toBe(6.4)
+  })
+
+  it('and an unarmed kind is null on every difficulty', () => {
+    expect(weaponFor('jeep', 'enemy', 'hard')).toBeNull()
+    expect(weaponFor('jeep', 'player', 'hard')).toBeNull()
   })
 })
 
