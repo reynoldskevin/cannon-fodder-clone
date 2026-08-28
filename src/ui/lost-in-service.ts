@@ -15,6 +15,7 @@
  */
 
 import { DISPLAY_FONT } from './display-font'
+import { INSIGNIA_STYLE } from './rank-insignia'
 import poppyUrl from '../../assets/source/sprites/poppy.webp?url'
 
 /** The URL of the flower, re-exported so `menu.ts` needs no second import. */
@@ -98,7 +99,7 @@ export const MEMORIAL_TITLE_STYLE = [
 export const MISSION_HEADING_STYLE = [
   'margin:0.9rem 0 0.35rem',
   `font-family:${DISPLAY_FONT}`,
-  'font-size:clamp(1.9rem, 4.4vw, 2.5rem)',
+  'font-size:clamp(1.425rem, 3.3vw, 1.875rem)',
   'font-weight:400',
   'letter-spacing:0.14em',
   `color:${ASH}`,
@@ -125,17 +126,18 @@ export const FALLEN_ROW_STYLE = [
   'gap:1rem',
   'padding:0.3rem 0.75rem',
   `font-family:${DISPLAY_FONT}`,
-  'font-size:clamp(1.8rem, 4vw, 2.2rem)',
+  'font-size:clamp(1.35rem, 3vw, 1.65rem)',
   'letter-spacing:0.06em',
   /**
-   * DOUBLED IN TICKET 089, and it takes the badge with it. `INSIGNIA_STYLE` is
-   * `1.05em x 1.4em`, so the insignia is sized off THIS number — which is why
-   * making the roll bigger is a change here and not in `rank-insignia.ts`, where
-   * it would also have grown the squad panel and Boot Hill.
+   * DOUBLED IN TICKET 089, THEN BROUGHT DOWN A QUARTER IN 090 — and the second
+   * of those did NOT take the badge with it. `INSIGNIA_STYLE` is `1.05em x
+   * 1.4em`, sized off THIS number, so the insignia would have shrunk along with
+   * the text; `MEMORIAL_INSIGNIA_STYLE` below widens its `em` box by exactly the
+   * reciprocal to hold it still.
    *
-   * ALL THREE CLAMP STOPS, because a phone sits on the floor or the `vw` term:
-   * doubling the ceiling alone would have changed nothing on the narrow screens
-   * this is hardest to read on.
+   * ALL THREE CLAMP STOPS MOVE TOGETHER, because a phone sits on the floor or
+   * the `vw` term: editing the ceiling alone changes nothing on the narrow
+   * screens this is hardest to read on.
    */
   `color:${BONE}`,
   // The faintest of plaques, so a long roll reads as stacked rows rather than a
@@ -155,6 +157,36 @@ export const FALLEN_ROW_STYLE = [
  * is why the same line appears there.
  */
 export const FALLEN_NAME_STYLE = 'flex:1'
+
+/**
+ * The badge on a memorial row (ticket 090).
+ *
+ * `INSIGNIA_STYLE` PLUS A BOX, NOT A REPLACEMENT. The sheet URL, the
+ * `background-size`, `flex:none` and the rest all still come from the shared
+ * constant; only the two dimensions are overridden, and they are appended so the
+ * later declaration wins.
+ *
+ * WHY IT EXISTS AT ALL. The shared box is `1.05em x 1.4em` — sized off the row's
+ * `font-size`, which is what let ticket 089 double the type and take the
+ * insignia with it for free. Ticket 090 then took the TEXT down 25% and was
+ * asked to leave the insignia where it was, so the coupling has to be undone by
+ * exactly that much: `1 / 0.75`, giving `1.05 -> 1.4` and `1.4 -> 1.8666667`.
+ * Exact at every clamp stop, because both stops scaled by the same 0.75 —
+ * 1.05 x 1.8rem and 1.4 x 1.35rem are both 1.89rem; 1.4 x 2.2rem and
+ * 1.8666667 x 1.65rem are both 3.08rem.
+ *
+ * AND NOT IN `rank-insignia.ts`, which `squad-panel.ts` and `boot-hill.ts` also
+ * read: widening the box there would hold this badge and grow the roster
+ * chevrons and the Boot Hill stones with it.
+ *
+ * STILL COUPLED, JUST RE-AIMED. The badge is `em` and still moves if the row
+ * moves again. That is deliberate — a badge sized in its own `clamp` would drift
+ * away from the text at viewport widths nobody checked, which is the bug the
+ * `em` was chosen to avoid.
+ */
+export const MEMORIAL_INSIGNIA_STYLE = [INSIGNIA_STYLE, 'width:1.4em', 'height:1.8666667em'].join(
+  ';',
+)
 
 /** The kill count at the end of a row — present, but not the loud part. */
 export const KILL_COUNT_STYLE = `color:${ASH};font-variant-numeric:tabular-nums;white-space:nowrap`
