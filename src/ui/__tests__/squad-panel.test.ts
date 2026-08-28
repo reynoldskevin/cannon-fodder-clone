@@ -200,6 +200,44 @@ describe('a dead man leaves the roll (ticket 066)', () => {
   })
 })
 
+describe('the ordnance bar under the roster (ticket 067)', () => {
+  const panelSource = source('squad-panel.ts')
+
+  it('is built from the shared table rather than from a second list', () => {
+    /**
+     * The table is where "which weapons have icons, in what order, on which
+     * digit" is decided and tested (`ordnance-icons.test.ts`). A panel that
+     * hand-listed the grenade and the rocket would be a second answer to all
+     * three, and the tested one would not be the one on screen.
+     */
+    expect(panelSource).toMatch(/from '\.\/ordnance-icons'/)
+    expect(panelSource).toContain('ORDNANCE_ICONS')
+  })
+
+  it('and makes each one a real button that a keyboard can reach', () => {
+    /**
+     * NOT A `div` WITH A CLICK HANDLER. A button is focusable, is activated by
+     * Enter and Space, and announces itself as a control — and the whole point of
+     * this bar is to be the mouse route to something that already has a keyboard
+     * one. `type="button"` because a bare `<button>` inside any future form
+     * submits and reloads the page, which mid-mission costs the mission.
+     */
+    expect(panelSource).toMatch(/createElement\('button'\)/)
+    expect(panelSource).toMatch(/\.type = 'button'/)
+  })
+
+  it('and tells the caller which weapon was asked for, deciding nothing itself', () => {
+    /**
+     * The panel does not touch the command queue and does not know what arming
+     * means; it reports the ordnance and `app/main.ts` does with that exactly
+     * what it does with a digit — which is what makes "clicking arms it the way
+     * pressing 2 does" true by construction rather than by two call sites that
+     * happen to agree.
+     */
+    expect(panelSource).toMatch(/onSelectOrdnance/)
+  })
+})
+
 describe('the panel is a rail, and it is not in the way', () => {
   it('is fixed to the left edge and spans the height', () => {
     expect(panel.get('position')).toBe('fixed')
