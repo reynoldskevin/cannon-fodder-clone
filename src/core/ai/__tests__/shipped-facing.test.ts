@@ -7,7 +7,6 @@ import { bakeNavGrid } from '../../pathing/navgrid'
 import { World } from '../../world/world'
 import { loadLevel } from '../../level'
 import { tileToWorld } from '../../view/projection'
-import { VISION_HALF_ANGLE_COS } from '../tuning'
 
 /**
  * Ticket 039 — the inward default, against the levels that actually ship.
@@ -57,31 +56,6 @@ function defaultFacings(name: string): { x: number; y: number; dx: number; dz: n
   })
 }
 
-/**
- * The fraction of a man's arc that lands on the map, sampled every 5 degrees out
- * to his twelve tiles of sight.
- */
-function arcOnMap(
-  man: { x: number; y: number; dx: number; dz: number },
-  size: { w: number; h: number },
-): number {
-  const half = (Math.acos(VISION_HALF_ANGLE_COS) * 180) / Math.PI
-  let inside = 0
-  let total = 0
-  for (let a = -half; a <= half; a += 5) {
-    const r = (a * Math.PI) / 180
-    const dx = man.dx * Math.cos(r) - man.dz * Math.sin(r)
-    const dz = man.dx * Math.sin(r) + man.dz * Math.cos(r)
-    for (let d = 1; d <= 12; d += 1) {
-      total += 1
-      const x = man.x + dx * d
-      const y = man.y + dz * d
-      if (x >= 0 && y >= 0 && x < size.w && y < size.h) inside += 1
-    }
-  }
-  return inside / total
-}
-
 describe.each(LEVELS)('%s', (name) => {
   it('spawns enemies at all, which is what stops the rest being vacuous', () => {
     expect(defaultFacings(name).length).toBeGreaterThan(0)
@@ -96,20 +70,27 @@ describe.each(LEVELS)('%s', (name) => {
     }
   })
 
-  it('and points every arc at territory the game can put somebody in', () => {
+  it('and points every man at somewhere the game can put somebody', () => {
     /**
-     * ACCEPTANCE CRITERION 7, and the reason this ticket exists rather than a
-     * retune. Measured on ticket 038's fixed southward default, level 2 scored
-     * 88% — five men wasting most of their vision on the void past the bottom
-     * edge. The bar is a full 100%: an inward direction cannot leave the map,
-     * so anything less means the rule is not the rule.
+     * WAS AN ARC SWEEP, IS NOW A BEARING (ticket 086). Ticket 039's acceptance
+     * criterion measured the fraction of a man's 120 degree vision wedge that
+     * landed on the map, and required all of it — level 2 had scored 88% under a
+     * fixed southward default, five men wasting most of their sight on the void
+     * past the bottom edge.
+     *
+     * There is no wedge to sweep any more: sight is all round, so no facing can
+     * waste it. What the inward default still decides is which way a STATIONARY
+     * ENEMY IS DRAWN, and a guard drawn staring off the edge of the world looks
+     * as wrong as he ever did. So the claim survives, reduced to what it now
+     * governs: one tile ahead of where he is looking is still on the map.
      */
     const { size } = load(name)
     for (const man of defaultFacings(name)) {
-      expect({ at: `${man.x},${man.y}`, onMap: arcOnMap(man, size) }).toEqual({
+      const ahead = { x: man.x + man.dx, y: man.y + man.dz }
+      expect({
         at: `${man.x},${man.y}`,
-        onMap: 1,
-      })
+        onMap: ahead.x >= 0 && ahead.y >= 0 && ahead.x <= size.w - 1 && ahead.y <= size.h - 1,
+      }).toEqual({ at: `${man.x},${man.y}`, onMap: true })
     }
   })
 

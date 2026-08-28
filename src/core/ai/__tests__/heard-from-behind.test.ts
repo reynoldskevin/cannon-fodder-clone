@@ -2,22 +2,27 @@ import { describe, it, expect } from 'vitest'
 import { rig, OPEN } from './rig'
 
 /**
- * Ticket 038 — hearing is what turns a man around.
+ * Hearing reaches where sight cannot (tickets 038 and 012, re-grounded by 086).
  *
- * The vision cone would be a cruelty on its own: an enemy shot in the back would
- * have no way of ever finding out, so a squad could stand behind a garrison and
- * dismantle it one man at a time with no risk at all. Gunfire is the answer, and
- * it is the half that was ALREADY BUILT — `nearestRumour` has walked an idle man
- * toward a shot inside his alert radius since ticket 012.
+ * THE ORIGINAL PREMISE WAS THE VISION CONE, AND IT IS GONE. These cases were
+ * written when sight was a 120 degree forward wedge, so "cannot be seen" meant
+ * no more than "standing behind him" — and ticket 086 made every one of those
+ * setups false, because a man in the open is now seen from any bearing.
  *
- * What this ticket adds is the coupling: the `alert` errand points him at the
- * noise, and a man who faces the noise can then SEE what made it. Those two
- * facts have to meet, or hearing becomes a man walking blindly at a sound.
+ * WHAT MAKES HEARING MATTER INSTEAD is the pair of numbers in `tuning.ts`:
+ * `DEFAULT_ALERT_RADIUS_TILES` is 14 and `DEFAULT_SIGHT_RANGE_TILES` is 12. A
+ * shot from thirteen tiles is heard by a man who cannot possibly see who fired
+ * it, and cover does the same at any distance. That is a real gap and it is the
+ * one these cases now stand in — a stronger claim than the old one, since it
+ * survives whatever happens to facing.
  *
- * EARS ARE NOT DIRECTIONAL. The cone gates SIGHT and nothing else; a rumour is
- * heard from any direction. An arc on hearing would be a second stealth
- * mechanic nobody asked for, and would make the one above unrecoverable.
+ * EARS ARE NOT DIRECTIONAL, which is the one thing here that did not change: a
+ * rumour is heard from every direction, as sight now is.
  */
+
+/** A 20 x 20 arena. The shipped `OPEN` is 20 x 10 — too short for thirteen
+ * tiles of separation, which is what "heard but not seen" now requires. */
+const TALL = '\n' + Array.from({ length: 20 }, () => '  ' + '.'.repeat(20)).join('\n') + '\n'
 
 /**
  * Every sentry here is pointed SOUTH explicitly (ticket 039).
@@ -40,18 +45,18 @@ const facingSouth = (r: ReturnType<typeof rig>, tileX: number, tileY: number) =>
 
 describe('a shot from behind', () => {
   it('is heard, even though the shooter cannot be seen', () => {
-    const r = rig(OPEN)
+    const r = rig(TALL)
     /**
-     * SIX TILES BEHIND, RAISED FROM FOUR BY TICKET 046. The premise asserted two
-     * lines below — that sight alone leaves him idle — is the whole setup for
-     * this case, and at four tiles it stopped being true: the awareness radius
-     * now notices a man that close from any direction, so he would have left
-     * `idle` before hearing a thing and the shot would have proved nothing.
+     * THIRTEEN TILES, WHICH IS THE WHOLE FIXTURE (ticket 086). It sits in the
+     * two-tile gap between what a man can see (12) and what he can hear (14).
+     * Under the old cone this case put the shooter SIX tiles behind — a distance
+     * that means nothing now, and would have had him seen before the shot was
+     * ever fired, proving the opposite of what it is named for.
      */
-    const enemy = facingSouth(r, 10, 8)
-    r.spawn(10, 2, 'player', 10_000) // six tiles NORTH: behind him
+    const enemy = facingSouth(r, 10, 15)
+    r.spawn(10, 2, 'player', 10_000) // thirteen tiles north: past his sight
     r.run(6)
-    // The premise: sight alone leaves him idle.
+    // The premise, and it is a real one again: sight alone leaves him idle.
     expect(r.ai.stateOf(enemy.id)).toBe('idle')
     r.ai.hear([r.shotAt(10, 2)])
     r.run(4)
@@ -71,12 +76,12 @@ describe('a shot from behind', () => {
 
   it('and he then acquires the man who fired it', () => {
     /**
-     * THE WHOLE POINT, END TO END. Being shot at must be recoverable, or the
-     * cone turns every garrison into free kills. He hears, he turns, and on a
-     * later tick the shooter is inside the arc and gets noticed.
+     * THE WHOLE POINT, END TO END, and it still has somewhere to go after ticket
+     * 086: the shooter starts beyond sight, so hearing is the only thing that
+     * can start the walk that brings him into it.
      */
-    const r = rig(OPEN)
-    const enemy = facingSouth(r, 10, 8)
+    const r = rig(TALL)
+    const enemy = facingSouth(r, 10, 15)
     r.spawn(10, 2, 'player', 10_000)
     r.ai.hear([r.shotAt(10, 2)])
     let noticed = false
@@ -98,11 +103,12 @@ describe('a shot from behind', () => {
     expect(r.ai.stateOf(enemy.id)).toBe('idle')
   })
 
-  it('and hearing is not gated by the arc — that is what makes it hearing', () => {
+  it('and hearing is not gated by direction either', () => {
     /**
      * Asserted as a PAIR, in front and behind at the same distance, because
      * "he heard it" on its own is satisfied by a build in which the rumour scan
-     * quietly grew a cone too and the shot happened to be in front.
+     * quietly grew a wedge and the shot happened to be in front. Sight lost its
+     * wedge in ticket 086; this is what stops one appearing on hearing instead.
      */
     const behind = rig(OPEN)
     const a = facingSouth(behind, 10, 6)

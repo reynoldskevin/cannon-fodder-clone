@@ -29,16 +29,13 @@
  * a pursuit would have a soldier walk onto a corpse; treating both as a kill
  * would have him forget a live player the moment a wall came between them.
  *
- * SIGHT IS DIRECTIONAL, HEARING IS NOT (ticket 038). `acquire` tests a forward
- * arc around the unit's facing on top of team, distance and the sightline — the
- * arc JOINS those tests, it replaces none of them — so a man can be approached
- * from behind. `nearestRumour` has no arc and never will: ears are not
- * directional, and gunfire is the ONLY way a soldier shot in the back can ever
- * find out he is being shot at. An arc on hearing would make the arc on sight
- * unrecoverable, and a squad could dismantle a garrison one man at a time at no
- * risk. The coupling that makes the pair work needs no special case: the `alert`
- * errand already walks him at the noise, and "face where you are walking" turns
- * him toward it, so on a later tick the shooter is inside the arc.
+ * NEITHER SIGHT NOR HEARING IS DIRECTIONAL (ticket 086). Ticket 038 had given
+ * `acquire` a 120 degree wedge around the unit's facing, so a man could be
+ * approached from behind in the open; that is gone, and sight is now what
+ * hearing always was — team, distance and a sightline, asked in every direction.
+ * `nearestRumour` never had a wedge and never will, for a reason that outlived
+ * the one on sight: gunfire is the ONLY way a soldier can learn about a shooter
+ * he has no line to at all, through a wall or beyond his twelve tiles.
  *
  * FACING LIVES IN `Memory`, NOT ON `Entity`. `Entity`'s fields are readonly
  * because nothing in the design changes them, and `World.stateHash` folds it —
@@ -82,13 +79,11 @@ import {
   DEFAULT_ALERT_RADIUS_TILES,
   DEFAULT_ALERT_TIMEOUT_TICKS,
   DEFAULT_ARRIVAL_TILES,
-  DEFAULT_AWARENESS_RADIUS_TILES,
   DEFAULT_CLOSE_TO_FRACTION,
   DEFAULT_ENEMY_FACING,
   DEFAULT_PURSUE_TIMEOUT_TICKS,
   DEFAULT_REACTION_TICKS,
   DEFAULT_SIGHT_RANGE_TILES,
-  VISION_HALF_ANGLE_COS,
 } from './tuning'
 import type { ArchetypeSpec } from './archetypes'
 import type { CombatSystem } from '../combat'
@@ -114,11 +109,20 @@ export type AiState = (typeof AI_STATES)[number]
  * Which way a unit is looking, as a UNIT VECTOR in world units — the same
  * `dx`/`dz` convention `RenderEntity` carries, with `-z` north.
  *
- * ALWAYS NORMALISED, whatever produced it: the arc test is a dot product
- * against `VISION_HALF_ANGLE_COS`, so any other length would scale that product
- * and silently retune the arc for that one man. `face` normalises what it is
- * given and the machine normalises what it derives; there is no path that
- * writes an unnormalised one.
+ * A POSE, NOT A SENSE (ticket 086). This used to gate what a man could see, and
+ * it no longer does: sight is all round, and the only reader left is
+ * `session/index.ts`, which asks `facingOf` which way to point the sprite of an
+ * enemy who is standing still. That is why the whole mechanism survived a ticket
+ * that deleted the thing it was built for — take it away and every stationary
+ * guard is drawn facing wherever the renderer last remembered.
+ *
+ * STILL ALWAYS NORMALISED, for a different reason than before. The old one was
+ * that an unnormalised vector would scale a dot product against a half-angle
+ * threshold, silently retuning what that man could see; now it is that
+ * `renderEntities` reads `dx`/`dz` as a direction, and a zero-length or NaN one
+ * draws a man pointing nowhere. `face` normalises what it is given and the
+ * machine normalises what it derives; there is no path that writes an
+ * unnormalised one.
  */
 export interface Facing {
   readonly dx: number
@@ -295,14 +299,13 @@ export interface AiSystem extends SimSystem {
    * existed, and anyone who has died since the last tick. Exactly `stateOf`'s
    * domain, because it is the same per-unit memory.
    *
-   * EXPOSED SO THE RENDERER CAN DRAW IT, and that is the criterion that decides
-   * whether the arc is a mechanic at all. `renderEntities` derives a sprite
-   * facing from MOVEMENT, so after this ticket a stationary enemy would be drawn
-   * looking wherever he last walked while watching somewhere else entirely — a
-   * blind arc the player cannot see is not stealth, it is an invisible rule that
-   * kills them. The session asks the system that owns the fact rather than
-   * deriving a second answer, which is the rule `targetOf` and `isReacting`
-   * already follow.
+   * EXPOSED SO THE RENDERER CAN DRAW IT — and since ticket 086 that is the ONLY
+   * reason it exists. `renderEntities` derives a sprite facing from MOVEMENT, so
+   * a stationary enemy would otherwise be drawn looking wherever he last walked.
+   * Facing was a sight mechanic when this was written; now it is purely what the
+   * man looks like, and this reader is what kept it alive. The session asks the
+   * system that owns the fact rather than deriving a second answer, which is the
+   * rule `targetOf` and `isReacting` already follow.
    *
    * A FRESH OBJECT PER CALL, so a caller cannot be handed a live reference into
    * the machine's memory and write a heading into it. The fields themselves are
@@ -318,16 +321,16 @@ export interface AiSystem extends SimSystem {
    * the machine is handed a grid rather than a level, and entity ids do not
    * exist until something spawns.
    *
-   * THE VECTOR IS NORMALISED, not taken at whatever length it arrived: the arc
-   * test is a dot product, so a facing of length 5 would make that one guard
-   * see through walls of angle while a facing of length 0.1 would blind him.
-   * `FACING_VECTORS`'s diagonals are `(1, 1)`-shaped and would do exactly that.
+   * THE VECTOR IS NORMALISED, not taken at whatever length it arrived. This used
+   * to matter because sight was a dot product against it; since ticket 086 it
+   * matters because the renderer reads it as a direction, and
+   * `FACING_VECTORS`'s diagonals are `(1, 1)`-shaped — length 1.41, which draws
+   * nothing sensibly.
    *
    * A DEGENERATE VECTOR IS REFUSED, leaving whatever valid facing was already
    * there. A zero — or an infinite, or a NaN — has no direction to normalise and
-   * would store NaN, which LOSES EVERY COMPARISON: the dot product would never
-   * reach the threshold and that man would be blind in every direction at once,
-   * for the rest of the mission, with nothing on screen to say why.
+   * would store NaN, which reaches the renderer and draws a man pointing
+   * nowhere for the rest of the mission with nothing on screen to say why.
    *
    * An id naming nothing, or naming a unit on another team, is accepted and
    * never acted on — the tick pass only ever visits this machine's own team.
@@ -598,19 +601,6 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    * make every range in the machine silently wrong by exactly that factor.
    */
   const arrivalWorld = arrivalTiles * TILE_WORLD_SIZE
-  /**
-   * The radius inside which the forward arc does not apply, converted once here
-   * for the reason above (ticket 038).
-   *
-   * HERE AND NOT PER UNIT, unlike sight and hearing. Those describe a man's
-   * senses and an archetype may reasonably differ on them; this describes the
-   * distance at which anybody notices anybody, which is a fact about bodies
-   * standing next to each other rather than about a kind of soldier. A
-   * per-archetype version would be a second knob nobody has asked for, and the
-   * first thing it would be used for is quietly deleting the cone for one kind.
-   */
-  const awarenessWorld = DEFAULT_AWARENESS_RADIUS_TILES * TILE_WORLD_SIZE
-  const awarenessWorldSq = awarenessWorld * awarenessWorld
   // Sight and hearing are converted the same way and for the same reason, but
   // PER UNIT now (ticket 018) — see `Memory`. Arrival stays here because it
   // describes the squad system's stopping distance, which is one fact about the
@@ -777,10 +767,9 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    * yet imported as well, with no authored data.
    *
    * THE EXACT CENTRE HAS NO DIRECTION TO COMPUTE. Its offset is the zero vector,
-   * and dividing by that length stores NaN — which LOSES EVERY COMPARISON, so
-   * the arc's dot product would never reach its threshold and that one man would
-   * be blind in all directions for the rest of the mission with nothing on
-   * screen to say why. `DEFAULT_ENEMY_FACING` is the finite unit vector he gets
+   * and dividing by that length stores NaN — which reaches the renderer and
+   * draws that one man pointing nowhere for the rest of the mission, with
+   * nothing on screen to say why. `DEFAULT_ENEMY_FACING` is the finite unit vector he gets
    * instead; it is a guard on a degenerate input and not a policy, and
    * `tuning.ts` says so.
    *
@@ -906,19 +895,21 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    * a target found here may still be out of range; that is the difference
    * between `engage` and `pursue`, and it is decided by the caller.
    *
-   * AND IT IS A FORWARD ARC, NOT A DISC (ticket 038). A candidate must lie
-   * within `VISION_HALF_ANGLE_COS` of the hunter's facing, OR inside
-   * `awarenessWorld` — nobody is invisible at arm's length. The arc JOINS team,
-   * distance and the sightline; it replaces none of them, so a man in front and
-   * behind a wall, or in front and beyond sight, is still not seen.
+   * IT LOOKS IN EVERY DIRECTION (ticket 086). Ticket 038 had made this a 120
+   * degree forward wedge, so a player could walk up behind a guard in the open
+   * and go unnoticed; that test is gone, and with it the four-tile awareness
+   * radius which existed only to stop the wedge reading as a bug at point-blank
+   * range. Direction is no longer a sense here — it is only what the man's
+   * sprite is doing.
    *
-   * The sightline raycast is done LAST, after team, the distance comparison and
-   * the arc have all been passed. It walks a tile at a time and is by far the
-   * most expensive test here; almost every candidate is eliminated by a
-   * subtraction and a multiply instead. The arc costs one square root and three
-   * multiplies and sits ahead of it deliberately: the whole point of this
-   * ticket is that a great many candidates are behind the man, and each one it
-   * rejects is a raycast not walked.
+   * WHAT REMAINS IS STILL FOUR TESTS, and widening the angle weakened none of
+   * them: team, health, sight range and the sightline. A man beyond sight range,
+   * or behind cover, is not seen from any bearing.
+   *
+   * The sightline raycast is done LAST, after team, health and the distance
+   * comparison. It walks a tile at a time and is by far the most expensive test
+   * here; almost every candidate is eliminated by a subtraction and a multiply
+   * first.
    */
   function acquire(world: World, hunter: Entity, memory: Memory): Entity | null {
     const sightRangeWorld = memory.sightRangeWorld
@@ -941,31 +932,6 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
         // first, which is stable today only by accident of spawn order. Lower id
         // wins, which is a fact about the world rather than about the loop.
         if (distanceSq === bestDistanceSq && candidate.id >= best.id) continue
-      }
-      /**
-       * THE ARC, and the close-range exception that keeps it from reading as a
-       * bug (ticket 038).
-       *
-       * The dot product of two unit vectors IS the cosine of the angle between
-       * them, which is why the threshold is stored as a cosine and no
-       * trigonometry runs here. `memory.facingDx/Dz` is a unit vector by
-       * construction, so only the offset needs normalising — one square root,
-       * and only for candidates that have already passed team, health, range and
-       * the tie-break.
-       *
-       * ABSOLUTE, NOT SIGNED. A comparison against the raw dot product is
-       * symmetric about the facing axis by construction: 50° to the left and 50°
-       * to the right give the same cosine. A signed test would see half the arc
-       * and leave a man who could only be flanked from one side.
-       *
-       * `distanceSq > awarenessWorldSq` also guarantees `distanceSq > 0`, so the
-       * division below cannot produce a NaN — a man standing exactly on top of
-       * another is inside the awareness radius and never reaches it.
-       */
-      if (distanceSq > awarenessWorldSq) {
-        const inverse = 1 / Math.sqrt(distanceSq)
-        const alignment = dx * inverse * memory.facingDx + dz * inverse * memory.facingDz
-        if (alignment < VISION_HALF_ANGLE_COS) continue
       }
       sightFrom.x = toTileAxis(hunter.x, grid.w)
       sightFrom.y = toTileAxis(hunter.z, grid.h)
@@ -1228,9 +1194,8 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    *
    * REFUSING A DEGENERATE VECTOR IS THE WHOLE OF THE ERROR HANDLING, and it is
    * load-bearing rather than defensive. Dividing by a zero length stores NaN,
-   * and NaN loses every comparison it appears in — the arc's dot product would
-   * never reach its threshold, so that man would be blind in all directions for
-   * the rest of the mission with nothing on screen to say why. Refusing leaves
+   * which reaches the renderer and draws that man pointing nowhere for the rest
+   * of the mission with nothing on screen to say why. Refusing leaves
    * whatever valid unit vector was already there, which is always something
    * sensible: the worst case is that he keeps looking where he was looking.
    *
@@ -1253,14 +1218,11 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
    *
    *   1. ENGAGING — he faces his target. He has stopped walking and is shooting
    *      at somebody; there is nothing else he could be looking at.
-   *   2. PURSUING OR ALERTED — he faces the DIRECTION OF TRAVEL, which is what
-   *      makes hearing work without a special case: the `alert` errand already
-   *      points him at the noise, so walking at a shot IS turning toward it, and
-   *      the man who fired it is then inside the arc on a later tick.
+   *   2. PURSUING OR ALERTED — he faces the DIRECTION OF TRAVEL. He is walking
+   *      at something, and a man drawn walking sideways at a noise looks wrong.
    *   3. IDLE — he keeps the facing he had. A man who has stopped looking at
-   *      something does not snap back to a compass default, and this is also
-   *      what makes the mechanic legible: a guard the squad lured east stays
-   *      looking east, so the blind side stays where the player last saw it go.
+   *      something does not snap back to a compass default; a guard the squad
+   *      lured east stays looking east, which is what the player last saw.
    *   4. NEVER MOVED, NEVER CONTACTED — the authored facing if the level gave
    *      him one, otherwise INWARD, at the middle of the level (ticket 039).
    *      That rung is settled once in `memoryFor` rather than here, because it
@@ -1327,10 +1289,10 @@ export function createAiSystem(grid: NavGrid, options: AiOptions): AiSystem {
   function step(world: World, unit: Entity, tick: number): void {
     const memory = memoryFor(unit)
     const previous = memory.state
-    // WITH THE FACING HE ARRIVED WITH. The arc is tested against where he was
-    // looking at the START of the tick, and `turn` below is what he does about
-    // what he found — a scan against a heading this tick's contact had already
-    // moved would let a man notice somebody behind him and then justify it.
+    // SCAN FIRST, TURN AFTER. The order no longer changes what he SEES — sight
+    // stopped reading his facing in ticket 086 — but `turn` below is still what
+    // he does about what the scan found, and running it the other way round
+    // would have him pose at a contact before the tick that acquired it.
     const target = acquire(world, unit, memory)
     const patrol = patrols.get(unit.id)
     let next: AiState

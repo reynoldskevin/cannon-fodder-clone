@@ -38,7 +38,5 @@ export {
   // The forward arc (ticket 038). The cosine of its half-angle, the radius
   // inside which it does not apply, and where a man looks before anything has
   // happened to him.
-  VISION_HALF_ANGLE_COS,
-  DEFAULT_AWARENESS_RADIUS_TILES,
   DEFAULT_ENEMY_FACING,
 } from './tuning'
