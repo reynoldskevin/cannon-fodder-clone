@@ -31,10 +31,24 @@ import {
   setNotice,
   setText,
   BAD,
-  GOOD,
   LIST_STYLE,
   MUTED,
 } from './screen-chrome'
+import {
+  FALLEN_ROW_STYLE,
+  KILL_COUNT_STYLE,
+  LOST_IN_SERVICE_TITLE,
+  MEMORIAL_SCRIM,
+  MEMORIAL_TITLE_STYLE,
+  MISSION_HEADING_STYLE,
+  POPPY_LEFT_STYLE,
+  POPPY_RIGHT_STYLE,
+  POPPY_URL,
+  ROLL_Z_INDEX,
+  missionHeading,
+} from './lost-in-service'
+import { loadDisplayFont } from './display-font'
+import { rollOfHonour } from '../core/campaign'
 import type { CampaignSummary } from '../core/campaign'
 import jungleUrl from '../../assets/source/jungle-background.png?url'
 import logoUrl from '../../assets/source/logo.png?url'
@@ -125,6 +139,28 @@ const BUTTON_FILL = 'rgba(4,9,7,0.72)'
 
 /** The armed wipe's fill — the warm one, over the same dark. */
 const RESTART_ARMED_FILL = 'rgba(255,143,107,0.28)'
+
+/**
+ * The title card's scrim: dark at the top and along the bottom, clear through
+ * the middle.
+ *
+ * WITHOUT IT THE TEXT IS UNREADABLE. The jungle is bright, busy and mid-green,
+ * and white type on it is only legible where the leaves happen to be dark. A
+ * flat tint over the whole image would fix that by throwing away the art; a
+ * gradient darkens the two bands the words are in and leaves the middle — where
+ * the three figures stand — alone.
+ *
+ * A NAMED CONSTANT SINCE TICKET 073, because the campaign's end swaps it for
+ * `MEMORIAL_SCRIM` and swaps it back. Written inline it would have had to be
+ * spelled a second time in `render` to restore, and the copy that was never
+ * updated is the one the player would have seen.
+ */
+const MENU_SCRIM =
+  'linear-gradient(' +
+  'rgba(2,6,4,0.82) 0%,' +
+  'rgba(2,6,4,0.35) 30%,' +
+  'rgba(2,6,4,0.25) 55%,' +
+  'rgba(2,6,4,0.85) 100%)'
 
 /**
  * How long one man takes to arrive, and the gap between them.
@@ -285,6 +321,11 @@ const offstage = (member: CastEntry): string =>
 export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen {
   const { backdrop, panel } = createChrome('Main menu')
 
+  // The memorial's title and every name on it are set in the display face, and
+  // this screen can be the first one the page ever shows. Fire and forget — see
+  // `display-font.ts`: the text paints in the fallback and reflows.
+  loadDisplayFont()
+
   /**
    * THE JUNGLE, FULL BLEED (ticket 045). The shared chrome is flat black, which
    * is right for the mission card and for Boot Hill — this is the screen the
@@ -364,26 +405,67 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
    * campaign's numbers on screen beside half of the new one's.
    */
   const summary = document.createElement('section')
-  // Bounded, because the roll now shares the screen with three figures and a
-  // long campaign's dead would otherwise push the buttons off the bottom.
-  summary.style.cssText = 'display:none;flex-direction:column;gap:0.5rem;max-height:38vh'
+  // Bounded, because the roll shares the screen with a title and two buttons and
+  // a long campaign's dead would otherwise push the buttons off the bottom.
+  summary.style.cssText = [
+    'display:none',
+    'flex-direction:column',
+    'align-items:center',
+    'gap:0.5rem',
+    /**
+     * IT TAKES THE ROOM BETWEEN THE TITLE AND THE BUTTONS, rather than a share of
+     * the viewport. A fixed `max-height` was measured against a screen and left
+     * the roll clipping a row mid-name with a hand's width of empty black under
+     * it — the list looked broken rather than scrollable. `min-height:0` is what
+     * makes the cap real: a flex child's floor is its CONTENT by default, so
+     * without it a long roll grows the column and pushes the buttons off the
+     * bottom edge instead of scrolling.
+     */
+    'flex:1 1 auto',
+    'min-height:0',
+    'width:100%',
+    // ABOVE THE POPPIES. They are scenery either side of this list and it is the
+    // part that scrolls; see `lost-in-service.ts`.
+    `z-index:${String(ROLL_Z_INDEX)}`,
+  ].join(';')
 
   const summaryHeading = document.createElement('h2')
-  summaryHeading.textContent = 'Campaign complete'
-  summaryHeading.style.cssText =
-    `margin:0;font-size:1rem;letter-spacing:0.06em;text-transform:uppercase;color:${GOOD}`
+  summaryHeading.textContent = LOST_IN_SERVICE_TITLE
+  summaryHeading.style.cssText = MEMORIAL_TITLE_STYLE
 
   const totals = document.createElement('p')
-  totals.style.cssText = 'margin:0'
+  totals.style.cssText = `margin:0;color:${MUTED};font-size:0.9rem;letter-spacing:0.06em`
 
-  const rollHeading = document.createElement('p')
-  rollHeading.textContent = 'The fallen'
-  rollHeading.style.cssText = `margin:0;color:${MUTED}`
+  /**
+   * The roll itself: mission headings and the men under them.
+   *
+   * A `div` OF `ul`s RATHER THAN ONE FLAT LIST, because the list is now grouped
+   * and a heading is not a list item. `rollOfHonour` decides the grouping and
+   * the order; this only draws it.
+   *
+   * IT IS THE ONLY THING THAT SCROLLS. The title stays put and the buttons stay
+   * on the bottom edge — a memorial that pushed its own controls off screen
+   * after twelve dead would be a screen the player could not leave.
+   */
+  const roll = document.createElement('div')
+  roll.style.cssText = [
+    'overflow-y:auto',
+    // See `summary` above: the pair is what turns "too many dead" into a scroll
+    // rather than into buttons below the fold.
+    'flex:1 1 auto',
+    'min-height:0',
+    'width:min(28rem, 86%)',
+    'padding:0 0.25rem',
+    'text-align:left',
+  ].join(';')
 
-  const roll = document.createElement('ul')
-  roll.style.cssText = `${LIST_STYLE};overflow:auto`
-
-  summary.append(summaryHeading, totals, rollHeading, roll)
+  /**
+   * THE BLURB MOVES INSIDE THE MEMORIAL (ticket 073). It is only ever shown when
+   * the campaign is over, and in the masthead it rendered ABOVE the title — a
+   * loose sentence floating over the plaque with nothing to attach it to. Under
+   * the title it is the line the title introduces.
+   */
+  summary.append(summaryHeading, blurb, totals, roll)
 
   const start = createButton('Start campaign')
 
@@ -459,17 +541,10 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
    * the three figures stand — alone.
    */
   const scrim = document.createElement('div')
-  scrim.style.cssText = [
-    'position:absolute',
-    'inset:0',
-    'z-index:0',
-    'pointer-events:none',
-    'background:linear-gradient(' +
-      'rgba(2,6,4,0.82) 0%,' +
-      'rgba(2,6,4,0.35) 30%,' +
-      'rgba(2,6,4,0.25) 55%,' +
-      'rgba(2,6,4,0.85) 100%)',
-  ].join(';')
+  scrim.style.cssText = ['position:absolute', 'inset:0', 'z-index:0', 'pointer-events:none'].join(
+    ';',
+  )
+  scrim.style.background = MENU_SCRIM
 
   /**
    * Where the squad stands.
@@ -483,6 +558,30 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
   const cast = document.createElement('div')
   cast.style.cssText = 'position:absolute;inset:0;z-index:1;pointer-events:none'
 
+  /**
+   * The two flowers, and they exist only for the campaign's end (ticket 073).
+   *
+   * BUILT ONCE AND HIDDEN, not created on the transition: this screen redraws
+   * from `render` and a restart lands the player back on the same instance, so
+   * anything built inside a branch would have to be torn down inside another
+   * one. `display` is the whole difference between the title card and the
+   * memorial.
+   *
+   * `alt=''` AND `aria-hidden`. They are decoration flanking a list of the dead;
+   * a screen reader announcing "poppy, poppy" between the title and the names
+   * says nothing the names do not.
+   */
+  const poppies = (['left', 'right'] as const).map((side) => {
+    const flower = document.createElement('img')
+    flower.src = POPPY_URL
+    flower.alt = ''
+    flower.setAttribute('aria-hidden', 'true')
+    flower.draggable = false
+    flower.style.cssText = side === 'left' ? POPPY_LEFT_STYLE : POPPY_RIGHT_STYLE
+    flower.style.display = 'none'
+    return flower
+  })
+
   /** The title, the blurb, the notice and the totals — the readable column. */
   const masthead = document.createElement('div')
   masthead.style.cssText = [
@@ -493,12 +592,16 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
     'align-items:center',
     'gap:0.75rem',
     'width:min(46rem, 100%)',
+    // Grows into the gap between the title and the buttons so the roll inside it
+    // has somewhere to be; `min-height:0` for the same reason it is on the roll.
+    'flex:1 1 auto',
+    'min-height:0',
     'text-align:center',
     'text-shadow:0 2px 6px rgba(0,0,0,0.85)',
     // Only this and the button row take clicks; see the panel above.
     'pointer-events:auto',
   ].join(';')
-  masthead.append(heading, blurb, notice, summary)
+  masthead.append(heading, notice, summary)
 
   /** Both buttons, side by side, centred along the bottom. */
   const controls = document.createElement('div')
@@ -546,7 +649,9 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
   })
   cast.append(...figures)
 
-  panel.append(scrim, cast, masthead, controls)
+  // The flowers go in BEFORE the masthead so they are behind it in DOM order as
+  // well as by `z-index` — the roll scrolls over them, never under.
+  panel.append(scrim, cast, ...poppies, masthead, controls)
   mount.append(backdrop)
   // Focused, so the keyboard alone can start the game — and so the player's next
   // click does not go to the canvas underneath by accident. Start, never
@@ -705,6 +810,26 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
     restart.style.display = next.campaignUnderway ? '' : 'none'
 
     summary.style.display = next.campaignOver ? 'flex' : 'none'
+
+    /**
+     * THE TITLE CARD BECOMES A MEMORIAL, and back again (ticket 073).
+     *
+     * The jungle and the three marching men are right for the screen the game is
+     * met on and wrong for a list of the dead — the mockup has neither, and a
+     * cartoon squad grinning beside twelve gravestones is the tonal problem this
+     * ticket was raised about. HIDDEN RATHER THAN REMOVED, because this is still
+     * the Menu: pressing Start plays again and must hand back the screen the
+     * player started on, without rebuilding anything.
+     *
+     * THE LOGO GOES WITH THEM. It is the game's name in painted letters and it
+     * would sit directly above LOST IN SERVICE, which would leave the screen
+     * with two titles and no subject.
+     */
+    scrim.style.background = next.campaignOver ? MEMORIAL_SCRIM : MENU_SCRIM
+    cast.style.display = next.campaignOver ? 'none' : ''
+    heading.style.display = next.campaignOver ? 'none' : ''
+    for (const flower of poppies) flower.style.display = next.campaignOver ? 'block' : 'none'
+
     if (next.campaignOver) {
       setText(
         totals,
@@ -715,14 +840,36 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
       // does, which is once a campaign, and a list this short is not worth a
       // reconciler nothing tests.
       roll.replaceChildren()
-      rollHeading.style.display = next.summary.fallen.length === 0 ? 'none' : 'block'
-      for (const grave of next.summary.fallen) {
-        const row = document.createElement('li')
-        row.textContent =
-          `${grave.rankAtDeath} ${grave.name} — level ${String(grave.diedOnLevel)}, ` +
-          `${String(grave.kills)} killed`
-        row.style.cssText = `color:${MUTED}`
-        roll.append(row)
+      /**
+       * GROUPED BY `core`, DRAWN HERE. The reverse order, the one-group-per-level
+       * fold and the order within a mission are all `rollOfHonour`'s, where
+       * `roll-of-honour.test.ts` can hold them; this loop is a heading and some
+       * rows.
+       */
+      for (const mission of rollOfHonour(next.summary.fallen)) {
+        const heading = document.createElement('p')
+        heading.textContent = missionHeading(mission.level)
+        heading.style.cssText = MISSION_HEADING_STYLE
+        roll.append(heading)
+
+        const men = document.createElement('ul')
+        men.style.cssText = LIST_STYLE
+        for (const man of mission.dead) {
+          const row = document.createElement('li')
+          row.style.cssText = FALLEN_ROW_STYLE
+
+          const who = document.createElement('span')
+          who.textContent = `${man.rankAtDeath} ${man.name}`
+          const kills = document.createElement('span')
+          // "1 killed", not "1 kills". The count is the man's whole record and
+          // the plural is the difference between a memorial and a scoreboard.
+          kills.textContent = `${String(man.kills)} killed`
+          kills.style.cssText = KILL_COUNT_STYLE
+
+          row.append(who, kills)
+          men.append(row)
+        }
+        roll.append(men)
       }
     }
     // A model change can only make an armed button MORE dangerous than the
