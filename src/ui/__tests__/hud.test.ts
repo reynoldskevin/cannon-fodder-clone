@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import {
+  HUD_PANEL_SHOWN,
   HUD_SECTIONS,
   RAIL_SUPERSEDED,
   hudSectionShown,
@@ -31,40 +32,44 @@ import { ORDNANCE } from '../../core/ordnance'
  * in both places, and is what these tests interrogate.
  */
 
-describe('which blocks of the HUD are still drawn', () => {
-  it('does not draw the roster pips — the rail names the men', () => {
+describe('the whole card is off', () => {
+  it('the panel is not shown at all', () => {
     /**
-     * THE PIPS WERE NUMBERS. `1 2 3 4 5`, struck through when a man went down.
-     * The rail carries his NAME and his rank insignia and removes him when he
-     * dies (ticket 066), which is the same fact told by something the player
-     * recognises.
+     * WIDENED MID-TICKET, ON THE USER'S CALL. It started as the two blocks the
+     * rail duplicates — the pips and the selector — with the header's
+     * `Squad 3/3`, the clock and the objectives argued to stay, on the grounds
+     * that the rail shows the living only and so `n/m` is the one statement of
+     * losses. The answer was "that whole box can go". It goes.
+     *
+     * THE MISSION CLOCK AND THE OBJECTIVE PROGRESS ARE NOW SHOWN NOWHERE. That
+     * is the point of this being one loud constant rather than four quiet
+     * deletions: it is a decision somebody can find and reverse.
      */
-    expect(hudSectionShown('roster')).toBe(false)
+    expect(HUD_PANEL_SHOWN).toBe(false)
   })
 
-  it('and does not draw the weapon selector — the rail paints the weapons', () => {
+  it('and no section of it is drawn, whatever the section gate would have said', () => {
     /**
-     * THE SELECTOR WAS THE ONLY ACKNOWLEDGEMENT that pressing `2` had done
-     * anything: a line of monospace on the far side of the screen from the icon
-     * the player is now looking at. The icons light up when armed and carry
-     * their own counts (tickets 067, 069).
+     * THE PANEL SWITCH SITS ABOVE THE SECTION GATE, not beside it. A header that
+     * was not superseded by the rail is still not drawn, because the card it
+     * lives on is not drawn — and `hudSectionShown` is what both `createHud` and
+     * `update` ask, so it has to give that answer rather than the one it would
+     * have given on a visible panel.
      */
-    expect(hudSectionShown('selector')).toBe(false)
+    for (const section of HUD_SECTIONS) {
+      expect(hudSectionShown(section)).toBe(false)
+    }
   })
 
-  it('but still draws the objectives, which the rail has never shown', () => {
-    expect(hudSectionShown('objectives')).toBe(true)
-  })
-
-  it('and still draws the header — the losses are only stated there', () => {
+  it('but the section gate survives underneath it', () => {
     /**
-     * THE ONE THAT MUST NOT GO WITH THEM. The rail shows the living and ONLY the
-     * living, so `Squad 3/5` is the single place on the mission screen that says
-     * two men are gone. Hiding it would not de-duplicate a readout; it would
-     * delete one. The mission clock is in the same header for the plainer reason
-     * that nothing else shows it at all.
+     * WHAT SWITCHING THE CARD BACK ON MUST NOT ALSO BRING BACK. The pips and the
+     * selector are duplicates of the rail whether or not the panel is shown;
+     * folding them into the panel switch would mean anybody who ever wanted the
+     * clock back got two roster readouts with it, and would have to rediscover
+     * this whole ticket to work out why.
      */
-    expect(hudSectionShown('header')).toBe(true)
+    expect([...RAIL_SUPERSEDED].sort()).toEqual(['roster', 'selector'])
   })
 })
 
@@ -94,9 +99,9 @@ describe('the gate itself', () => {
     }
   })
 
-  it('and hides exactly what the ticket asked for and nothing else', () => {
+  it('and with the card off, that is every section there is', () => {
     const hidden = HUD_SECTIONS.filter((section: HudSection) => !hudSectionShown(section))
-    expect([...hidden].sort()).toEqual(['roster', 'selector'])
+    expect([...hidden].sort()).toEqual([...HUD_SECTIONS].sort())
   })
 })
 
@@ -158,6 +163,34 @@ describe('hidden, not deleted', () => {
      */
     const asked = source.match(/hudSectionShown\(/g) ?? []
     expect(asked.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('and the router cannot show the card past the switch', () => {
+    /**
+     * `app/main.ts` CALLS `setVisible(true)` ON EVERY MISSION and has no idea
+     * this ticket happened — it asks for the HUD whenever the screen is the
+     * mission, which is exactly right and must stay that way. So the switch is
+     * honoured HERE, at the one place that writes the panel's `display`, rather
+     * than by the caller remembering not to ask.
+     */
+    expect(source).toMatch(/HUD_PANEL_SHOWN/)
+    expect(source).toMatch(/setVisible\(visible: boolean\)/)
+  })
+
+  it('and says so honestly when asked, which is what stops the per-frame work', () => {
+    /**
+     * `isVisible()` IS LOAD-BEARING AND NOT A CONVENIENCE. `main.ts` gates its
+     * whole `hud.update(...)` — including building the model — on it, so a panel
+     * that reported itself visible while showing nothing would go on formatting
+     * a clock and a roster into invisible nodes sixty times a second. The cost
+     * has to go with the pixels.
+     */
+    const main = readFileSync(new URL('../../app/main.ts', import.meta.url), 'utf8')
+    expect(main).toMatch(/if \(hud\.isVisible\(\)\)/)
+    // And the HUD is still BUILT and still DISPOSED — hidden, not deleted, all
+    // the way up to the caller.
+    expect(main).toMatch(/createHud\(mount\)/)
+    expect(main).toMatch(/hud\.dispose\(\)/)
   })
 
   it('and skips the per-frame work for both of them', () => {
