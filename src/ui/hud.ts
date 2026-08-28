@@ -14,6 +14,13 @@
  * `error-overlay.ts`, so the UI layer stays free of a stylesheet the build would
  * have to ship.
  *
+ * TWO OF THOSE BLOCKS ARE NOW QUIET (ticket 072). The left rail names every
+ * living man and paints both weapons with their remaining rounds, so the roster
+ * pips and the monospace selector had become a second telling of facts the
+ * player was already reading elsewhere on the same screen. They are hidden by
+ * `RAIL_SUPERSEDED` below, not removed: everything that builds and pools them is
+ * still here, and emptying that one list puts them back.
+ *
  * UPDATED EVERY FRAME, WRITTEN ONLY ON CHANGE. `update` is called from the
  * render loop, so it runs 60+ times a second for a readout that changes once a
  * second at most; assigning `textContent` unconditionally would dirty the same
@@ -72,6 +79,58 @@ export interface Hud {
   isVisible(): boolean
   /** Remove the HUD. Safe to call twice. */
   dispose(): void
+}
+
+/**
+ * One block of the panel, from the top down.
+ *
+ * NAMED SO THAT HIDING ONE IS A DECISION AND NOT AN EDIT. Before this list the
+ * only way to take a block off the screen was to reach into `createHud` and
+ * delete the append, which also deleted the pooling underneath it and made
+ * bringing it back a revert rather than a choice.
+ */
+export type HudSection = 'header' | 'roster' | 'objectives' | 'selector'
+
+/**
+ * Every section the panel has.
+ *
+ * EXHAUSTIVE ON PURPOSE. `RAIL_SUPERSEDED` is checked against this, so a
+ * misspelt entry there is caught instead of quietly hiding nothing — a typo in a
+ * hide-list has no symptom except the readout the ticket meant to remove still
+ * being on screen, which is exactly what nobody looks for twice.
+ */
+export const HUD_SECTIONS: readonly HudSection[] = ['header', 'roster', 'objectives', 'selector']
+
+/**
+ * The sections the left rail (`squad-panel.ts`) now says better (ticket 072).
+ *
+ * The rail names every living man and paints both weapons with their remaining
+ * rounds, which is what the roster pips and the monospace selector were for. Two
+ * readouts of the same fact in two vocabularies is not redundancy the player
+ * benefits from; it is two things he must reconcile mid-firefight.
+ *
+ * HIDDEN, NOT DELETED. The elements below are still built and still pooled, so
+ * emptying this list is the whole of bringing either block back.
+ *
+ * THE HEADER IS NOT IN HERE, and must not drift into it: the rail shows the
+ * LIVING only, so `Squad 3/5` is the single place on the mission screen that
+ * states a loss. The mission clock is beside it for the plainer reason that
+ * nothing else shows it at all.
+ */
+export const RAIL_SUPERSEDED: readonly HudSection[] = ['roster', 'selector']
+
+/**
+ * Whether a section is drawn at all.
+ *
+ * ASKED IN BOTH PLACES, WHICH IS THE POINT OF IT BEING A FUNCTION. A bare
+ * `display:none` beside a loop that still runs writes text into an invisible
+ * node sixty times a second; a skipped loop beside a block that is still
+ * appended shows an empty box the day somebody re-enables it. One predicate
+ * gates the pixels and the per-frame work together, so they can only come back
+ * together.
+ */
+export function hudSectionShown(section: HudSection): boolean {
+  return !RAIL_SUPERSEDED.includes(section)
 }
 
 /** Panel background and text, matched to the error overlay's palette. */
@@ -204,6 +263,29 @@ export function createHud(mount: HTMLElement): Hud {
     'display:flex;flex-direction:column;gap:0.15rem;font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace'
 
   panel.append(header, roster, objectives, selector)
+  /**
+   * STILL APPENDED, JUST NOT SHOWN. Hiding by `display` rather than by leaving
+   * the block out of the tree keeps the pools below wired to a real parent, so
+   * the only difference between hidden and shown is the gate's answer.
+   *
+   * ONLY EVER HIDES, AND NEVER WRITES A `display` OF ITS OWN. Each block already
+   * declared one in its own `cssText`, and a shown branch here would be a second
+   * spelling of it — right today, and wrong the first time one of them stops
+   * being a flex column. A shown block is simply left as it built itself.
+   */
+  const gate = (shown: boolean, block: HTMLElement): void => {
+    if (!shown) block.style.display = 'none'
+  }
+  /**
+   * ALL FOUR, THOUGH ONLY TWO ARE SUPERSEDED TODAY. `RAIL_SUPERSEDED` is typed
+   * to accept any section, so gating only the two that are currently in it would
+   * make adding `'header'` to that list a silent no-op — a hide-list entry that
+   * hides nothing, which is the one failure mode with no symptom at all.
+   */
+  gate(hudSectionShown('header'), header)
+  gate(hudSectionShown('roster'), roster)
+  gate(hudSectionShown('objectives'), objectives)
+  gate(hudSectionShown('selector'), selector)
   mount.append(panel)
 
   /**
@@ -260,48 +342,60 @@ export function createHud(mount: HTMLElement): Hud {
   }
 
   function update(model: HudModel): void {
-    const alive = model.squad.filter((member) => member.alive).length
-    setText(squadCount, `Squad ${String(alive)}/${String(model.squad.length)}`)
-    setText(timer, formatMissionTime(model.elapsedTicks))
+    if (hudSectionShown('header')) {
+      const alive = model.squad.filter((member) => member.alive).length
+      setText(squadCount, `Squad ${String(alive)}/${String(model.squad.length)}`)
+      setText(timer, formatMissionTime(model.elapsedTicks))
+    }
 
-    for (let i = 0; i < model.squad.length; i += 1) {
-      const member = model.squad[i]
-      if (member === undefined) continue
-      const pip = pipAt(i)
-      setText(pip, String(i + 1))
-      // Colour AND a strike-through, not colour alone: "which of my men are
-      // down" must survive a colour-blind player and a washed-out screen.
-      const state = member.alive ? 'alive' : 'dead'
-      if (pip.dataset.state !== state) {
-        pip.dataset.state = state
-        pip.style.background = member.alive ? 'rgba(143,214,148,0.18)' : 'rgba(255,143,107,0.14)'
-        pip.style.color = member.alive ? DONE : LOST
-        pip.style.textDecoration = member.alive ? 'none' : 'line-through'
+    // THE SAME ANSWER THAT HID THE BLOCK SKIPS ITS WORK. The model still arrives
+    // whole — `app/main.ts` hands over squad and selector regardless, because the
+    // model is what the HUD is ENTITLED to draw, not what it currently chooses
+    // to — and this is the only place that choosing happens.
+    if (hudSectionShown('roster')) {
+      for (let i = 0; i < model.squad.length; i += 1) {
+        const member = model.squad[i]
+        if (member === undefined) continue
+        const pip = pipAt(i)
+        setText(pip, String(i + 1))
+        // Colour AND a strike-through, not colour alone: "which of my men are
+        // down" must survive a colour-blind player and a washed-out screen.
+        const state = member.alive ? 'alive' : 'dead'
+        if (pip.dataset.state !== state) {
+          pip.dataset.state = state
+          pip.style.background = member.alive ? 'rgba(143,214,148,0.18)' : 'rgba(255,143,107,0.14)'
+          pip.style.color = member.alive ? DONE : LOST
+          pip.style.textDecoration = member.alive ? 'none' : 'line-through'
+        }
       }
     }
 
-    for (let i = 0; i < model.objectives.length; i += 1) {
-      const progress = model.objectives[i]
-      if (progress === undefined) continue
-      const line = lineAt(i)
-      setText(line, objectiveLine(progress))
-      const colour = !progress.supported ? LOST : progress.complete ? DONE : MUTED
-      if (line.style.color !== colour) line.style.color = colour
+    if (hudSectionShown('objectives')) {
+      for (let i = 0; i < model.objectives.length; i += 1) {
+        const progress = model.objectives[i]
+        if (progress === undefined) continue
+        const line = lineAt(i)
+        setText(line, objectiveLine(progress))
+        const colour = !progress.supported ? LOST : progress.complete ? DONE : MUTED
+        if (line.style.color !== colour) line.style.color = colour
+      }
     }
 
-    for (let i = 0; i < model.selector.length; i += 1) {
-      const slot = model.selector[i]
-      if (slot === undefined) continue
-      const row = slotAt(i)
-      // The LINE comes from core and the HOTKEY is placed here: `selectorLine`
-      // deliberately leaves the key out so the HUD can put it where it likes.
-      setText(row.text, selectorLine(slot))
-      setText(row.key, slot.hotkey)
-      // Colour on top of the marker `selectorLine` already carries, never
-      // instead of it: "which weapon am I holding" must survive a colour-blind
-      // player and a washed-out screen, the same bargain the roster pips make.
-      const colour = slot.active ? TEXT : MUTED
-      if (row.text.style.color !== colour) row.text.style.color = colour
+    if (hudSectionShown('selector')) {
+      for (let i = 0; i < model.selector.length; i += 1) {
+        const slot = model.selector[i]
+        if (slot === undefined) continue
+        const row = slotAt(i)
+        // The LINE comes from core and the HOTKEY is placed here: `selectorLine`
+        // deliberately leaves the key out so the HUD can put it where it likes.
+        setText(row.text, selectorLine(slot))
+        setText(row.key, slot.hotkey)
+        // Colour on top of the marker `selectorLine` already carries, never
+        // instead of it: "which weapon am I holding" must survive a colour-blind
+        // player and a washed-out screen, the same bargain the roster pips make.
+        const colour = slot.active ? TEXT : MUTED
+        if (row.text.style.color !== colour) row.text.style.color = colour
+      }
     }
   }
 
