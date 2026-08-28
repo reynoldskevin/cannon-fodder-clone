@@ -86,28 +86,31 @@ export function parseScrollUnlocked(raw: string | null | undefined): boolean {
   return raw === '1'
 }
 
-/** The weapon controls, which no camera mode takes away. */
-const WEAPON_HINT = '1–3 or shift+wheel to change weapon'
-
 /**
- * The line the control hint shows, for the camera mode the game is in.
+ * The line the control hint shows, or `null` for no hint at all.
  *
- * IT IS HERE BECAUSE THE OLD ONE BECAME A LIE THE MOMENT THIS TICKET LANDED.
- * `showHintOnce` promised "WASD / arrows or screen edge to pan · wheel or +/− to
- * zoom · F to zoom out fully" to every player, and with the camera locked not
- * one of those does anything. Its own comment already warned about this exact
- * failure — "a hint that still promised a fit would be a lie" — about the
- * previous ticket to change what the keys do.
+ * THE LOCKED CAMERA IS SHOWN NOTHING (ticket 080). It used to carry "1-3 or
+ * shift+wheel to change weapon", and three things now say that — two of them
+ * better. The ordnance rail draws rifle, grenade and rocket as real `<button>`s
+ * wired to `onSelectOrdnance`, so the weapons are visible and clickable without
+ * being told; and the CONTROLS card in front of every campaign says "Click an
+ * icon for rifle, grenade or rocket" on a screen the player cannot skip. With
+ * pan and zoom already gone (ticket 075) that line was the whole pill, so the
+ * honest result is no pill.
  *
- * THE WEAPON HALF SURVIVES BOTH MODES and is spelled once. Cycling is
- * `1`-`3` and SHIFT+wheel (`onSelectWheel` returns immediately without the
- * modifier), so it is untouched by the camera being locked — and two copies of
- * it would be two things to update the next time the keys move.
+ * `null` AND NOT `''`. An empty string still builds a styled, padded, rounded
+ * capsule and floats it over the map for seven seconds with nothing in it.
+ *
+ * THE BINDINGS ARE UNTOUCHED. `onSelectKey` still takes `1`-`3` and
+ * `onSelectWheel` still takes shift+wheel; what is removed is the
+ * advertisement, not the shortcut.
+ *
+ * `?scroll=1` KEEPS ITS LINE. Pan, zoom and the fit key are taught nowhere else
+ * — no card mentions them and no icon implies them — so the one place they are
+ * written down has to stay. That is the same argument ticket 075 made for
+ * making this conditional at all.
  */
-export function controlHintText(scrollUnlocked: boolean): string {
-  if (!scrollUnlocked) return WEAPON_HINT
-  return (
-    'WASD / arrows or screen edge to pan  ·  wheel or +/− to zoom  ·  F to zoom out fully  ·  ' +
-    WEAPON_HINT
-  )
+export function controlHintText(scrollUnlocked: boolean): string | null {
+  if (!scrollUnlocked) return null
+  return 'WASD / arrows or screen edge to pan  ·  wheel or +/− to zoom  ·  F to zoom out fully'
 }
