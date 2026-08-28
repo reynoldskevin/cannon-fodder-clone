@@ -141,6 +141,31 @@ describe('the bar, and the buttons on it', () => {
     expect(bar.get('display')).toBe('flex')
   })
 
+  it('and wraps rather than spilling out of the rail (ticket 073)', () => {
+    /**
+     * THE THIRD ICON IS WHAT BREAKS THE OLD ARITHMETIC. Three buttons is
+     * `3 × 3.9rem` plus two `0.5rem` gaps plus borders — a shade over 13rem —
+     * against a rail whose width is `clamp(11rem, 22vw, 16rem)`, and 22vw is
+     * below the 11rem floor on any viewport under 800px. Two icons fitted with
+     * room to spare; three do not.
+     *
+     * AND THE OVERFLOW WOULD BE CLIPPED, NOT SHOWN. `SQUAD_PANEL_STYLE` sets
+     * `overflow-y:hidden`, which makes the unset `overflow-x` compute to `auto`
+     * rather than `visible` — so the spill is cut off AND stops being
+     * hit-testable. Centred by `align-self`, that takes a bite out of both ends:
+     * the rifle, which is the button this ticket exists to add, would lose part
+     * of the click target it was added to provide.
+     *
+     * WRAPPING RATHER THAN WIDENING THE RAIL, because `ROSTER_COLUMN_WIDTH` is
+     * shared with Boot Hill — widening it here to fit an icon would move a
+     * screen that has no icons on it.
+     */
+    expect(bar.get('flex-wrap')).toBe('wrap')
+    // And the bar may not measure itself wider than the rail it sits in, or
+    // `fit-content` would keep resolving to the un-wrapped intrinsic width.
+    expect(bar.get('max-width')).toBe('100%')
+  })
+
   it('and the buttons are buttons, not pictures with a handler', () => {
     // `cursor:pointer` is the cheap half of that; the element being a real
     // `<button type="button">` is the half the panel's own source is read for.
