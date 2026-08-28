@@ -6,8 +6,10 @@ import {
   SQUAD_PANEL_DISPLAY,
   SQUAD_PANEL_STYLE,
   SQUAD_ROW_STYLE,
+  rollCall,
   squadRowCells,
 } from '../squad-panel'
+import type { SquadPanelMember } from '../squad-panel'
 import { insigniaPosition } from '../rank-insignia'
 
 /**
@@ -145,6 +147,56 @@ describe('the name sits in the middle of the row', () => {
     // close up against it — a three-letter name and an eight-letter one would
     // sit at different distances from the panel's edges.
     expect(name.get('flex')).toMatch(/^1\b/)
+  })
+})
+
+describe('a dead man leaves the roll (ticket 066)', () => {
+  const man = (id: string, name: string, alive: boolean): SquadPanelMember => ({
+    id,
+    name,
+    rankIndex: 0,
+    alive,
+  })
+  const squad = [
+    man('a', 'Jops', true),
+    man('b', 'Stoo', false),
+    man('c', 'Jools', true),
+    man('d', 'Ubik', false),
+  ]
+
+  it('drops him rather than greying him', () => {
+    /**
+     * THE WHOLE TICKET. A name on this rail means "this man is still with you",
+     * so a struck-through or faded row would be the panel still claiming him and
+     * hedging about it. He goes, and the rail closes up behind him.
+     */
+    expect(rollCall(squad).map((each) => each.name)).toEqual(['Jops', 'Jools'])
+  })
+
+  it('and the men who are left keep the order the player chose them in', () => {
+    /**
+     * NOT RE-SORTED BY ANYTHING. The panel is the list the player built on the
+     * Briefing screen and has been reading down the side of the map all mission;
+     * a roll that re-ordered itself every time somebody died would make him find
+     * his men again at the exact moment he is least able to.
+     */
+    const reversed = [...squad].reverse()
+    expect(rollCall(reversed).map((each) => each.name)).toEqual(['Jools', 'Jops'])
+  })
+
+  it('and a wiped squad leaves no rows at all', () => {
+    expect(rollCall(squad.map((each) => ({ ...each, alive: false })))).toEqual([])
+    expect(rollCall([])).toEqual([])
+  })
+
+  it('and the rail is actually drawn from it', () => {
+    /**
+     * The filtering is worth nothing if `update` still walks the whole squad —
+     * the dead man's row would be hidden by the tail loop only when he happened
+     * to be last. A source read because `update` closes over the DOM and cannot
+     * be imported under `environment: 'node'`; see the header.
+     */
+    expect(source('squad-panel.ts')).toMatch(/rollCall\(model\.squad\)/)
   })
 })
 

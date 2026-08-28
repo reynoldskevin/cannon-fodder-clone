@@ -18,7 +18,7 @@ import { centroid, type GroundPoint } from '../core/view/camera'
 import { parseElevation } from '../core/view/orientation'
 import { tileToWorld } from '../core/view/projection'
 import { levelRelief } from '../core/view/relief'
-import { createSession } from '../core/session'
+import { createSession, livingRecruitIds } from '../core/session'
 import { ordnanceForHotkey } from '../core/armoury'
 import { createTracerBuffer } from '../core/render-state/tracers'
 import { createFxBuffer } from '../core/render-state/fx'
@@ -52,7 +52,7 @@ import { ZoomController } from '../input/zoom-controller'
 import { showControlHint, type ControlHint } from '../ui/control-hint'
 import { showFatalError, type FatalErrorReport } from '../ui/error-overlay'
 import { createHud, type RosterMember } from '../ui/hud'
-import { createSquadPanel, type SquadPanelMember } from '../ui/squad-panel'
+import { createSquadPanel } from '../ui/squad-panel'
 import { createMissionBanner } from '../ui/mission-banner'
 import { createBootHill } from '../ui/boot-hill'
 import { createMenu } from '../ui/menu'
@@ -701,6 +701,66 @@ async function boot(): Promise<void> {
   }
 
   /**
+   * One man on the squad rail, as this file keeps him between frames.
+   *
+   * A LOCAL MUTABLE TWIN OF `SquadPanelMember`, whose fields are all `readonly`.
+   * The rail is redrawn every frame the mission is on screen and the only thing
+   * about a man that can change is `alive`, so his name and his badge are read
+   * once and the flag is flipped in place.
+   *
+   * THE SAVING IS SMALL, AND SAYING OTHERWISE WOULD BE THE COMMENT LYING. The
+   * panel's own `rollCall` allocates a filtered array every frame regardless, so
+   * this avoids one `map` over at most a handful of men. It is the shape that
+   * matches what actually changes between frames, not an optimisation anybody
+   * measured.
+   *
+   * Written only by `refreshSquadPanel` below; the panel takes it as
+   * `readonly SquadPanelMember[]` and cannot write to it.
+   */
+  interface RailMan {
+    readonly id: string
+    readonly name: string
+    readonly rankIndex: number
+    alive: boolean
+  }
+
+  /**
+   * The men this mission landed with, in the order the player chose them.
+   *
+   * Snapshotted by `startMission` for the reason `roster` above is: nobody joins
+   * a mission, and the world forgets a man the moment he dies, so the list of who
+   * deployed cannot be re-derived from the world afterwards. Empty until the
+   * first mission starts — the page boots into the Menu over a session nobody
+   * chose a squad for.
+   */
+  let railSquad: RailMan[] = []
+
+  /**
+   * Re-read who is still standing and hand the rail the answer (ticket 066).
+   *
+   * PAIRED THROUGH `session.assignment`, NEVER BY ARRAY INDEX. The recruit id is
+   * the join between the campaign's vocabulary and the sim's, and it is the ONLY
+   * honest one: `railSquad[i]` and the ith living player entity are the same man
+   * only until somebody dies, at which point every row below him would report the
+   * next man's fate — the panel would say the wrong soldier fell, and nothing
+   * inside either half could notice. That is precisely the failure
+   * `core/session/__tests__/squad-assignment.test.ts` exists to prevent, and
+   * `livingRecruitIds` crosses the same join under its own test.
+   *
+   * THE SAME ARRAY OBJECT GOES OVER EVERY FRAME, mutated in place, and `update`
+   * is required to read it synchronously and keep no reference to it. That holds
+   * today and the panel's own pooling depends on nothing else — but it is an
+   * invariant rather than an accident: a panel that memoised on `model.squad`
+   * being a new object would never redraw, and the symptom would be a dead man
+   * staying on the rail for the rest of the mission.
+   */
+  function refreshSquadPanel(): void {
+    const living = livingRecruitIds(session.assignment, (id) => session.world.isAlive(id))
+    for (const man of railSquad) man.alive = living.has(man.id)
+    squadPanel.update({ squad: railSquad })
+  }
+
+  /**
    * Whether `teardown` has run. Read by the debug chunk's late arrival below,
    * which can land after a context loss has already torn the page down.
    */
@@ -942,29 +1002,39 @@ async function boot(): Promise<void> {
     // entity ids and the campaign's recruit ids ever meet.
     session = createSession(next, { squad })
     /**
-     * THE ROLL, FED ONCE PER MISSION AND NOT PER FRAME. Who deployed is decided
-     * here and nowhere else — men die during the mission but nobody joins it —
-     * so there is nothing for the render loop to re-ask. `insigniaIndexOf` maps
-     * the rank to its badge in `core/campaign`, where Vitest can see it; a table
-     * in `src/ui` would be a second, untested copy of the ladder.
+     * THE ROLL. WHO DEPLOYED is decided here and nowhere else — men die during a
+     * mission but nobody joins one — so the names and badges are built once, and
+     * only WHO IS STILL STANDING is re-asked per frame, by `refreshSquadPanel`.
+     * `insigniaIndexOf` maps the rank to its badge in `core/campaign`, where
+     * Vitest can see it; a table in `src/ui` would be a second, untested copy of
+     * the ladder.
      */
-    squadPanel.update({
-      squad: squad.map(
-        (man): SquadPanelMember => ({
-          name: man.name,
-          /**
-           * `?? 0` FOR A RANK THE LADDER DOES NOT KNOW, which is unreachable
-           * rather than merely unlikely: every man here came off the campaign
-           * roster, and the roster's ranks ARE the ladder. Boot Hill answers the
-           * same `null` by drawing no badge at all, because a grave can outlive
-           * the ladder it was carved under; a man standing in front of you
-           * cannot, and dropping him off the roll of the living would be the
-           * worse failure of the two.
-           */
-          rankIndex: insigniaIndexOf(man.rank) ?? 0,
-        }),
-      ),
-    })
+    railSquad = squad.map(
+      (man): RailMan => ({
+        // HIS RECRUIT ID TRAVELS WITH HIM, because that is what the liveness
+        // answer is keyed by — see `refreshSquadPanel`. It is never drawn.
+        id: man.id,
+        name: man.name,
+        /**
+         * `?? 0` FOR A RANK THE LADDER DOES NOT KNOW, which is unreachable
+         * rather than merely unlikely: every man here came off the campaign
+         * roster, and the roster's ranks ARE the ladder. Boot Hill answers the
+         * same `null` by drawing no badge at all, because a grave can outlive
+         * the ladder it was carved under; a man standing in front of you
+         * cannot, and dropping him off the roll of the living would be the
+         * worse failure of the two.
+         */
+        rankIndex: insigniaIndexOf(man.rank) ?? 0,
+        // Corrected a line later against the world this mission actually built;
+        // the field cannot be left out, and everybody who lands is on his feet.
+        alive: true,
+      }),
+    )
+    // DRAWN HERE AS WELL AS FROM THE LOOP, so the rail is right in the instant
+    // between the mission starting and the first frame of it being painted —
+    // the previous mission's names are still in those rows until something
+    // writes over them.
+    refreshSquadPanel()
     // WITH THE SESSION, NOT AFTER IT. The new world's tick count starts at 0 and
     // the animation clock is keyed to sim time — see the invariant where it is
     // declared. `previous` goes with them so the first frame of the new mission
@@ -1522,6 +1592,13 @@ async function boot(): Promise<void> {
           selector: session.armoury.slots(),
         })
       }
+      // AND THE RAIL BESIDE IT, ON THE SAME TERMS (ticket 066). A name on it
+      // means "this man is still with you", which stopped being true the moment
+      // it was fed once and never again — so it is re-read here, where the HUD's
+      // pip count already is. Skipped while hidden for the HUD's own reason: the
+      // session keeps stepping behind Boot Hill and the mission card, and the
+      // router shows the rail before the frame that would have drawn it stale.
+      if (squadPanel.isVisible()) refreshSquadPanel()
       // FROM THE STATE, NOT FROM THE EVENT. A frame that ran eight steps drains
       // them all at once and a frame that ran none drains nothing, so an end
       // screen driven by catching the event on the right frame is an end screen
