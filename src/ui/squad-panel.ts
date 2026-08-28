@@ -23,12 +23,19 @@
  * `createSquadPanel`, where nothing can reach them. Same split `rank-insignia.ts`,
  * `screen-chrome.ts` and `mission-banner.ts` already run on.
  *
+ * A NAME ON THIS RAIL MEANS "THIS MAN IS STILL WITH YOU" (ticket 066). It was
+ * fed once, from `startMission`, and therefore listed everyone who LANDED for as
+ * long as the mission ran — including the men lying face down in the grass. It
+ * is now driven from the frame loop and draws `rollCall(model.squad)`: the dead
+ * man's row goes and the rail closes up behind him. Dropped rather than greyed,
+ * because a struck-through row is the panel still claiming him and hedging about
+ * it, and because ticket 064 took the two-tone roster off Boot Hill on the same
+ * argument.
+ *
  * DOM APIs and inline styles, like every other file here, so `src/ui` ships no
  * stylesheet. ROWS ARE REUSED AND TEXT IS WRITTEN ONLY ON CHANGE, the bargain
- * `hud.ts` and `boot-hill.ts` make. Unlike the HUD this one is fed ONCE A
- * MISSION, from `startMission` — who deployed is settled when the session is
- * created and men only leave the list by dying, which the roll does not show —
- * so the pooling here is not about frames. It is about the panel outliving the
+ * `hud.ts` and `boot-hill.ts` make — and now for the HUD's own reason as well,
+ * since this is rewritten every frame the rail is up. The pool also outlives the
  * mission: the rows a six-man squad built are the rows the next one writes over.
  */
 
@@ -36,8 +43,19 @@ import { DISPLAY_FONT, loadDisplayFont } from './display-font'
 import { INSIGNIA_STYLE, insigniaPosition } from './rank-insignia'
 import { ROSTER_COLUMN_WIDTH } from './roster-column'
 
-/** One man as the panel lists him: who he is, and what he wears. */
+/** One man as the panel lists him: who he is, what he wears, and whether he is still up. */
 export interface SquadPanelMember {
+  /**
+   * His campaign recruit id (ticket 066).
+   *
+   * THE JOIN, AND NOT DECORATION. `alive` is answered from
+   * `livingRecruitIds(session.assignment, ...)`, which speaks recruit ids; the
+   * caller needs something to match a row against that is NOT its position in an
+   * array, because a positional pairing between the squad and the entity list is
+   * exactly the bug `core/session/__tests__/squad-assignment.test.ts` exists to
+   * prevent. Never drawn.
+   */
+  readonly id: string
   readonly name: string
   /**
    * His badge on the sheet, NOT his rank as a word. Which badge a rank wears is
@@ -45,11 +63,18 @@ export interface SquadPanelMember {
    * file would otherwise be a second, untested copy of the ladder.
    */
   readonly rankIndex: number
+  /** Whether he is still standing. A man who is not is not drawn at all — see `rollCall`. */
+  readonly alive: boolean
 }
 
 /** Everything the panel draws, as of this frame. */
 export interface SquadPanelModel {
-  /** The squad, in the order the player chose them — the order he thinks of them in. */
+  /**
+   * The squad, in the order the player chose them — the order he thinks of them
+   * in. EVERY MAN WHO LANDED, dead ones included: who is drawn is this file's
+   * decision (`rollCall`) and not the caller's, so the two cannot answer it
+   * differently.
+   */
   readonly squad: readonly SquadPanelMember[]
 }
 
@@ -213,7 +238,13 @@ export const SQUAD_NAME_STYLE = [
  * JOPS; the project's rule, and the one `briefing.ts` carries a header note
  * about.
  */
-export function squadRowCells(member: SquadPanelMember): readonly SquadRowCell[] {
+export function squadRowCells(
+  // ONLY THE TWO FIELDS A ROW IS MADE OF, not the whole member. Who a man is and
+  // whether he is standing decide WHETHER he gets a row (`rollCall`), never what
+  // one looks like — a row that could read `alive` is a row that could start
+  // greying the dead, which is the thing ticket 066 exists to not do.
+  member: Pick<SquadPanelMember, 'name' | 'rankIndex'>,
+): readonly SquadRowCell[] {
   // `insigniaPosition` clamps rather than validating, so a rank from outside the
   // sheet still comes back as a badge — see its own header. Read once and used
   // twice, which is also what makes "the same badge on both ends" structural
@@ -224,6 +255,21 @@ export function squadRowCells(member: SquadPanelMember): readonly SquadRowCell[]
     { kind: 'name', text: member.name.toUpperCase() },
     { kind: 'insignia', position },
   ]
+}
+
+/**
+ * The men who are actually drawn: the living, in the order they were given in.
+ *
+ * PURE, so the ticket's whole rule is checkable under `environment: 'node'` —
+ * `update` closes over the DOM and cannot be imported at all.
+ *
+ * FILTERED, NOT SORTED. The panel is the list the player built on the Briefing
+ * screen and has been reading down the side of the map all mission; a roll that
+ * re-ordered itself every time somebody died would make him find his men again at
+ * the exact moment he is least able to.
+ */
+export function rollCall(squad: readonly SquadPanelMember[]): readonly SquadPanelMember[] {
+  return squad.filter((member) => member.alive)
 }
 
 /** Write `text` into `node` only when it has actually changed. See `hud.ts`. */
@@ -303,12 +349,17 @@ export function createSquadPanel(mount: HTMLElement): SquadPanel {
   }
 
   function update(model: SquadPanelModel): void {
-    const count = model.squad.length
+    // THE LIVING, AND THE COUNT IS THEIRS TOO (ticket 066). Trimming the tail
+    // against `model.squad.length` instead would leave the dead man's row shown
+    // with the man BELOW him written into it — the rail would silently drop the
+    // last name of the squad rather than the one who fell.
+    const drawn = rollCall(model.squad)
+    const count = drawn.length
     for (let i = 0; i < count; i += 1) {
-      const member = model.squad[i]
+      const member = drawn[i]
       const row = rowAt(i)
       // A HOLE IN THE LIST HIDES ITS ROW RATHER THAN SKIPPING IT. `member` cannot
-      // actually be undefined below `model.squad.length` — this is the
+      // actually be undefined below `drawn.length` — this is the
       // `noUncheckedIndexedAccess` concession every loop in this codebase makes —
       // but `continue` would be the wrong recovery if it ever were: the row is
       // inside `count`, so the tail loop below will not touch it, and it would

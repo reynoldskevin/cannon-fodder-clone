@@ -55,6 +55,14 @@ import type { SquadOptions, SquadSystem } from '../squad'
 import type { TileCoord } from '../view/projection'
 import type { Entity, SimEvent, SimSystem, Team } from '../world'
 
+/**
+ * WHO IS STILL STANDING (ticket 066), re-exported here so `app/main.ts` takes it
+ * from `'../core/session'` beside `createSession` rather than reaching past this
+ * file into a path of its own. `Session.assignment` is the function's only
+ * subject, and a consumer holding one already holds the other.
+ */
+export { livingRecruitIds } from './roll-call'
+
 /** How the ground height under a tile is sampled. Supplied by the terrain. */
 export type GroundHeightAt = (tileX: number, tileY: number) => number
 
