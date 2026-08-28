@@ -57,14 +57,14 @@ export interface WeaponSpec {
    * it and every sightline is instant death, including yours, because the enemy
    * uses the same table.
    *
-   * CONSTRAINED BY A TEST, and honestly so: the acceptance test asserts the rate
-   * over a minute as `floor(3600 / cooldownTicks) + 1`, which overcounts by one
-   * for any value that divides 3600 exactly (at 30 ticks a unit fires 120 times
-   * in ticks 0..3599, and the formula expects 121). So a retune must avoid the
-   * divisors of 3600 — 30, 36, 40, 45, 60 — or fix the formula in
-   * `resolution.test.ts` first. Nothing about the game requires this; it is a
-   * boundary artefact of how the rate is asserted, written down here because a
-   * designer who tries 30 deserves to know why it fails.
+   * EVERY VALUE IS AVAILABLE, which was not true until ticket 092. The rate
+   * assertion in `resolution.test.ts` used to count a minute as
+   * `floor(ticksInAMinute / cooldownTicks) + 1`, overcounting by one for any
+   * cooldown that divided the minute exactly — so 30, 36, 40, 45 and 60 all
+   * failed a test for reasons that had nothing to do with the game, and this
+   * comment used to warn designers away from them. The arithmetic was the thing
+   * that was wrong; it is `ceil` now, and the warning is gone rather than
+   * reworded. A test in `enemy-weapon.test.ts` asserts it stays gone.
    */
   readonly cooldownTicks: number
 
@@ -130,31 +130,26 @@ export const RIFLE: Weapon = 'rifle'
 export const ENEMY_RIFLE: Weapon = 'enemy-rifle'
 
 /**
- * How far the enemy's rifle reaches, as a fraction of the squad's.
+ * The rifle's reach, in tiles. BOTH rows read it, which is the whole reason it
+ * is hoisted out of them.
  *
- * THE ENEMY'S RANGE IS DERIVED FROM THE PLAYER'S, NOT TYPED AS A SECOND NUMBER.
- * A hardcoded 6.4 beside an 8 is two values that agree today and nothing that
- * makes them agree tomorrow; expressed as a fraction, a later retune of
- * `RIFLE_RANGE_TILES` carries the relationship with it.
+ * THERE USED TO BE A FRACTION HERE (ticket 036's `ENEMY_RANGE_FRACTION = 0.8`),
+ * giving the enemy 6.4 tiles against the squad's 8 and opening a 1.6-tile band
+ * in which the player could fire and the enemy could not. Ticket 092 closed it:
+ * the two sides reach equally again, and the only handicap the enemy still
+ * carries is his rate of fire.
  *
- * RAISE IT toward 1 and the standoff band closes: at 1 the two sides hold the
- * same reach again and backing off stops being an answer to being engaged,
- * which un-does most of this ticket. LOWER IT and the band widens until the
- * squad can stand outside the envelope and kill a garrison that never gets to
- * reply — free kills, and a level that stops asking anything of the player.
+ * THE FRACTION WAS DELETED RATHER THAN SET TO 1, and that is not a style point.
+ * A constant multiplying by one is not a fraction; it is a public export
+ * announcing a handicap that no longer exists, and the next person to reach for
+ * it finds a lever wired to nothing. What the derivation was actually FOR —
+ * that a retune of the rifle carries both rows with it rather than leaving two
+ * numbers that agree today — survives intact, because both rows still name this
+ * constant.
  *
- * 0.8 leaves 1.6 tiles of band at the current 8-tile rifle: wide enough that a
- * step or two of retreat is a real decision, narrow enough that it takes
- * deliberate movement rather than happening by accident.
- */
-export const ENEMY_RANGE_FRACTION = 0.8
-
-/**
- * The squad rifle's reach, in tiles, hoisted out of the row below so the enemy's
- * row can be written as a multiple of it rather than as a literal.
- *
- * The reasoning about the VALUE lives on `WeaponSpec.rangeTiles` and on the row
- * itself — this constant exists only so that the two rows read from one place.
+ * RAISE IT and the firefight moves outward for both sides at once; LOWER IT and
+ * units walk into knife range before anyone fires. The reasoning about the value
+ * lives on `WeaponSpec.rangeTiles`.
  */
 const RIFLE_RANGE_TILES = 8
 
@@ -255,7 +250,7 @@ export const WEAPONS: Readonly<Record<Weapon, WeaponSpec>> = {
     cooldownTicks: 32,
     // Eight tiles. The camera shows appreciably more than this, so a soldier
     // who kills you was on screen when he did it. Named, because the enemy row
-    // below is written as a fraction of it.
+    // below reads the same constant.
     rangeTiles: RIFLE_RANGE_TILES,
     accuracy: {
       // NINE IN TEN AT ARM'S LENGTH. An enemy who has walked into your squad's
@@ -279,49 +274,42 @@ export const WEAPONS: Readonly<Record<Weapon, WeaponSpec>> = {
     // one careless step still ends a man on either side, and dropping it below
     // `INFANTRY_HEALTH` would make enemy fire something the player can stand in.
     damage: INFANTRY_HEALTH,
-    // ~1.30 rounds a second against the squad's ~1.88, and still the larger half
-    // of the difficulty swing ticket 036 introduced. RAISE IT and the enemy
-    // becomes a target rather than a threat; LOWER IT toward 32 and three
-    // converging enemies again kill a four-man squad faster than the player can
-    // react to the first shot, which is the report that produced this row.
+    // ~1.50 rounds a second against the squad's ~1.88 — four for every five.
     //
-    // 46, DOWN FROM 52 (ticket 075). A deliberate step back toward the squad's
-    // rate, taken together with the reaction beat in `ai/tuning.ts`, because the
-    // enemy was too easy. 13% more fire, not a different weapon.
+    // AND IT IS NOW THE ONLY THING SEPARATING THE TWO ROWS. Ticket 036 handed
+    // the enemy two handicaps at once, a shorter reach and a slower rate; 092
+    // returned the reach, so this number carries the whole difference alone.
+    // RAISE IT and he becomes a target rather than a threat; LOWER IT to 32 and
+    // the two sides are identical, which is the configuration that measured
+    // unbeatable — three converging enemies killing a four-man squad in 1.7
+    // seconds, faster than the player could react to the first round.
     //
-    // AND IT IS AS FAR AS THE GUARDRAILS GO, which is what they are for. Two
-    // tests bound this number and 46 clears both by a hair:
-    //   - `enemy-weapon.test.ts` wants his rate under 0.7 of the squad's:
-    //     3600/46 = 78.3 against 0.7 × 112.5 = 78.75.
-    //   - `standoff.test.ts` wants him under 0.75 of the squad's rounds over 600
-    //     ticks: 14 against 19, where the bound is 14.25.
-    // Anything faster fails both, and should. They encode the CLAIM that the
-    // enemy is meaningfully slower than the squad, so going below 46 means
-    // deciding that claim no longer holds and editing them to say so — not
-    // loosening a number that got in the way.
+    // 40, DOWN FROM 46 (ticket 092), which was down from 52 (ticket 075). The
+    // trend is deliberate and it is running out of room: 32 is the floor, and
+    // it is not a value this row can take while `enemy-weapon.test.ts` still
+    // asserts he is the slower shot.
     //
-    // AND NOT 48 OR 50, which is not a style point. See
-    // `WeaponSpec.cooldownTicks`: the rate assertion in `resolution.test.ts` is
-    // `floor(3600 / cooldownTicks) + 1`, which overcounts by one for any value
-    // dividing 3600 exactly. Both 48 and 50 divide it; 46 and 52 do not.
-    cooldownTicks: 46,
-    // 6.4 tiles, DERIVED and never typed: 8 × 0.8. The 1.6 tiles this leaves
-    // between the two reaches is the standoff band — the distance at which the
-    // squad can fire and the enemy cannot — and it exists only because the two
-    // sides now hold different weapons.
+    // 40 DIVIDES THE MINUTE, WHICH USED TO DISQUALIFY IT. See
+    // `WeaponSpec.cooldownTicks` — the rate assertion overcounted by one for
+    // exactly those values, and 092 fixed the arithmetic rather than picking a
+    // number that dodged it.
+    cooldownTicks: 40,
+    // THE SAME EIGHT TILES AS THE SQUAD'S, from the same constant. Ticket 036
+    // wrote this as `RIFLE_RANGE_TILES * ENEMY_RANGE_FRACTION` for 6.4; the
+    // fraction is gone (see `RIFLE_RANGE_TILES`) and the constant is not,
+    // because the reason for naming it — one retune moving both rows — never
+    // depended on the two values differing.
     //
-    // The multiplication happens ONCE, here, at module construction. What lands
-    // in the table is a plain number, so the row still survives the JSON round
-    // trip this file promises; a getter would not, and is what the "specs are
-    // data" rule at the top forbids.
-    rangeTiles: RIFLE_RANGE_TILES * ENEMY_RANGE_FRACTION,
+    // What lands in the table is still a plain number, so the row survives the
+    // JSON round trip this file promises. A getter would not, and is what the
+    // "specs are data" rule at the top forbids.
+    rangeTiles: RIFLE_RANGE_TILES,
     accuracy: {
-      // THE SAME CURVE AS THE SQUAD'S, DELIBERATELY UNCHANGED. The endpoints are
-      // relative to each weapon's OWN `rangeTiles`, so shortening the range has
-      // already steepened the falloff in real terms: at 6.4 tiles this man is
-      // now at his worst instead of partway down the curve. Moving the endpoints
-      // as well would be two changes explaining one outcome, and nothing could
-      // then say which of them produced it.
+      // THE SAME CURVE AS THE SQUAD'S, DELIBERATELY UNCHANGED — and with the
+      // reach now equal too, identical in real terms as well as in its
+      // endpoints, where under ticket 036 the shorter range made it effectively
+      // steeper. Moving the endpoints as well would be two changes explaining
+      // one outcome, and nothing could then say which produced it.
       pointBlank: 0.9,
       maxRange: 0.25,
     },

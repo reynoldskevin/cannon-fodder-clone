@@ -28,7 +28,7 @@ const arena = (art = OPEN, options: Partial<AiOptions> = {}) => rig(art, options
  * specifically "they stop at the edge of MY firing range".
  */
 
-/** The reach of the weapon an ENEMY rifleman actually holds. 6.4 since ticket 036. */
+/** The reach of the weapon an ENEMY rifleman actually holds. Eight since ticket 092. */
 const RANGE = weaponFor(DEFAULT_ARCHETYPE_NAME, 'enemy')!.rangeTiles
 
 /**
@@ -39,7 +39,7 @@ const RANGE = weaponFor(DEFAULT_ARCHETYPE_NAME, 'enemy')!.rangeTiles
  * a soldier with no weapon, who never engages at any distance and would make
  * every assertion below pass for the wrong reason.
  *
- * Sight is 12 so it comfortably exceeds the 6.4-tile weapon; the gap between the
+ * Sight is 12 so it comfortably exceeds the eight-tile weapon; the gap between the
  * two is the whole space this ticket operates in.
  */
 const armed = (over: Partial<ArchetypeSpec>): Record<string, ArchetypeSpec> => ({
@@ -67,9 +67,10 @@ const gap = (r: ReturnType<typeof rig>, a: number, b: number): number => {
 describe('he keeps walking while the target is inside his range but far in it', () => {
   it('stays in `pursue` at six tiles, which is inside the weapon and outside the closing distance', () => {
     /**
-     * THE DISTANCE THAT DECIDES THE TICKET. Six tiles is inside the 6.4-tile
+     * THE DISTANCE THAT DECIDES THE TICKET. Six tiles is inside the eight-tile
      * rifle — so the OLD machine engaged here and stopped — and outside the
-     * 3.2-tile closing distance this row asks for.
+     * four-tile closing distance this row asks for. Both bounds are asserted
+     * against `RANGE` below rather than trusted from this comment.
      */
     const r = arena(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
     const enemy = r.spawn(14, 5, 'enemy')
@@ -112,8 +113,8 @@ describe('the two boundaries are different, or he vibrates', () => {
     /**
      * THE HYSTERESIS, AND IT IS THE LOAD-BEARING PART OF THE DESIGN. Entering on
      * the closing distance and leaving on the same one would put a man who
-     * halted at 3.2 tiles back into `pursue` the moment his target drifted to
-     * 3.3, and back to `engage` the moment it drifted in again — sixty times a
+     * halted at four tiles back into `pursue` the moment his target drifted to
+     * 4.1, and back to `engage` the moment it drifted in again — sixty times a
      * second. Five tiles is well outside the closing distance and well inside
      * the rifle, so it is only reachable by a machine with two thresholds.
      */
@@ -122,7 +123,8 @@ describe('the two boundaries are different, or he vibrates', () => {
     const player = r.spawn(8, 5, 'player', 10_000)
     r.run(20)
     expect(r.ai.stateOf(enemy.id)).toBe('engage')
-    r.place(player.id, 5, 5) // five tiles: outside 3.2, inside 6.4
+    // Five tiles: outside the 4-tile closing distance, inside the 8-tile rifle.
+    r.place(player.id, 5, 5)
     r.run(4)
     expect(r.ai.stateOf(enemy.id)).toBe('engage')
   })
@@ -135,7 +137,17 @@ describe('the two boundaries are different, or he vibrates', () => {
     const player = r.spawn(8, 5, 'player', 10_000)
     r.run(20)
     expect(r.ai.stateOf(enemy.id)).toBe('engage')
-    r.place(player.id, 2, 5) // eight tiles: outside 6.4
+    /**
+     * DERIVED FROM THE WEAPON, NOT TYPED. This read `r.place(player.id, 2, 5)`
+     * with the comment "eight tiles: outside 6.4", and ticket 092 gave the enemy
+     * the squad's eight — so the fixture that used to sit 1.6 tiles beyond his
+     * reach landed exactly ON it, `inRange` admitted it, and the man stayed in
+     * `engage`. A distance typed from a weapon table is a number that stops
+     * meaning what its comment says the moment the table moves.
+     */
+    const beyondReach = 10 - Math.ceil(RANGE) - 1
+    expect(10 - beyondReach).toBeGreaterThan(RANGE)
+    r.place(player.id, beyondReach, 5)
     r.run(4)
     expect(r.ai.stateOf(enemy.id)).toBe('pursue')
   })
@@ -188,15 +200,26 @@ describe('the two boundaries are different, or he vibrates', () => {
      * reached. A test that cannot fail is worse than no test: it reports
      * coverage of the thing it does not check.
      *
-     * Eight tiles is outside the 6.4-tile rifle, so he genuinely drops to
-     * `pursue`; two tiles is back inside the closing distance, so he genuinely
-     * re-enters `engage`. It is the SAME MAN throughout, so the beat must not
-     * be paid again — a soldier who re-armed on every boundary crossing would
-     * stand there raising his rifle forever against a target that steps in and
-     * out of cover.
+     * The far position must be outside the rifle ENTIRELY, so he genuinely drops
+     * to `pursue`; two tiles is back inside the closing distance, so he
+     * genuinely re-enters `engage`. It is the SAME MAN throughout, so the beat
+     * must not be paid again — a soldier who re-armed on every boundary crossing
+     * would stand there raising his rifle forever against a target that steps in
+     * and out of cover.
+     *
+     * AND THE FAR POSITION IS DERIVED, BECAUSE IT WENT VACUOUS ONCE ALREADY.
+     * It was `r.place(player.id, 2, 5)` — eight tiles, chosen when the enemy's
+     * rifle reached 6.4. Ticket 092 gave him eight, so that position landed
+     * inside the envelope, he never dropped to `pursue`, and the loop below
+     * stopped exercising the re-arm decision at all. The suite stayed green:
+     * the closing assertions hold trivially for a man who never left `engage`,
+     * which is precisely the "reports coverage of the thing it does not check"
+     * failure described above, arriving by a different route.
      */
+    const beyondReach = 10 - Math.ceil(RANGE) - 1
+    expect(10 - beyondReach).toBeGreaterThan(RANGE)
     for (let i = 0; i < 6; i += 1) {
-      r.place(player.id, 2, 5) // eight tiles: outside the rifle entirely
+      r.place(player.id, beyondReach, 5) // outside the rifle entirely
       r.run(3)
       r.place(player.id, 8, 5) // two tiles: back inside the closing distance
       r.run(3)
@@ -211,12 +234,19 @@ describe('a fraction of one reproduces the old behaviour exactly', () => {
     /**
      * The property that says this is a tuning surface and not a hardcoded new
      * rule: a row that wants a man to hold the treeline and a row that wants him
-     * at arm's length must be the same code. Six tiles is inside 6.4 and would
-     * be `pursue` at any fraction below ~0.94.
+     * at arm's length must be the same code.
+     *
+     * SPAWNED AT EXACTLY `RANGE`, which is stronger than the six tiles this used
+     * to use. Six was as good as maximum against the old 6.4-tile rifle; against
+     * eight it is three quarters of the way out, so the case had quietly become
+     * satisfiable by any fraction above 0.75 and no longer said anything
+     * specific about `closeToFraction: 1`. At the exact edge, every fraction
+     * below one is a `pursue` and this is the only row that engages.
      */
     const r = arena(OPEN, { archetypes: armed({ closeToFraction: 1 }) })
     const enemy = r.spawn(14, 5, 'enemy')
-    r.spawn(8, 5, 'player', 10_000)
+    const player = r.spawn(14 - RANGE, 5, 'player', 10_000)
+    expect(gap(r, enemy.id, player.id)).toBe(RANGE)
     r.run(4)
     expect(r.ai.stateOf(enemy.id)).toBe('engage')
   })
@@ -293,7 +323,7 @@ describe('a target he has not closed on is a fresh approach', () => {
      * reference to WHICH man he was engaging. So a soldier whose target went
      * down, or ducked behind cover while a second man was visible, carried the
      * full-range threshold over to somebody he had never closed on: he engaged
-     * the new man at up to 6.4 tiles and halted there, at the worst point of his
+     * the new man at up to his full range and halted there, at the worst point of his
      * accuracy curve. That is verbatim the behaviour this ticket exists to
      * delete, reappearing on the most ordinary event in the game — level 1 puts
      * three riflemen against a four-man squad, so "the man he was shooting at
@@ -305,8 +335,8 @@ describe('a target he has not closed on is a fresh approach', () => {
      */
     const r = arena(OPEN, { archetypes: armed({ closeToFraction: 0.5 }) })
     const enemy = r.spawn(10, 5, 'enemy')
-    const near = r.spawn(7, 5, 'player', 10_000) // 3 tiles: inside 3.2
-    const far = r.spawn(4, 5, 'player', 10_000) // 6 tiles: outside it, inside 6.4
+    const near = r.spawn(7, 5, 'player', 10_000) // 3 tiles: inside the closing distance
+    const far = r.spawn(4, 5, 'player', 10_000) // 6 tiles: outside it, inside 8
     r.run(6)
     expect(r.ai.stateOf(enemy.id)).toBe('engage')
     r.world.despawn(near.id)
@@ -341,12 +371,20 @@ describe('the marksman does not advance, which is the point of him', () => {
      * assertion, so a machine that read the row and then ignored it — using the
      * default for everybody — passed. No test spawned a sniper at all.
      *
-     * Five tiles is inside his 6.4-tile rifle and well outside the rifleman's
-     * 3.84-tile closing distance, so this separates the two rows behaviourally.
+     * Six tiles is inside his eight-tile rifle and well outside the rifleman's
+     * 4.8-tile closing distance, so this separates the two rows behaviourally.
+     *
+     * IT WAS FIVE, AND FIVE STOPPED SEPARATING THEM (ticket 092). At the enemy's
+     * old 6.4-tile rifle the rifleman closed to 3.84 and five tiles cleared it
+     * by 1.16; with the reach back at eight he closes to 4.8 and five clears it
+     * by two tenths of a tile — inside the slop of where a man actually stands
+     * after a few ticks, so the pair below stopped being about the archetype
+     * rows at all. Both halves move together, because "the same spot" is the
+     * whole point of the comparison.
      */
     const r = arena(OPEN)
     const enemy = r.spawnKind(10, 5, 'enemy', 'sniper')
-    const player = r.spawn(5, 5, 'player', 10_000)
+    const player = r.spawn(4, 5, 'player', 10_000)
     r.run(6)
     expect(r.ai.stateOf(enemy.id)).toBe('engage')
     const before = gap(r, enemy.id, player.id)
@@ -360,7 +398,7 @@ describe('the marksman does not advance, which is the point of him', () => {
     // which nobody ever advances.
     const r = arena(OPEN)
     const enemy = r.spawn(10, 5, 'enemy')
-    const player = r.spawn(5, 5, 'player', 10_000)
+    const player = r.spawn(4, 5, 'player', 10_000)
     r.run(6)
     expect(r.ai.stateOf(enemy.id)).toBe('pursue')
     const before = gap(r, enemy.id, player.id)
