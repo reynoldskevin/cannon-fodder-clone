@@ -298,6 +298,12 @@ export function createBootHill(mount: HTMLElement, options: BootHillOptions): Bo
     // two columns are meant to be the same column, and the day they were two
     // literals is the day one of them could be widened alone.
     `width:${ROSTER_COLUMN_WIDTH}`,
+    // AND MEASURED THE SAME WAY THE RAIL MEASURES IT (ticket 074). The level
+    // screen's playfield now starts at this constant, so it had to start meaning
+    // the space the column occupies rather than the space inside it. Sharing the
+    // width and not the box model would have left these two "same column" by the
+    // source and 1.2rem apart on the screen.
+    'box-sizing:border-box',
     'flex:none',
     'padding:0.5rem 0.6rem 1rem',
     'overflow-y:auto',

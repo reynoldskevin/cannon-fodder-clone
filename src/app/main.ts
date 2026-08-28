@@ -54,6 +54,7 @@ import { showFatalError, type FatalErrorReport } from '../ui/error-overlay'
 import { createHud, type RosterMember } from '../ui/hud'
 import { ORDNANCE_ICONS } from '../ui/ordnance-icons'
 import { createSquadPanel } from '../ui/squad-panel'
+import { PLAYFIELD_STYLE } from '../ui/playfield'
 import { createMissionBanner } from '../ui/mission-banner'
 import { createBootHill } from '../ui/boot-hill'
 import { createMenu } from '../ui/menu'
@@ -309,8 +310,27 @@ async function boot(): Promise<void> {
   document.body.style.background = '#161a1d'
 
   const renderer = createRenderer()
-  renderer.domElement.style.display = 'block'
-  mount.append(renderer.domElement)
+  /**
+   * THE PLAYFIELD IS THE SCREEN MINUS THE RAIL (ticket 074).
+   *
+   * Styled before anything measures it, because everything below — the drawing
+   * buffer, the camera's aspect, the edge-scroll bands — is read OFF THIS
+   * ELEMENT from here on. `createRenderer` sizes it to the window, which is the
+   * best it can do before there is a layout to ask.
+   *
+   * INSET ON EVERY SCREEN, NOT ONLY THE MISSION. Every other screen paints its
+   * own full-viewport surface over the top, so the inset cannot be seen there;
+   * making it conditional would put two different truths about where the
+   * playfield is into a game that has to agree with itself about pointer
+   * coordinates, and would resize the camera at every screen transition.
+   */
+  const canvas = renderer.domElement
+  canvas.style.cssText = PLAYFIELD_STYLE
+  mount.append(canvas)
+  // NOW that the CSS has had its say. `false` stops `setSize` writing a pixel
+  // `width`/`height` back over the `calc()` — which would be right for this one
+  // viewport and wrong from the first resize onwards.
+  renderer.setSize(canvas.clientWidth, canvas.clientHeight, false)
 
   // `?elev=` is a look-tuning knob, not a game setting: the camera angle is a
   // judgement against the source art and the only way to settle it is to look at
@@ -477,7 +497,11 @@ async function boot(): Promise<void> {
     // the day mapgen emits something taller.
     const rig = new CameraRig(
       built.bounds,
-      { width: window.innerWidth, height: window.innerHeight },
+      // THE CANVAS'S SHAPE AND NOT THE WINDOW'S. The rig turns this into the
+      // camera's aspect ratio, and a ratio taken from a rectangle the game is
+      // not drawn in stretches every sprite on screen — silently, and by exactly
+      // the width of the rail.
+      { width: canvas.clientWidth, height: canvas.clientHeight },
       elevation,
       levelRelief(level),
     )
@@ -487,8 +511,11 @@ async function boot(): Promise<void> {
     // to the rig, so both must be kept and disposed with the stage: a leaked
     // controller would keep driving the dead rig — doubling every pan and zoom
     // step for the rest of the page's life.
-    const pan = new PanController(rig)
-    const zoom = new ZoomController(rig, window, renderer.domElement)
+    // The canvas is what decides where an edge IS (ticket 074): a left band
+    // measured from the window would sit under the rail, so reading the roster
+    // or reaching for an icon would scroll the map west and keep scrolling.
+    const pan = new PanController(rig, window, canvas)
+    const zoom = new ZoomController(rig, window, canvas)
     return { level, built, tracerFx, effectFx, rig, pan, zoom }
   }
 
@@ -633,8 +660,13 @@ async function boot(): Promise<void> {
   }
 
   const onResize = (): void => {
-    renderer.setSize(window.innerWidth, window.innerHeight)
-    stage.rig.resize(window.innerWidth, window.innerHeight)
+    // OFF THE ELEMENT, WHICH THE `calc()` HAS ALREADY RESOLVED by the time this
+    // runs — the resize event fires after layout. Off the window instead, the
+    // buffer would be the rail's width too wide and the whole scene squeezed
+    // into the space left over, with nothing to see but sprites of the wrong
+    // shape.
+    renderer.setSize(canvas.clientWidth, canvas.clientHeight, false)
+    stage.rig.resize(canvas.clientWidth, canvas.clientHeight)
   }
 
   // Alt-tabbing away mid-burst delivers no pointer event at all to the canvas,

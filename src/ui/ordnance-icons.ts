@@ -182,6 +182,15 @@ export const ORDNANCE_ICON_BAR_STYLE = [
    * icon would shift a screen that has no icons on it — a memorial moved by a
    * weapon button is a change nobody asked for and nobody would connect back to
    * here. A second line of icons costs vertical room the full-height rail has.
+   *
+   * AND IT WRAPS SOONER SINCE TICKET 074, DELIBERATELY. Border-boxing the rail,
+   * so the playfield could subtract a width that was actually true, took
+   * `1.2rem` off the space INSIDE it — which moves the threshold from about a
+   * 950px window to about a 1040px one, so a 1024-wide window now shows two rows
+   * where it showed one. Taken over the alternative of shaving the icons back
+   * down: they are 3.9rem because they were asked to be half again bigger
+   * (ticket 068), and a wrap costs a strip of rail nobody was using while a
+   * smaller icon costs the size on every screen.
    */
   'flex-wrap:wrap',
   'max-width:100%',
