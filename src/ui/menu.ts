@@ -383,15 +383,19 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
   heading.append(logo)
 
   /**
-   * The one line under the title, and only the campaign's end has one now.
+   * THE LINE UNDER THE TITLE IS GONE (ticket 076).
    *
-   * A NOTICE RATHER THAN A PLAIN PARAGRAPH, so it takes no room at all when
-   * there is nothing to say: the start screen's "Pick your men, take the island,
-   * and count who comes back" is gone, and a `<p>` left empty in its place would
-   * hold a line of air between the title and the squad on every fresh campaign —
-   * which is every campaign but the last screen of one.
+   * It read "The island is taken. Start over, and none of them come back." and
+   * sat between LOST IN SERVICE and the roll of the dead, saying three things
+   * the screen already says: the title says they were lost, the list says who,
+   * and the button says "Start over (erases n graves)".
+   *
+   * THE ELEMENT WENT WITH THE SENTENCE. A `createNotice` left in place and never
+   * filled is a `display:none` paragraph nobody can see, a name in the append
+   * list, and a thing the next reader has to check for a caller before deciding
+   * it is dead — see the header this replaced, which was three paragraphs
+   * arguing for an element that now has nothing to hold.
    */
-  const blurb = createNotice(MUTED)
 
   // Warm rather than muted: a save that could not be written is the one line on
   // this screen the player must not skim past.
@@ -465,7 +469,7 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
    * loose sentence floating over the plaque with nothing to attach it to. Under
    * the title it is the line the title introduces.
    */
-  summary.append(summaryHeading, blurb, totals, roll)
+  summary.append(summaryHeading, totals, roll)
 
   const start = createButton('Start campaign')
 
@@ -582,7 +586,7 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
     return flower
   })
 
-  /** The title, the blurb, the notice and the totals — the readable column. */
+  /** The title, the notice and the totals — the readable column. */
   const masthead = document.createElement('div')
   masthead.style.cssText = [
     'position:relative',
@@ -770,10 +774,6 @@ export function createMenu(mount: HTMLElement, options: MenuOptions): MenuScreen
   const render = (next: MenuModel): void => {
     model = next
     setNotice(notice, next.notice)
-    setNotice(
-      blurb,
-      next.campaignOver ? 'The island is taken. Start over, and none of them come back.' : null,
-    )
     /**
      * ONE COMMAND, THREE THINGS TO CALL IT.
      *

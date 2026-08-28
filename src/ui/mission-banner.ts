@@ -28,6 +28,7 @@
  */
 
 import { DISPLAY_FONT, loadDisplayFont } from './display-font'
+import { PLAYFIELD_INSET } from './playfield'
 import { TEXT } from './screen-chrome'
 
 /**
@@ -39,7 +40,20 @@ import { TEXT } from './screen-chrome'
  */
 export const BANNER_LAYER_STYLE = [
   'position:fixed',
-  'inset:0',
+  /**
+   * THE PLAYFIELD, NOT THE WINDOW (ticket 076).
+   *
+   * This was `inset:0`, which centred the result of the mission on the viewport
+   * — right while the canvas WAS the viewport, and wrong since ticket 074 moved
+   * the playfield off the left edge to clear the roster rail. The words then sat
+   * half the rail's width left of the ground they are about, and drifted further
+   * the wider the window got, because the rail is a `clamp()` against it.
+   *
+   * TAKEN FROM `playfield.ts` RATHER THAN SPELLED AGAIN. See `PLAYFIELD_INSET`:
+   * a second `calc()` here would agree with the canvas today and part company
+   * from it on the first edit to the rail.
+   */
+  PLAYFIELD_INSET,
   'display:flex',
   'align-items:center',
   'justify-content:center',

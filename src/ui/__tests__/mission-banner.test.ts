@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { BANNER_LAYER_STYLE, BANNER_TEXT_STYLE } from '../mission-banner'
 import { DISPLAY_FONT } from '../display-font'
 import { PLAYFIELD_INSET } from '../playfield'
@@ -61,11 +62,19 @@ describe('the banner is centred on the viewport', () => {
      * `mission-banner.ts` would be the same trap: the banner and the canvas
      * would agree today and part company on the first edit.
      *
-     * ASSERTED AS SUBSTRING CONTAINMENT of the shared constant, so this fails if
-     * the banner ever grows its own copy — the two cases above would go on
-     * passing, because a hand-written copy produces the same string.
+     * IT READS THE SOURCE, because the VALUE cannot tell the difference. A
+     * `calc()` copied by hand produces a byte-identical string, so
+     * `toContain(PLAYFIELD_INSET)` passes just as happily on a copy as on the
+     * import — which was measured, not assumed: that mutant survived the first
+     * version of this case. `squad-panel.test.ts` had the same problem about the
+     * same constant and solved it the same way, and this follows it.
      */
     expect(BANNER_LAYER_STYLE).toContain(PLAYFIELD_INSET)
+    const banner = readFileSync(new URL('../mission-banner.ts', import.meta.url), 'utf8')
+    expect(banner).toMatch(/from '\.\/playfield'/)
+    expect(banner).toContain('PLAYFIELD_INSET')
+    // And no second spelling of the rail beside the import.
+    expect(banner).not.toContain('100vw')
   })
 
   it('and centres its content on both axes', () => {
