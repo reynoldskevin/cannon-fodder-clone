@@ -255,8 +255,7 @@
   },
   "objectives": [
     {
-      "type": "kill_count",
-      "count": 11
+      "type": "kill_all"
     }
   ]
 }

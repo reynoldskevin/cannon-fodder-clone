@@ -56,7 +56,6 @@ const EXPECTED = {
   ],
   enemies: [
     { x: 8, y: 2 },
-    { x: 59, y: 2 },
     { x: 29, y: 7 },
     { x: 27, y: 7 },
     { x: 2, y: 13 },
@@ -68,19 +67,13 @@ const EXPECTED = {
     { x: 51, y: 48 },
     { x: 23, y: 48 },
     { x: 62, y: 57 },
-    { x: 40, y: 63 },
     { x: 6, y: 65 },
     { x: 8, y: 66 },
   ],
   props: [
-    { x: 10, y: 3 },
     { x: 15, y: 5 },
-    { x: 18, y: 7 },
-    { x: 15, y: 9 },
     { x: 11, y: 12 },
-    { x: 81, y: 40 },
     { x: 54, y: 40 },
-    { x: 44, y: 44 },
     { x: 81, y: 56 },
     { x: 81, y: 60 },
     { x: 86, y: 61 },
@@ -113,20 +106,30 @@ describe('level 3 imports from its own shipped legend', () => {
     expect(sortPoints(result.level.spawns.avatars)).toEqual(sortPoints(EXPECTED.avatars))
   })
 
-  it('finds exactly sixteen enemy spawns, at the measured tiles', () => {
+  it('finds exactly fourteen enemy spawns, at the measured tiles', () => {
     /**
-     * SIXTEEN, and the count is as load-bearing as the positions. The jungle on
+     * FOURTEEN SINCE THE REPAINT, and the count is as load-bearing as the
+     * positions. It was sixteen when ticket 070 measured it; commit `764212a`
+     * redrew the map and the crosshairs at tiles `59,2` and `40,63` came back
+     * malformed — the importer discards both as "not crosshair-shaped" and warns
+     * that a marker may have been lost, which is exactly what happened. Those
+     * two enemies are not in the level.
+     *
+     * The jungle on
      * this map carries dark red foliage all over it — the same trap level 1's
      * test names — and the banks are outlined in near-pure red. A tolerance that
      * over-matched would turn scenery into a garrison; one that under-matched
      * would quietly leave a corner of the map undefended.
      */
-    expect(result.level.spawns.enemies).toHaveLength(16)
+    expect(result.level.spawns.enemies).toHaveLength(14)
     expect(sortPoints(result.level.spawns.enemies)).toEqual(sortPoints(EXPECTED.enemies))
   })
 
-  it('finds exactly eleven props, at the measured tiles', () => {
-    expect(result.level.spawns.props).toHaveLength(11)
+  it('finds exactly six props, at the measured tiles', () => {
+    // Six since the repaint, down from eleven: five prop glyphs went with it,
+    // and their legend labels were removed in ticket 078 rather than left
+    // pointing at ink that is no longer there.
+    expect(result.level.spawns.props).toHaveLength(6)
     expect(sortPoints(result.level.spawns.props)).toEqual(sortPoints(EXPECTED.props))
   })
 
@@ -141,7 +144,8 @@ describe('level 3 imports from its own shipped legend', () => {
       result.level.spawns.avatars.length +
       result.level.spawns.enemies.length +
       result.level.spawns.props.length
-    expect(spawns).toBe(30)
+    // 3 avatars + 14 enemies + 6 props, after the repaint. It was 30.
+    expect(spawns).toBe(23)
     expect(result.report.discardedClusters.length).toBeGreaterThan(30)
   })
 })
@@ -167,17 +171,12 @@ describe('and the legend describes the map completely', () => {
     const types = result.level.spawns.props.map((p) => p.type ?? '(none)').sort()
     expect(types).toEqual(
       [
-        'bird_left',
-        'bird_right',
-        'bird_right',
-        'bird_right',
         'bird_right',
         'bird_right',
         'building_door',
         'building_roof',
         'grenade_box',
         'floating_dead_soldier',
-        'tree',
       ].sort(),
     )
   })
@@ -218,31 +217,27 @@ describe('and what it emits is a level this game can actually load', () => {
     expect(blocked).toEqual([])
   })
 
-  it('and FIVE of the sixteen enemies do NOT, which is a fact about the map', () => {
+  it('and so does every enemy, which is what makes kill_all winnable', () => {
     /**
-     * MEASURED, NOT ASSUMED, AND IT IS WHY THE OBJECTIVE IS NOT `kill_all`.
+     * MEASURED, NOT ASSUMED, AND IT IS WHY THE OBJECTIVE CAN BE `kill_all`.
      *
-     * With the annotation ink excluded from the tile mean — which is what the
-     * importer does, precisely so a crosshair cannot lift dark jungle above the
-     * walkable cut — these five tiles read luminance 44 to 50 against a cut of
-     * 55. They are dense canopy, and the author drew five enemy crosshairs
-     * inside the treeline.
+     * FIVE OF THEM USED TO BE STRANDED. Ticket 070 measured tiles `8,2`,
+     * `57,20`, `23,48`, `51,48` and `62,57` at luminance 44-50 against a
+     * walkable cut of 55 — dense canopy, with enemy crosshairs drawn inside the
+     * treeline. `combat/los.ts` opens with `if (!grid.passable(to)) return
+     * false`, so a man on an impassable tile can neither be shot nor shoot out:
+     * completely inert, and `kill_all` would have been unwinnable.
      *
-     * THOSE FIVE ARE COMPLETELY INERT. `combat/los.ts` opens with
-     * `if (!grid.passable(to)) return false`, so a man standing on an impassable
-     * tile can neither be seen nor shot — and symmetrically cannot see out. They
-     * cannot be reached, killed, or fired upon, and they cannot fight back.
-     *
-     * SO `kill_all` WOULD BE UNWINNABLE, and the importer says so in as many
-     * words. This case pins the count so that the day the map is repainted — or
-     * a walkability mask is authored — the objective is revisited deliberately
-     * rather than left behind as a mystery.
+     * THE REPAINT PUT THEM ALL ON OPEN GROUND. This case is the one that has to
+     * stay true for the objective to be honest, so it is asserted as an empty
+     * list rather than as a count — a future repaint that strands one man again
+     * fails here, loudly, instead of shipping a mission nobody can finish.
      */
     const blocked = result.level.spawns.enemies
       .filter((s) => result.level.walkable[s.y]?.[s.x] !== true)
       .map((s) => `${String(s.x)},${String(s.y)}`)
       .sort()
-    expect(blocked).toEqual(['23,48', '51,48', '57,20', '62,57', '8,2'].sort())
+    expect(blocked).toEqual([])
   })
 
   it('and the mission it declares can actually be won', () => {
@@ -279,12 +274,25 @@ describe('and what it emits is a level this game can actually load', () => {
       }
     }
     const reachable = result.level.spawns.enemies.filter((e) => seen[e.y]?.[e.x] === true).length
-    expect(reachable).toBe(11)
+
+    /**
+     * EVERY ENEMY IS REACHABLE NOW, which is what lets the objective be
+     * `kill_all` (ticket 078).
+     *
+     * It was eleven of sixteen when ticket 070 measured it — five crosshairs
+     * were drawn inside the treeline, on tiles `los.ts` refuses to fire into —
+     * and that is why the objective was a hand-written `kill_count: 11`. The
+     * repaint moved them onto open ground, but the number stayed, so the mission
+     * declared itself won three kills early and a player watched a survivor
+     * stand there. A count derived from an image cannot notice when the image
+     * changes; `kill_all` has nothing to go stale.
+     */
+    expect(reachable).toBe(result.level.spawns.enemies.length)
+    expect(reachable).toBe(14)
 
     const objective = result.level.objectives[0] as { type: string; count?: number }
-    expect(objective.type).toBe('kill_count')
-    // The number asked for must be one the map can actually supply.
-    expect(Number(objective.count)).toBeLessThanOrEqual(reachable)
+    expect(objective.type).toBe('kill_all')
+    expect(objective.count).toBeUndefined()
   })
 
   it('and the map really is the mixed terrain it looks like', () => {
